@@ -1,0 +1,31 @@
+# Virtual Environment
+bin/
+include/
+lib/
+lib64
+share/
+pyvenv.cfg
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+data/
+*.log
+package_info.json
+
+# Temporary files
+*.tmp
+*.temp
