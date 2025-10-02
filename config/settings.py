@@ -284,8 +284,9 @@ class SecurityConfig:
 class BehaviorConfig:
     """Robot behavior and personality settings"""
     
-    # Personality
+    # Identity
     robot_name: str = os.getenv("ROBOT_NAME", "RoboAI")
+    robot_id: str = os.getenv("ROBOT_ID", "robot_001")
     personality_type: str = "helpful"  # helpful, playful, professional
     response_style: str = "concise"  # concise, detailed, chatty
     
