@@ -80,6 +80,8 @@ class SIM7600XController:
         self.timeout = config.hardware.sim7600x_timeout
         self.retry_attempts = config.hardware.sim7600x_retry_attempts
         self.apn = config.hardware.sim7600x_apn
+        self.username = config.hardware.sim7600x_username
+        self.password = config.hardware.sim7600x_password
         self.pin = config.hardware.sim7600x_pin
         
         # GPIO pins (if configured)
@@ -443,6 +445,14 @@ class SIM7600XController:
             if not self._send_at_command(apn_cmd, expected_response="OK"):
                 self.logger.error("Failed to configure APN")
                 return False
+                
+            # Configure APN authentication if credentials provided
+            if self.username and self.password:
+                auth_cmd = f'AT+CGAUTH=1,1,"{self.username}","{self.password}"'
+                if not self._send_at_command(auth_cmd, expected_response="OK"):
+                    self.logger.warning("Failed to configure APN authentication - trying without auth")
+                else:
+                    self.logger.info("APN authentication configured successfully")
             
             # Activate PDP context
             if not self._send_at_command("AT+CGACT=1,1", expected_response="OK", timeout=30):

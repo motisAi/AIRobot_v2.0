@@ -176,7 +176,9 @@ class HardwareConfig:
     sim7600x_alt_ports: list = field(default_factory=lambda: ["/dev/ttyAMA0", "/dev/serial0"])  # Alternative ports
     sim7600x_baudrate: int = 115200
     sim7600x_pin: Optional[str] = None  # SIM PIN if required
-    sim7600x_apn: str = "internet"  # Change based on your carrier (e.g., "hologram" for Hologram)
+    sim7600x_apn: str = "sphone.pelephone.net.il"  # Pelephone APN
+    sim7600x_username: str = "pcl@3g"  # Pelephone username
+    sim7600x_password: str = "pcl"  # Pelephone password
     sim7600x_timeout: float = 10.0
     sim7600x_retry_attempts: int = 3
     sim7600x_power_pin: int = 6  # GPIO pin to control power (if wired)
