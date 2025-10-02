@@ -1,0 +1,20 @@
+{
+  "hardware": {
+    "camera_index": 0,
+    "microphone_device_index": null,
+    "esp32_port": "/dev/null"
+  },
+  "system": {
+    "enable_hailo": false,
+    "enable_sim7600x": true,
+    "vision_thread_count": 1,
+    "audio_thread_count": 1,
+    "headless_mode": true,
+    "show_camera_window": false,
+    "save_captures": true,
+    "web_interface_enabled": true
+  },
+  "behavior": {
+    "robot_name": "RoboAI_SSH"
+  }
+}
