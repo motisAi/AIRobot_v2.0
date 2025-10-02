@@ -17,6 +17,11 @@ __pycache__/
 .vscode/
 .idea/
 
+# Environment files - NEVER COMMIT API KEYS!
+.env
+.env.local
+.env.*.local
+
 # OS
 .DS_Store
 Thumbs.db
