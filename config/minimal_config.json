@@ -1,0 +1,16 @@
+{
+  "hardware": {
+    "camera_index": -1,
+    "microphone_device_index": -1,
+    "esp32_port": "/dev/null"
+  },
+  "system": {
+    "enable_hailo": false,
+    "enable_sim7600x": true,
+    "vision_thread_count": 0,
+    "audio_thread_count": 0
+  },
+  "behavior": {
+    "robot_name": "RoboAI_Minimal"
+  }
+}

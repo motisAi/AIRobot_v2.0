@@ -22,7 +22,7 @@ import queue
 
 # Deep learning libraries
 from deepface import DeepFace
-from deepface.commons import functions
+# Removed deprecated functions import
 import face_recognition
 
 # Import configuration

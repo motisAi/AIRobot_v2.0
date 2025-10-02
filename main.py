@@ -127,6 +127,12 @@ class AIRobot:
         self.logger.info(f"   {behavior_config.robot_name} AI ROBOT SYSTEM v2.0")
         self.logger.info("=" * 60)
         
+        # Detect available hardware
+        self.hardware_status = self._detect_hardware()
+        self.logger.info("Hardware Detection Results:")
+        for hw, status in self.hardware_status.items():
+            self.logger.info(f"  {hw}: {'✓' if status else '✗'}")
+        
         # Load custom configuration if provided
         if config_file:
             config.load_from_file(config_file)
@@ -148,6 +154,40 @@ class AIRobot:
         self.camera_lock = threading.Lock()
         self.microphone_lock = threading.Lock()
         self.speaker_lock = threading.Lock()
+    
+    def _detect_hardware(self) -> Dict[str, bool]:
+        """Detect what hardware is actually connected"""
+        status = {}
+        
+        # Check camera
+        try:
+            import cv2
+            cap = cv2.VideoCapture(0)
+            status['camera'] = cap.isOpened()
+            cap.release()
+        except:
+            status['camera'] = False
+        
+        # Check microphone
+        try:
+            import pyaudio
+            p = pyaudio.PyAudio()
+            status['microphone'] = p.get_device_count() > 0
+            p.terminate()
+        except:
+            status['microphone'] = False
+        
+        # Check ESP32 (serial port)
+        status['esp32'] = Path(hardware_config.esp32_port).exists()
+        
+        # Check SIM7600X
+        sim_ports = [hardware_config.sim7600x_port] + hardware_config.sim7600x_alt_ports
+        status['sim7600x'] = any(Path(port).exists() for port in sim_ports)
+        
+        # Check Hailo
+        status['hailo'] = USE_HAILO
+        
+        return status
         
         # Performance monitoring
         self.start_time = time.time()
@@ -224,10 +264,17 @@ class AIRobot:
         # CRITICAL: Set up complete system integration
         from config.system_integration import setup_robot_integration
         self.integration = setup_robot_integration(self)
-        self.logger.info("✓ System integration configured - all modules synchronized")
+        
+        # ALSO call the complete integration function
+        self.integration_result = integrate_everything(self)
+        self.logger.info("✓ Complete system integration finished - all modules synchronized")
     
     def _init_vision_modules(self):
         """Initialize all vision-related modules"""
+        
+        if not self.hardware_status.get('camera', False):
+            self.logger.warning("Camera not detected - skipping vision modules")
+            return
         
         # Face Recognition
         try:
@@ -239,7 +286,7 @@ class AIRobot:
             self.logger.error(f"✗ Failed to initialize Face Recognition: {e}")
         
         # Object Detection
-        if ObjectDetectionModule:
+        if ObjectDetectionModule and self.hardware_status.get('hailo', False):
             try:
                 self.logger.info("Initializing Object Detection...")
                 self.modules['object_detection'] = ObjectDetectionModule(self.brain, use_hailo=USE_HAILO)
@@ -250,6 +297,10 @@ class AIRobot:
     
     def _init_audio_modules(self):
         """Initialize all audio-related modules with synchronization"""
+        
+        if not self.hardware_status.get('microphone', False):
+            self.logger.warning("Microphone not detected - skipping audio modules")
+            return
         
         # Wake Word Detection - runs continuously in background
         try:
@@ -293,14 +344,17 @@ class AIRobot:
         """Initialize hardware control modules"""
         
         # ESP32 Controller for motors and sensors
-        try:
-            self.logger.info("Initializing ESP32 Controller...")
-            self.modules['esp32'] = ESP32Controller(self.brain)
-            self.brain.modules['esp32'] = self.modules['esp32']
-            self.brain.modules['hardware'] = self.modules['esp32']  # Alias
-            self.logger.info("✓ ESP32 Controller initialized")
-        except Exception as e:
-            self.logger.error(f"✗ Failed to initialize ESP32: {e}")
+        if self.hardware_status.get('esp32', False):
+            try:
+                self.logger.info("Initializing ESP32 Controller...")
+                self.modules['esp32'] = ESP32Controller(self.brain)
+                self.brain.modules['esp32'] = self.modules['esp32']
+                self.brain.modules['hardware'] = self.modules['esp32']  # Alias
+                self.logger.info("✓ ESP32 Controller initialized")
+            except Exception as e:
+                self.logger.error(f"✗ Failed to initialize ESP32: {e}")
+        else:
+            self.logger.warning("ESP32 not detected - skipping hardware controller")
     
     def _init_communication_modules(self):
         """Initialize communication modules"""

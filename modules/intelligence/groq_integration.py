@@ -1,5 +1,13 @@
 import os
+import sys
+from pathlib import Path
 from groq import Groq
+
+# Add project root to path for config imports
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from config.settings import behavior_config
 
 def enhance_conversation_ai(conversation_module):
     """Add Groq AI to conversation module"""
