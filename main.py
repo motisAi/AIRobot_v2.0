@@ -5,6 +5,7 @@ Main application that initializes all modules and runs the robot system.
 Handles module coordination, error recovery, and graceful shutdown.
 
 """
+#test
 
 import sys
 import signal
