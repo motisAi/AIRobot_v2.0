@@ -5,7 +5,9 @@ lib/
 lib64
 share/
 pyvenv.cfg
-
+*.exe
+*.bat
+*.ps1
 # Python Cache
 __pycache__/
 *.pyc
@@ -29,3 +31,4 @@ package_info.json
 # Temporary files
 *.tmp
 *.temp
+venv/Scripts/activate
