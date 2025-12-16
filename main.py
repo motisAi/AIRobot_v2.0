@@ -5,7 +5,6 @@ Main application that initializes all modules and runs the robot system.
 Handles module coordination, error recovery, and graceful shutdown.
 
 """
-#test
 
 import sys
 import signal
@@ -67,12 +66,11 @@ from core.robot_brain import RobotBrain, RobotEvent
 # Import vision modules
 from modules.vision.face_recognition import FaceRecognitionModule
 
-# Import other modules (these will be created later)
-# from modules.audio.speech_recognition import SpeechRecognitionModule
-# from modules.audio.wake_word import WakeWordModule
-# from modules.audio.text_to_speech import TextToSpeechModule
-# from modules.hardware.esp32_controller import ESP32Controller
-# from modules.communication.web_server import WebServer
+# Import audio/hardware modules
+from modules.audio.wake_word import WakeWordModule
+from modules.audio.speech_recognition import SpeechRecognitionModule
+from modules.audio.text_to_speech import TextToSpeechModule
+from modules.hardware.esp32_controller import ESP32Controller
 
 
 class AIRobot:
@@ -123,6 +121,7 @@ class AIRobot:
         
         # Shutdown event
         self.shutdown_event = threading.Event()
+        self.keyword_listener_paused = False
         
     def _setup_logging(self):
         """Setup logging configuration"""
@@ -177,8 +176,6 @@ class AIRobot:
             self.logger.error(f"✗ Failed to initialize Face Recognition: {e}")
         
         # Initialize Audio Modules
-        # TODO: Uncomment when modules are created
-        """
         try:
             self.logger.info("Initializing Wake Word Detection...")
             self.modules['wake_word'] = WakeWordModule(self.brain)
@@ -200,19 +197,18 @@ class AIRobot:
             self.logger.info("✓ Text-to-Speech initialized")
         except Exception as e:
             self.logger.error(f"✗ Failed to initialize TTS: {e}")
-        """
         
         # Initialize Hardware Controllers
-        # TODO: Uncomment when modules are created
-        """
-        try:
-            self.logger.info("Initializing ESP32 Controller...")
-            self.modules['esp32'] = ESP32Controller(self.brain)
-            self.brain.modules['hardware'] = self.modules['esp32']
-            self.logger.info("✓ ESP32 Controller initialized")
-        except Exception as e:
-            self.logger.error(f"✗ Failed to initialize ESP32: {e}")
-        """
+        if hardware_config.is_esp_connected:
+            try:
+                self.logger.info("Initializing ESP32 Controller...")
+                self.modules['esp32'] = ESP32Controller(self.brain)
+                self.brain.modules['hardware'] = self.modules['esp32']
+                self.logger.info("✓ ESP32 Controller initialized")
+            except Exception as e:
+                self.logger.error(f"✗ Failed to initialize ESP32: {e}")
+        else:
+            self.logger.info("ESP32 flagged as disconnected – simulation mode enabled")
         
         # Initialize Communication Modules
         # TODO: Uncomment when modules are created
@@ -252,6 +248,21 @@ class AIRobot:
             self._handle_speech
         )
         
+        self.brain.register_event_handler(
+            'dialogue_idle',
+            self._handle_dialogue_idle
+        )
+        
+        self.brain.register_event_handler(
+            'speech_complete',
+            self._handle_speech_complete
+        )
+        
+        self.brain.register_event_handler(
+            'speech_listen_failed',
+            self._handle_speech_listen_failed
+        )
+        
         # System events
         self.brain.register_event_handler(
             'battery_low',
@@ -282,10 +293,20 @@ class AIRobot:
     
     def _handle_wake_word(self, event: RobotEvent):
         """Handle wake word detection"""
-        self.logger.info("Wake word detected!")
+        self.logger.info("Wake word detected — pausing passive listener and starting dialogue")
+        self._pause_wake_word_listener(reason="wake_word")
         
         # Trigger listening state in brain
         self.brain.wake_word_heard()
+        recognizer = self.modules.get('speech_recognition')
+        if recognizer:
+            started = recognizer.listen_for_command(timeout=system_config.conversation_timeout)
+            if not started:
+                self.logger.warning("Speech recognizer busy; resuming wake word listener")
+                self._resume_wake_word_listener()
+        else:
+            self.logger.warning("Speech recognition module not available — resuming wake word listener")
+            self._resume_wake_word_listener()
     
     def _handle_speech(self, event: RobotEvent):
         """Handle recognized speech"""
@@ -294,7 +315,24 @@ class AIRobot:
         
         # Process in brain
         self.brain.speech_received(text)
-    
+        
+    def _handle_dialogue_idle(self, event: RobotEvent):
+        """Resume wake-word listening once the brain returns to IDLE."""
+        self.logger.debug("Dialogue cycle finished; resuming wake-word listener")
+        self._resume_wake_word_listener()
+
+    def _handle_speech_complete(self, event: RobotEvent):
+        """Log text-to-speech completions for easier debugging."""
+        utterance = event.data.get('text') if event.data else None
+        self.logger.debug(f"Text-to-speech finished: {utterance}")
+        self._resume_wake_word_listener()
+
+    def _handle_speech_listen_failed(self, event: RobotEvent):
+        """Recover keyword listening when a speech capture session fails."""
+        reason = event.data.get('reason', 'unknown') if event.data else 'unknown'
+        self.logger.warning(f"Speech capture failed ({reason}); resuming wake-word listener")
+        self._resume_wake_word_listener()
+
     def _handle_battery_low(self, event: RobotEvent):
         """Handle low battery warning"""
         self.logger.warning("Low battery warning received")
@@ -307,6 +345,33 @@ class AIRobot:
         
         # Stop all modules immediately
         self.emergency_shutdown()
+
+    def _pause_wake_word_listener(self, reason: str = "manual"):
+        """Pause the wake-word listener to avoid crosstalk with active dialogue."""
+        if self.keyword_listener_paused:
+            return
+        wake_module = self.modules.get('wake_word')
+        if not wake_module:
+            return
+        try:
+            wake_module.pause_listening(reason=reason)
+            self.keyword_listener_paused = True
+        except Exception as exc:
+            self.logger.error(f"Failed to pause wake-word listener: {exc}")
+    
+    def _resume_wake_word_listener(self):
+        """Resume passive wake-word listening once dialogue concludes."""
+        if not self.keyword_listener_paused:
+            return
+        wake_module = self.modules.get('wake_word')
+        if not wake_module:
+            self.keyword_listener_paused = False
+            return
+        try:
+            wake_module.resume_listening()
+            self.keyword_listener_paused = False
+        except Exception as exc:
+            self.logger.error(f"Failed to resume wake-word listener: {exc}")
     
     def start_modules(self):
         """Start all initialized modules"""
@@ -320,8 +385,33 @@ class AIRobot:
             except Exception as e:
                 self.logger.error(f"✗ Failed to start Face Recognition: {e}")
         
-        # Start other modules
-        # TODO: Start other modules as they are created
+        if 'wake_word' in self.modules:
+            try:
+                self.modules['wake_word'].start()
+                self.logger.info("✓ Wake Word Detection started")
+            except Exception as e:
+                self.logger.error(f"✗ Failed to start Wake Word Detection: {e}")
+        
+        if 'speech_recognition' in self.modules:
+            try:
+                self.modules['speech_recognition'].start()
+                self.logger.info("✓ Speech Recognition service started")
+            except Exception as e:
+                self.logger.error(f"✗ Failed to start Speech Recognition: {e}")
+        
+        if 'tts' in self.modules:
+            try:
+                self.modules['tts'].start()
+                self.logger.info("✓ Text-to-Speech engine started")
+            except Exception as e:
+                self.logger.error(f"✗ Failed to start Text-to-Speech: {e}")
+        
+        if 'esp32' in self.modules:
+            try:
+                self.modules['esp32'].connect()
+                self.logger.info("✓ ESP32 Controller connected")
+            except Exception as e:
+                self.logger.error(f"✗ Failed to connect ESP32: {e}")
         
         # Start robot brain
         self.brain.start()

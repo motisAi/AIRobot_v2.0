@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from dotenv import load_dotenv
 import logging
 
+from .platforms import detect_platform, PLATFORM_OVERRIDES
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -135,7 +137,7 @@ class ModelConfig:
     tts_speed: float = 1.0  # Speech speed multiplier
     
     # Wake Word Detection (Picovoice Porcupine)
-    wake_word: str = "hey robot"
+    wake_word: str = "gonzo"
     wake_word_sensitivity: float = 0.5  # 0-1, higher = more sensitive
     wake_word_model_path: str = str(PROJECT_ROOT / "data" / "models" / "wake_word.ppn")
     picovoice_access_key: str = os.getenv("PICOVOICE_ACCESS_KEY", "")
@@ -164,6 +166,10 @@ class HardwareConfig:
     microphone_chunk: int = 1024
     microphone_timeout: float = 0.8
     microphone_phrase_time_limit: float = 5.0
+    wake_word_microphone_name: Optional[str] = None
+    speech_microphone_name: Optional[str] = None
+    wake_word_device_index: Optional[int] = None
+    speech_device_index: Optional[int] = None
     
     # ESP32 Serial Communication
     esp32_port: str = "/dev/ttyUSB0"  # Might be /dev/ttyACM0
@@ -204,12 +210,22 @@ class HardwareConfig:
     servo_min_pulse: int = 500
     servo_max_pulse: int = 2500
     servo_frequency: int = 50
+    is_esp_connected: bool = False
+    uart_device_map: Dict[str, str] = field(
+        default_factory=lambda: {
+            "esp32": "/dev/ttyUSB0",
+            "sim7600x": "/dev/ttyAMA1",
+        }
+    )
 
 
 @dataclass
 class SystemConfig:
     """System-level configurations"""
     
+    platform_name: str = "generic"
+    use_tensor_rt: bool = False
+    data_dir: str = str(PROJECT_ROOT / "data")
     # Performance Settings
     max_threads: int = 8
     vision_thread_count: int = 2
@@ -303,6 +319,7 @@ class BehaviorConfig:
     max_speed: float = 0.5  # m/s
     turn_speed: float = 45.0  # degrees/s
     safe_distance: float = 50.0  # cm
+    auto_charge: bool = False
 
 
 class RobotConfig:
@@ -320,9 +337,11 @@ class RobotConfig:
         self.system = SystemConfig()
         self.security = SecurityConfig()
         self.behavior = BehaviorConfig()
+        self.platform_id = detect_platform()
         
         # Create necessary directories
         self._create_directories()
+        self._apply_platform_profile()
         
         # Load custom config if provided
         if config_file and Path(config_file).exists():
@@ -330,6 +349,7 @@ class RobotConfig:
         
         # Setup logging
         self._setup_logging()
+        logging.info("Configuration initialized for platform: %s", self.platform_id)
     
     def _create_directories(self):
         """Create necessary directories if they don't exist"""
@@ -360,6 +380,18 @@ class RobotConfig:
             format=log_format,
             handlers=handlers
         )
+
+    def _apply_platform_profile(self):
+        """Apply platform-specific overrides when helpers are available."""
+
+        helper = PLATFORM_OVERRIDES.get(self.platform_id)
+        if helper is None:
+            return
+
+        try:
+            helper(self)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logging.warning("Failed to apply platform profile '%s': %s", self.platform_id, exc)
     
     def load_from_file(self, filepath: str):
         """
@@ -429,12 +461,14 @@ class RobotConfig:
         errors = []
         
         # Check required API keys
-        if self.model.picovoice_access_key == "":
-            errors.append("Picovoice access key not set")
+        if not self.model.picovoice_access_key:
+            logging.warning("Picovoice access key not set - wake word detection will use fallback mode")
         
         # Check hardware ports exist
-        if not Path(self.hardware.esp32_port).exists():
-            logging.warning(f"ESP32 port {self.hardware.esp32_port} not found")
+        if self.hardware.is_esp_connected:
+            esp_port = self.hardware.uart_device_map.get("esp32", self.hardware.esp32_port)
+            if not Path(esp_port).exists():
+                logging.warning(f"ESP32 port {esp_port} not found")
         
         # Check camera availability
         if self.hardware.camera_index < 0:

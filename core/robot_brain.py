@@ -221,6 +221,16 @@ class RobotBrain:
         self.logger.info("Entering IDLE state")
         self.idle_timer = time.time()
         self.current_task = None
+        # Notify external modules so they can resume passive listeners such as
+        # wake-word detection.
+        try:
+            self.emit_event(RobotEvent(
+                type='dialogue_idle',
+                source='brain',
+                priority=8
+            ))
+        except Exception as exc:  # pragma: no cover - defensive safeguard
+            self.logger.debug(f"Failed to emit dialogue_idle event: {exc}")
         
         # Check for queued tasks
         if not self.task_queue.empty():

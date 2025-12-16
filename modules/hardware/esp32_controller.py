@@ -7,8 +7,16 @@ Manages motors, servos, sensors, and GPIO operations.
 
 """
 
-import serial
-import serial.tools.list_ports
+try:
+    import serial
+    import serial.tools.list_ports
+    SERIAL_AVAILABLE = True
+    SerialException = serial.SerialException
+except ImportError:  # pragma: no cover - optional dependency
+    SERIAL_AVAILABLE = False
+    serial = None
+    class SerialException(Exception):
+        """Fallback exception type when pyserial is unavailable."""
 import time
 import threading
 import queue
@@ -248,7 +256,7 @@ class ESP32Controller:
                 
                 time.sleep(0.01)  # Small delay to prevent CPU hogging
                 
-            except serial.SerialException as e:
+            except SerialException as e:
                 self.logger.error(f"Serial error: {e}")
                 self.connected = False
             except Exception as e:
