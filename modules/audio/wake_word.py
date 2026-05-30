@@ -170,17 +170,24 @@ class WakeWordModule:
 
         mic_rate = hardware_config.microphone_rate
         audio = pyaudio.PyAudio()
-        try:
-            stream = audio.open(
-                format=pyaudio.paInt16,
-                channels=1,
-                rate=mic_rate,
-                input=True,
-                frames_per_buffer=512,
-                input_device_index=self.device_index,
-            )
-        except Exception as exc:
-            self.logger.error(f"Unable to open microphone for wake-word detection: {exc}")
+        stream = None
+        for try_rate in [mic_rate, 48000, 44100, 22050, 16000]:
+            try:
+                stream = audio.open(
+                    format=pyaudio.paInt16,
+                    channels=1,
+                    rate=try_rate,
+                    input=True,
+                    frames_per_buffer=512,
+                    input_device_index=self.device_index,
+                )
+                mic_rate = try_rate
+                self.logger.info(f"Opened wake-word mic at {try_rate} Hz (device {self.device_index})")
+                break
+            except Exception:
+                continue
+        if stream is None:
+            self.logger.error("Unable to open microphone for wake-word detection at any sample rate")
             return
 
         self.logger.warning("Energy-based wake-word detector active (higher false positives)")
