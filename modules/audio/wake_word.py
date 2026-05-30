@@ -192,6 +192,7 @@ class WakeWordModule:
 
         self.logger.warning("Energy-based wake-word detector active (higher false positives)")
 
+        debug_counter = 0
         try:
             while not self.shutdown_event.is_set():
                 if not self.listen_event.is_set():
@@ -206,6 +207,10 @@ class WakeWordModule:
                 rms = self._calculate_rms(frame)
                 self.energy_window.append(rms)
                 dynamic_threshold = max(np.mean(self.energy_window) * 2.5, self.energy_threshold)
+
+                debug_counter += 1
+                if debug_counter % 500 == 0:
+                    self.logger.debug(f"Energy: rms={rms:.0f}, threshold={dynamic_threshold:.0f}, window_mean={np.mean(self.energy_window):.0f}")
 
                 if rms > dynamic_threshold:
                     if self.vad and not self._contains_voice(frame):
