@@ -381,17 +381,8 @@ class AIRobot:
         self.logger.info("Wake word detected — pausing passive listener and starting dialogue")
         self._pause_wake_word_listener(reason="wake_word")
         
-        # Trigger listening state in brain
+        # Trigger listening state in brain (brain's on_start_listening calls listen_for_command)
         self.brain.wake_word_heard()
-        recognizer = self.modules.get('speech_recognition')
-        if recognizer:
-            started = recognizer.listen_for_command(timeout=system_config.conversation_timeout)
-            if not started:
-                self.logger.warning("Speech recognizer busy; resuming wake word listener")
-                self._resume_wake_word_listener()
-        else:
-            self.logger.warning("Speech recognition module not available — resuming wake word listener")
-            self._resume_wake_word_listener()
     
     def _handle_speech(self, event: RobotEvent):
         """Handle recognized speech"""
