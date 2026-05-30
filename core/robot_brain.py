@@ -245,9 +245,9 @@ class RobotBrain:
         """Called when starting to listen"""
         self.logger.info("Starting to listen for commands")
         
-        # Notify audio module to start recording
-        if 'audio' in self.modules:
-            self.modules['audio'].start_recording()
+        # Notify speech module to start recording
+        if 'speech' in self.modules:
+            self.modules['speech'].start_recording()
         
         # Visual feedback
         self.set_led_color('blue')

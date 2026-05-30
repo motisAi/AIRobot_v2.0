@@ -222,6 +222,7 @@ class AIRobot:
         try:
             self.logger.info("Initializing Speech Recognition...")
             self.modules['speech_recognition'] = SpeechRecognitionModule(self.brain)
+            self.brain.modules['speech'] = self.modules['speech_recognition']
             self.logger.info("✓ Speech Recognition initialized")
         except Exception as e:
             self.logger.error(f"✗ Failed to initialize Speech Recognition: {e}")
@@ -230,6 +231,7 @@ class AIRobot:
             self.logger.info("Initializing Text-to-Speech...")
             self.modules['tts'] = TextToSpeechModule(self.brain)
             self.brain.modules['audio'] = self.modules['tts']
+            self.brain.modules['tts'] = self.modules['tts']
             self.logger.info("✓ Text-to-Speech initialized")
         except Exception as e:
             self.logger.error(f"✗ Failed to initialize TTS: {e}")
