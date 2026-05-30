@@ -59,6 +59,7 @@ class WakeWordModule:
         self.listen_event = threading.Event()
         self.listen_event.set()
         self.shutdown_event = threading.Event()
+        self._stream_closed_event = threading.Event()
         self.thread: Optional[threading.Thread] = None
         self.running = False
 
@@ -110,16 +111,20 @@ class WakeWordModule:
             self.porcupine = None
 
     def pause_listening(self, reason: str = "dialogue") -> None:
-        """Temporarily pause detection while the robot converses."""
+        """Temporarily pause detection and release the microphone."""
 
-        self.logger.debug("Pausing wake-word listener (%s)", reason)
+        self.logger.info("Pausing wake-word listener (%s) — releasing mic", reason)
         self.listen_event.clear()
+        # Wait for the stream to actually close before returning
+        if not self._stream_closed_event.wait(timeout=2.0):
+            self.logger.warning("Timed out waiting for wake-word stream to close")
 
     def resume_listening(self) -> None:
-        """Resume passive listening."""
+        """Resume passive listening (stream will reopen in the loop)."""
 
+        self._stream_closed_event.clear()
         self.listen_event.set()
-        self.logger.debug("Wake-word listener resumed")
+        self.logger.info("Wake-word listener resumed")
 
     # ------------------------------------------------------------------
     # Detection loops
@@ -169,35 +174,72 @@ class WakeWordModule:
             return
 
         mic_rate = hardware_config.microphone_rate
-        audio = pyaudio.PyAudio()
-        stream = None
-        for try_rate in [mic_rate, 48000, 44100, 22050, 16000]:
-            try:
-                stream = audio.open(
-                    format=pyaudio.paInt16,
-                    channels=1,
-                    rate=try_rate,
-                    input=True,
-                    frames_per_buffer=512,
-                    input_device_index=self.device_index,
-                )
-                mic_rate = try_rate
-                self.logger.info(f"Opened wake-word mic at {try_rate} Hz (device {self.device_index})")
-                break
-            except Exception:
-                continue
-        if stream is None:
-            self.logger.error("Unable to open microphone for wake-word detection at any sample rate")
-            return
-
         self.logger.warning("Energy-based wake-word detector active (higher false positives)")
 
         debug_counter = 0
+        audio = None
+        stream = None
+
+        def _open_stream():
+            nonlocal audio, stream, mic_rate
+            audio = pyaudio.PyAudio()
+            for try_rate in [mic_rate, 48000, 44100, 22050, 16000]:
+                try:
+                    stream = audio.open(
+                        format=pyaudio.paInt16,
+                        channels=1,
+                        rate=try_rate,
+                        input=True,
+                        frames_per_buffer=512,
+                        input_device_index=self.device_index,
+                    )
+                    mic_rate = try_rate
+                    self.logger.info(f"Opened wake-word mic at {try_rate} Hz (device {self.device_index})")
+                    return True
+                except Exception:
+                    continue
+            self.logger.error("Unable to open microphone for wake-word detection at any sample rate")
+            if audio:
+                audio.terminate()
+                audio = None
+            return False
+
+        def _close_stream():
+            nonlocal audio, stream
+            if stream:
+                try:
+                    stream.stop_stream()
+                    stream.close()
+                except Exception:
+                    pass
+                stream = None
+            if audio:
+                try:
+                    audio.terminate()
+                except Exception:
+                    pass
+                audio = None
+            self.logger.info("Wake-word mic released")
+            self._stream_closed_event.set()
+
+        # Initial open
+        if not _open_stream():
+            return
+
         try:
             while not self.shutdown_event.is_set():
+                # --- paused: close the stream and wait ---
                 if not self.listen_event.is_set():
+                    if stream is not None:
+                        _close_stream()
                     time.sleep(0.05)
                     continue
+
+                # --- resumed: reopen the stream if needed ---
+                if stream is None:
+                    if not _open_stream():
+                        time.sleep(1.0)
+                        continue
 
                 try:
                     frame = stream.read(512, exception_on_overflow=False)
@@ -218,9 +260,7 @@ class WakeWordModule:
                     self._emit_detection(confidence=min(rms / dynamic_threshold, 1.0), method="energy")
                     time.sleep(1.0)
         finally:
-            stream.stop_stream()
-            stream.close()
-            audio.terminate()
+            _close_stream()
 
     # ------------------------------------------------------------------
     # Helpers
