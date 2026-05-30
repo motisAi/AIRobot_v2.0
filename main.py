@@ -546,7 +546,7 @@ class AIRobot:
                             temp = int(temp_file.read_text()) / 1000
                             self.brain.health_status['temperature'] = temp
                             
-                            if temp > 70:
+                            if temp > 80:
                                 self.logger.warning(f"High temperature: {temp}°C")
                     except:
                         pass

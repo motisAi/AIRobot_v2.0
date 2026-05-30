@@ -71,6 +71,12 @@ class RobotEvent:
     requires_response: bool = False
     callback: Optional[Callable] = None
 
+    def __lt__(self, other):
+        """Allow PriorityQueue to break ties by timestamp."""
+        if not isinstance(other, RobotEvent):
+            return NotImplemented
+        return self.timestamp < other.timestamp
+
 
 @dataclass
 class Memory:
