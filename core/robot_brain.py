@@ -804,7 +804,7 @@ class RobotBrain:
     
     def _listening_timeout(self):
         """Timeout for listening state"""
-        time.sleep(5.0)  # 5 second timeout
+        time.sleep(10.0)  # 10 second timeout (must be > recording time)
         
         if self.state == RobotState.LISTENING:
             self.logger.info("Listening timeout, returning to idle")

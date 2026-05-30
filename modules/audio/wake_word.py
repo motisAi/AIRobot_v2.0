@@ -226,6 +226,7 @@ class WakeWordModule:
         if not self.brain:
             return
 
+        self.logger.info(f"Wake word detected (method={method}, confidence={confidence:.2f})")
         event = RobotEvent(
             type='wake_word_detected',
             source='wake_word',

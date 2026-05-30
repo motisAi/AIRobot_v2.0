@@ -123,15 +123,20 @@ class SpeechRecognitionModule:
 
         audio_path = None
         try:
+            self.logger.info(f"Recording {duration}s from device {self.device_index} at {self.sample_rate}Hz...")
             audio_path = self._record_audio(duration)
             if not audio_path:
+                self.logger.warning("No audio captured")
                 self._emit_failure("audio_unavailable")
                 return
 
+            self.logger.info(f"Transcribing {audio_path}...")
             text = self._transcribe(audio_path)
             if text:
+                self.logger.info(f"Recognized: '{text}'")
                 self._emit_success(text)
             else:
+                self.logger.warning("Empty transcript — no speech detected")
                 self._emit_failure("empty_transcript")
         except Exception as exc:
             self.logger.error(f"Speech capture failed: {exc}")

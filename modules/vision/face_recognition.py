@@ -309,19 +309,28 @@ class FaceRecognitionModule:
                 # Track face
                 self._update_face_tracking(person_id, face_area)
                 
-                # Emit event if brain is connected
+                # Emit event if brain is connected (throttle: 1 event per face per 10s)
                 if self.brain:
-                    self.brain.emit_event(RobotEvent(
-                        type='face_detected',
-                        source='face_recognition',
-                        data={
-                            'face_id': person_id,
-                            'name': result['name'],
-                            'confidence': similarity,
-                            'is_master': self._is_master(person_id)
-                        },
-                        priority=4
-                    ))
+                    now = time.time()
+                    last_emit = getattr(self, '_last_emit_times', {})
+                    if not hasattr(self, '_last_emit_times'):
+                        self._last_emit_times = {}
+                        last_emit = self._last_emit_times
+                    emit_key = person_id if person_id != 'unknown' else 'unknown'
+                    if emit_key not in last_emit or (now - last_emit[emit_key]) > 10:
+                        last_emit[emit_key] = now
+                        self.logger.info(f"Face detected: {result['name']} (id={person_id}, sim={similarity:.2f})")
+                        self.brain.emit_event(RobotEvent(
+                            type='face_detected',
+                            source='face_recognition',
+                            data={
+                                'face_id': person_id,
+                                'name': result['name'],
+                                'confidence': similarity,
+                                'is_master': self._is_master(person_id)
+                            },
+                            priority=4
+                        ))
                 
                 # Handle learning mode
                 if self.learning_mode and person_id == 'unknown':
@@ -361,8 +370,8 @@ class FaceRecognitionModule:
                 face_rects = face_cascade.detectMultiScale(
                     gray, 
                     scaleFactor=1.1, 
-                    minNeighbors=5,
-                    minSize=(30, 30)
+                    minNeighbors=7,
+                    minSize=(80, 80)
                 )
                 
                 for (x, y, w, h) in face_rects:
