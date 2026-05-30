@@ -54,6 +54,14 @@ class SpeechRecognitionModule:
         self.device_index = hardware_config.speech_device_index
         self.device_name = hardware_config.speech_microphone_name
 
+        # Resolve device index by name at init if not explicitly set
+        if self.device_index is None and self.device_name:
+            self.device_index = self._resolve_microphone_index()
+            if self.device_index is not None:
+                self.logger.info(f"Resolved speech mic '{self.device_name}' -> device {self.device_index}")
+            else:
+                self.logger.warning(f"Could not resolve speech mic '{self.device_name}'")
+
         self.running = False
         self.listener_lock = threading.Lock()
         self.active_listener: Optional[threading.Thread] = None

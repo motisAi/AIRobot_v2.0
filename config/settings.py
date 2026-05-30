@@ -168,8 +168,8 @@ class HardwareConfig:
     microphone_phrase_time_limit: float = 5.0
     wake_word_microphone_name: Optional[str] = "Auto Focus Camera"
     speech_microphone_name: Optional[str] = "USB PnP Sound Device"
-    wake_word_device_index: Optional[int] = 0
-    speech_device_index: Optional[int] = 2
+    wake_word_device_index: Optional[int] = None  # resolved by name at runtime
+    speech_device_index: Optional[int] = None  # resolved by name at runtime
     speech_microphone_rate: int = 44100  # USB PnP Sound Device supports 44100Hz
     
     # ESP32 Serial Communication
