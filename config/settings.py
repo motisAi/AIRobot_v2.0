@@ -162,14 +162,14 @@ class HardwareConfig:
     # Microphone Settings
     microphone_device_index: Optional[int] = None  # None = default device
     microphone_channels: int = 1
-    microphone_rate: int = 16000
+    microphone_rate: int = 44100
     microphone_chunk: int = 1024
     microphone_timeout: float = 0.8
     microphone_phrase_time_limit: float = 5.0
-    wake_word_microphone_name: Optional[str] = None
-    speech_microphone_name: Optional[str] = None
-    wake_word_device_index: Optional[int] = None
-    speech_device_index: Optional[int] = None
+    wake_word_microphone_name: Optional[str] = "Auto Focus Camera"
+    speech_microphone_name: Optional[str] = "USB PnP Sound Device"
+    wake_word_device_index: Optional[int] = 0
+    speech_device_index: Optional[int] = 2
     
     # ESP32 Serial Communication
     esp32_port: str = "/dev/ttyUSB0"  # Might be /dev/ttyACM0

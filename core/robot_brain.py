@@ -24,7 +24,7 @@ from transitions import Machine
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
-from config.settings import config, system_config, behavior_config, security_config
+from config.settings import config, system_config, behavior_config, security_config, PROJECT_ROOT
 
 
 class RobotState(Enum):
@@ -267,6 +267,11 @@ class RobotBrain:
         # Log conversation in persistent DB
         if self.learning_db:
             self.learning_db.log_conversation('user', text, user_id=self.current_user)
+        
+        # Check if we're expecting a name (after "What's your name?")
+        if self.working_memory.get('awaiting_name'):
+            self._learn_new_person_name(text)
+            return
         
         # Analyze intent (AI-powered when available)
         if self.ai_engine:
@@ -915,18 +920,34 @@ class RobotBrain:
         """Handle face detection event"""
         face_id = data.get('face_id')
         confidence = data.get('confidence', 0)
+        is_master = data.get('is_master', False)
+        name = data.get('name', 'unknown')
         
-        if face_id == 'unknown' and confidence > 0.7:
-            # Unknown person
+        now = time.time()
+        # Cooldown: don't greet the same face within 30 seconds
+        last_greet = getattr(self, '_face_greet_times', {})
+        if not hasattr(self, '_face_greet_times'):
+            self._face_greet_times = {}
+            last_greet = self._face_greet_times
+        
+        if face_id in last_greet and (now - last_greet[face_id]) < 30:
+            return  # Already greeted recently
+        
+        if face_id == 'unknown':
+            # Unknown person detected — ask their name
             if behavior_config.learn_new_faces:
+                self._face_greet_times['unknown'] = now
                 response = behavior_config.unknown_person_response
                 self.emit_event(RobotEvent(
                     type='speak',
                     source='brain',
                     data={'text': response}
                 ))
+                # Set state to expect a name response
+                self.working_memory['awaiting_name'] = True
+                self.working_memory['awaiting_name_time'] = now
         
-        elif face_id == security_config.master_user_id:
+        elif is_master or face_id == security_config.master_user_id:
             # Master detected
             self.master_mode = True
             self.authenticated = True
@@ -934,6 +955,7 @@ class RobotBrain:
             if self.ai_engine:
                 self.ai_engine._current_user = face_id
             
+            self._face_greet_times[face_id] = now
             self.emit_event(RobotEvent(
                 type='speak',
                 source='brain',
@@ -947,11 +969,69 @@ class RobotBrain:
             if self.ai_engine:
                 self.ai_engine._current_user = face_id
             
+            self._face_greet_times[face_id] = now
+            # Personalized greeting
+            self.emit_event(RobotEvent(
+                type='speak',
+                source='brain',
+                data={'text': f"Hello {name}! Nice to see you again."}
+            ))
+            
             # Recall memories about this person
             memories = self.recall_memory(face_id)
             if memories:
                 last_interaction = memories[0].context.get('last_seen')
                 # Personalized greeting based on memory
+    
+    def _learn_new_person_name(self, text: str):
+        """Learn the name of a new person from speech input."""
+        self.working_memory.pop('awaiting_name', None)
+        self.working_memory.pop('awaiting_name_time', None)
+        
+        # Extract name — strip common prefixes
+        name = text.strip()
+        for prefix in ['my name is', 'i am', "i'm", 'call me', 'it is', "it's", 'this is']:
+            if name.lower().startswith(prefix):
+                name = name[len(prefix):].strip()
+                break
+        name = name.strip('.,!? ').title()
+        
+        if not name:
+            self.emit_event(RobotEvent(
+                type='speak', source='brain',
+                data={'text': "Sorry, I didn't catch your name. Could you say it again?"}
+            ))
+            self.working_memory['awaiting_name'] = True
+            return
+        
+        self.logger.info(f"Learning new face for: {name}")
+        
+        # Trigger face learning in the face recognition module
+        face_module = self.modules.get('face_recognition')
+        if face_module:
+            success = face_module.learn_face(name)
+            if success:
+                self.emit_event(RobotEvent(
+                    type='speak', source='brain',
+                    data={'text': f"Nice to meet you, {name}! I'll remember your face."}
+                ))
+                if self.learning_db:
+                    self.learning_db.log_conversation(
+                        'system', f'Learned new face: {name}', user_id=name.lower()
+                    )
+            else:
+                self.emit_event(RobotEvent(
+                    type='speak', source='brain',
+                    data={'text': f"Nice to meet you, {name}! I had trouble saving your face, but I'll try again next time."}
+                ))
+        else:
+            self.emit_event(RobotEvent(
+                type='speak', source='brain',
+                data={'text': f"Nice to meet you, {name}!"}
+            ))
+        
+        # Return to idle
+        threading.Thread(target=self._response_complete, daemon=True).start()
     
     def _handle_object_detection(self, data: Dict):
         """Handle object detection event"""

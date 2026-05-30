@@ -314,6 +314,12 @@ class AIRobot:
             'emergency_stop',
             self._handle_emergency_stop
         )
+        
+        # Speak events — route to TTS
+        self.brain.register_event_handler(
+            'speak',
+            self._handle_speak
+        )
     
     def _handle_face_detected(self, event: RobotEvent):
         """Handle face detection event"""
@@ -331,6 +337,17 @@ class AIRobot:
                 },
                 priority=2
             ))
+    
+    def _handle_speak(self, event: RobotEvent):
+        """Route speak events to the TTS module."""
+        text = event.data.get('text', '') if event.data else ''
+        if not text:
+            return
+        tts = self.modules.get('tts')
+        if tts and tts.running:
+            tts.speak(text)
+        else:
+            self.logger.info(f"[SPEAK] {text}")
     
     def _handle_object_detected(self, event: RobotEvent):
         """Handle object detection event — log to learning DB."""
@@ -604,7 +621,8 @@ class AIRobot:
             self.logger.error(f"✗ Error stopping Camera Manager: {e}")
         
         try:
-            self.audio_manager.release_all()
+            for role in list(self.audio_manager._leases.keys()):
+                self.audio_manager.release(role)
             self.logger.info("✓ Audio Manager released")
         except Exception as e:
             self.logger.error(f"✗ Error releasing Audio Manager: {e}")

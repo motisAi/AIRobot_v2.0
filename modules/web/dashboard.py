@@ -226,7 +226,8 @@ class WebDashboard:
 
         # Brain state
         if self.brain:
-            data["state"] = getattr(self.brain, "state", "unknown")
+            state = getattr(self.brain, "state", "unknown")
+            data["state"] = state.name if hasattr(state, 'name') else str(state)
             data["current_user"] = getattr(self.brain, "current_user", None)
 
         # Detected objects (from object_detection module if available)
