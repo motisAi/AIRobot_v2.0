@@ -4,7 +4,8 @@ Face Recognition Module
 Handles face detection, recognition, and learning using DeepFace.
 Manages the face database and provides real-time face identification.
 
-
+Now uses the shared CameraManager instead of opening its own camera
+device, eliminating camera conflicts with other vision modules.
 """
 
 import cv2
@@ -28,7 +29,8 @@ import face_recognition
 # Import configuration
 import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
-from config.settings import config, model_config, hardware_config, security_config
+from config.settings import config, model_config, hardware_config, security_config, system_config
+from core.robot_brain import RobotEvent
 
 
 @dataclass
@@ -53,12 +55,13 @@ class FaceRecognitionModule:
     Provides real-time face detection, recognition, and learning capabilities.
     """
     
-    def __init__(self, brain=None):
+    def __init__(self, brain=None, camera_manager=None):
         """
         Initialize face recognition module
         
         Args:
             brain: Reference to robot brain for event emission
+            camera_manager: Shared CameraManager instance (preferred)
         """
         
         # Logging
@@ -67,6 +70,9 @@ class FaceRecognitionModule:
         
         # Brain reference
         self.brain = brain
+        
+        # Shared camera manager (replaces per-module camera ownership)
+        self.camera_manager = camera_manager
         
         # Configuration
         self.model_name = model_config.face_model
@@ -83,7 +89,7 @@ class FaceRecognitionModule:
         # Load existing faces
         self.load_face_database()
         
-        # Camera setup
+        # Legacy camera support (only used when no camera_manager provided)
         self.camera = None
         self.camera_index = hardware_config.camera_index
         self.resolution = hardware_config.camera_resolution
@@ -108,8 +114,8 @@ class FaceRecognitionModule:
         self.frame_skip = system_config.frame_skip
         
         # Face tracking
-        self.tracked_faces = {}  # Track faces across frames
-        self.face_tracker_timeout = 2.0  # Seconds before face is considered lost
+        self.tracked_faces = {}
+        self.face_tracker_timeout = 2.0
         
         # Learning mode
         self.learning_mode = False
@@ -148,22 +154,24 @@ class FaceRecognitionModule:
     def start(self):
         """Start face recognition system"""
         self.logger.info("Starting face recognition")
-        
-        # Initialize camera if not already done
-        if not self.camera:
-            if not self.initialize_camera():
-                self.logger.error("Cannot start without camera")
-                return False
-        
-        # Set running flag
         self.running = True
         
-        # Start capture thread
-        self.capture_thread = threading.Thread(target=self._capture_loop)
-        self.capture_thread.daemon = True
-        self.capture_thread.start()
+        if self.camera_manager:
+            # Preferred: subscribe to shared camera
+            self.camera_manager.subscribe("face_recognition", self._on_shared_frame)
+            self.logger.info("Face recognition subscribed to shared camera")
+        else:
+            # Legacy: open our own camera
+            if not self.camera:
+                if not self.initialize_camera():
+                    self.logger.error("Cannot start without camera")
+                    return False
+            
+            self.capture_thread = threading.Thread(target=self._capture_loop)
+            self.capture_thread.daemon = True
+            self.capture_thread.start()
         
-        # Start recognition thread
+        # Start recognition thread (processes frames from queue)
         self.recognition_thread = threading.Thread(target=self._recognition_loop)
         self.recognition_thread.daemon = True
         self.recognition_thread.start()
@@ -171,11 +179,21 @@ class FaceRecognitionModule:
         self.logger.info("Face recognition started")
         return True
     
+    def _on_shared_frame(self, frame):
+        """Callback from shared CameraManager — push frame into queue."""
+        if not self.running:
+            return
+        if not self.frame_queue.full():
+            self.frame_queue.put(frame.image)
+    
     def stop(self):
         """Stop face recognition system"""
         self.logger.info("Stopping face recognition")
-        
         self.running = False
+        
+        # Unsubscribe from shared camera
+        if self.camera_manager:
+            self.camera_manager.unsubscribe("face_recognition")
         
         # Wait for threads
         if self.capture_thread:
@@ -183,14 +201,13 @@ class FaceRecognitionModule:
         if self.recognition_thread:
             self.recognition_thread.join(timeout=2.0)
         
-        # Release camera
+        # Release legacy camera
         if self.camera:
             self.camera.release()
             self.camera = None
         
         # Save database
         self.save_face_database()
-        
         self.logger.info("Face recognition stopped")
     
     def _capture_loop(self):
@@ -284,16 +301,17 @@ class FaceRecognitionModule:
                 
                 # Emit event if brain is connected
                 if self.brain:
-                    self.brain.emit_event({
-                        'type': 'face_detected',
-                        'source': 'face_recognition',
-                        'data': {
+                    self.brain.emit_event(RobotEvent(
+                        type='face_detected',
+                        source='face_recognition',
+                        data={
                             'face_id': person_id,
                             'name': result['name'],
                             'confidence': similarity,
                             'is_master': self._is_master(person_id)
-                        }
-                    })
+                        },
+                        priority=4
+                    ))
                 
                 # Handle learning mode
                 if self.learning_mode and person_id == 'unknown':
@@ -673,7 +691,12 @@ class FaceRecognitionModule:
             self.logger.error(f"Failed to save face database: {e}")
     
     def load_face_database(self):
-        """Load face database from disk"""
+        """Load face database from disk.
+        
+        If any entry was enrolled without embeddings (e.g. on Windows where
+        dlib is hard to build), this method computes them from the saved
+        sample images automatically.
+        """
         if not self.database_path.exists():
             self.logger.info("No existing face database found")
             return
@@ -683,26 +706,65 @@ class FaceRecognitionModule:
             with open(self.database_path, 'rb') as f:
                 save_data = pickle.load(f)
             
+            needs_save = False
+            
             # Convert to Face objects
             for person_id, data in save_data.items():
+                embeddings = [np.array(emb) for emb in data['embeddings']]
+                
+                # Auto-compute missing embeddings from saved images
+                metadata = data.get('metadata', {})
+                if not embeddings and metadata.get('needs_encoding', False):
+                    self.logger.info(f"Computing embeddings for {data['name']} from saved images...")
+                    computed = self._compute_embeddings_from_images(person_id)
+                    if computed:
+                        embeddings = computed
+                        data['embeddings'] = [e.tolist() for e in embeddings]
+                        metadata['needs_encoding'] = False
+                        data['metadata'] = metadata
+                        needs_save = True
+                        self.logger.info(f"  Computed {len(embeddings)} embeddings for {data['name']}")
+                
                 face = Face(
                     id=data['id'],
                     name=data['name'],
-                    embeddings=[np.array(emb) for emb in data['embeddings']],
-                    images=[],  # Images loaded separately if needed
+                    embeddings=embeddings,
+                    images=[],
                     first_seen=datetime.fromisoformat(data['first_seen']),
                     last_seen=datetime.fromisoformat(data['last_seen']),
                     interaction_count=data['interaction_count'],
                     is_master=data['is_master'],
                     permissions=data.get('permissions', ['basic']),
-                    metadata=data.get('metadata', {})
+                    metadata=metadata
                 )
                 self.known_faces[person_id] = face
             
             self.logger.info(f"Loaded {len(self.known_faces)} faces from database")
             
+            # Persist newly computed embeddings
+            if needs_save:
+                with open(self.database_path, 'wb') as f:
+                    pickle.dump(save_data, f)
+                self.logger.info("Saved updated embeddings to database")
+            
         except Exception as e:
             self.logger.error(f"Failed to load face database: {e}")
+    
+    def _compute_embeddings_from_images(self, person_id: str) -> List[np.ndarray]:
+        """Compute face embeddings from saved sample images on disk."""
+        embeddings = []
+        for img_path in sorted(self.images_path.glob(f"{person_id}_*.jpg")):
+            try:
+                img = cv2.imread(str(img_path))
+                if img is None:
+                    continue
+                rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                encodings = face_recognition.face_encodings(rgb)
+                if encodings:
+                    embeddings.append(encodings[0])
+            except Exception as e:
+                self.logger.debug(f"Could not encode {img_path.name}: {e}")
+        return embeddings
     
     def get_current_frame(self) -> Optional[np.ndarray]:
         """

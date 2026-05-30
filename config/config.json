@@ -1,0 +1,59 @@
+{
+    "model": {
+        "face_model": "VGG-Face",
+        "face_backend": "opencv",
+        "face_recognition_threshold": 0.4,
+        "object_model": "yolov8n",
+        "object_confidence_threshold": 0.5,
+        "whisper_model": "base",
+        "whisper_language": "en",
+        "tts_model": "tts_models/en/ljspeech/tacotron2-DDC",
+        "tts_speed": 1.0,
+        "wake_word": "gonzo",
+        "wake_word_sensitivity": 0.5,
+        "voice_similarity_threshold": 0.85
+    },
+    "hardware": {
+        "camera_index": 0,
+        "camera_resolution": [640, 480],
+        "camera_fps": 30,
+        "is_esp_connected": false,
+        "esp32_port": "/dev/ttyUSB0",
+        "esp32_baudrate": 115200,
+        "sim7600x_port": "/dev/ttyAMA1",
+        "sim7600x_apn": "internet",
+        "hailo_device_id": 0,
+        "hailo_power_mode": "performance",
+        "wake_word_microphone_name": null,
+        "speech_microphone_name": null
+    },
+    "system": {
+        "enable_hailo": true,
+        "enable_sim7600x": false,
+        "frame_skip": 3,
+        "max_threads": 8,
+        "patrol_mode_enabled": false,
+        "auto_learning_enabled": true,
+        "conversation_timeout": 60.0,
+        "idle_timeout": 300.0,
+        "debug_mode": false,
+        "log_level": "INFO"
+    },
+    "security": {
+        "require_authentication": true,
+        "store_faces": true,
+        "store_recordings": false,
+        "remote_access_enabled": false,
+        "emergency_stop_enabled": true
+    },
+    "behavior": {
+        "robot_name": "Gonzo",
+        "personality_type": "helpful",
+        "response_style": "concise",
+        "learn_new_faces": true,
+        "learn_new_objects": true,
+        "remember_conversations": true,
+        "max_memories": 1000,
+        "auto_charge": false
+    }
+}

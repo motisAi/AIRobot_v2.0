@@ -6,11 +6,11 @@ Coordinates all modules and manages robot behavior.
 
 """
 
-import asyncio
 import threading
 import queue
 import time
 import logging
+import random
 from enum import Enum, auto
 from typing import Dict, List, Optional, Any, Callable
 from dataclasses import dataclass, field
@@ -24,7 +24,7 @@ from transitions import Machine
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
-from config.settings import config, system_config, behavior_config
+from config.settings import config, system_config, behavior_config, security_config
 
 
 class RobotState(Enum):
@@ -142,6 +142,10 @@ class RobotBrain:
         self.interaction_count = 0
         self.uptime_start = time.time()
         
+        # AI Engine and Learning DB — set by main.py after construction
+        self.ai_engine = None
+        self.learning_db = None
+        
     def _setup_state_machine(self):
         """Configure the state machine with transitions"""
         
@@ -248,19 +252,27 @@ class RobotBrain:
         # Visual feedback
         self.set_led_color('blue')
         
-        # Set timeout for listening
-        asyncio.create_task(self._listening_timeout())
+        # Set timeout for listening (thread-safe, no asyncio)
+        threading.Thread(target=self._listening_timeout, daemon=True).start()
     
     def on_process_speech(self, text: str):
-        """Process received speech"""
+        """Process received speech using the AI engine when available."""
         self.logger.info(f"Processing speech: {text}")
         
         # Add to working memory
         self.working_memory['last_input'] = text
         self.working_memory['input_time'] = time.time()
+        self.interaction_count += 1
         
-        # Analyze intent
-        intent = self._analyze_intent(text)
+        # Log conversation in persistent DB
+        if self.learning_db:
+            self.learning_db.log_conversation('user', text, user_id=self.current_user)
+        
+        # Analyze intent (AI-powered when available)
+        if self.ai_engine:
+            intent = self.ai_engine.analyze_intent(text)
+        else:
+            intent = self._analyze_intent(text)
         
         # Make decision
         action = self._make_decision(intent)
@@ -272,17 +284,21 @@ class RobotBrain:
             self.generate_response()
     
     def on_generate_response(self):
-        """Generate and deliver response"""
+        """Generate and deliver response using AI engine."""
         self.logger.info("Generating response")
         
         response = self._generate_response_text()
+        
+        # Log assistant response in persistent DB
+        if self.learning_db and response:
+            self.learning_db.log_conversation('assistant', response, user_id=self.current_user)
         
         # Speak response
         if 'audio' in self.modules and response:
             self.modules['audio'].speak(response)
         
-        # Return to idle after response
-        asyncio.create_task(self._response_complete())
+        # Return to idle after response (thread-safe)
+        threading.Thread(target=self._response_complete, daemon=True).start()
     
     def on_execute_task(self, task: Dict[str, Any]):
         """Execute a specific task"""
@@ -300,8 +316,8 @@ class RobotBrain:
         elif task_type == 'learning':
             self.start_learning(task)
         else:
-            # Generic task execution
-            asyncio.create_task(self._execute_generic_task(task))
+            # Generic task execution (threaded)
+            threading.Thread(target=self._execute_generic_task, args=(task,), daemon=True).start()
     
     def on_start_moving(self, movement_data: Dict):
         """Start movement action"""
@@ -310,8 +326,8 @@ class RobotBrain:
         if 'hardware' in self.modules:
             self.modules['hardware'].move(movement_data)
         
-        # Monitor movement completion
-        asyncio.create_task(self._monitor_movement())
+        # Monitor movement completion (threaded)
+        threading.Thread(target=self._monitor_movement, daemon=True).start()
     
     def on_emergency_stop(self):
         """Handle emergency stop"""
@@ -340,8 +356,8 @@ class RobotBrain:
             'state': self.state.name
         })
         
-        # Attempt recovery
-        asyncio.create_task(self._attempt_recovery(error))
+        # Attempt recovery (threaded)
+        threading.Thread(target=self._attempt_recovery, args=(error,), daemon=True).start()
     
     def on_start_patrol(self):
         """Start patrol mode"""
@@ -351,8 +367,8 @@ class RobotBrain:
         self.working_memory['patrol_start'] = time.time()
         self.working_memory['patrol_waypoints'] = self._generate_patrol_route()
         
-        # Start patrol loop
-        asyncio.create_task(self._patrol_loop())
+        # Start patrol loop (threaded)
+        threading.Thread(target=self._patrol_loop, daemon=True).start()
     
     def on_start_learning(self, learning_data: Dict):
         """Enter learning mode"""
@@ -361,8 +377,8 @@ class RobotBrain:
         # Set learning context
         self.working_memory['learning_context'] = learning_data
         
-        # Start learning process
-        asyncio.create_task(self._learning_process(learning_data))
+        # Start learning process (threaded)
+        threading.Thread(target=self._learning_process, args=(learning_data,), daemon=True).start()
     
     def on_start_observing(self):
         """Start observation mode"""
@@ -370,10 +386,11 @@ class RobotBrain:
         
         # Enable all sensors
         if 'vision' in self.modules:
-            self.modules['vision'].enable_continuous_capture()
+            if hasattr(self.modules['vision'], 'enable_continuous_capture'):
+                self.modules['vision'].enable_continuous_capture()
         
-        # Start analysis
-        asyncio.create_task(self._observation_loop())
+        # Start analysis (threaded)
+        threading.Thread(target=self._observation_loop, daemon=True).start()
     
     def on_raise_alert(self, alert_data: Dict):
         """Handle alert state"""
@@ -582,9 +599,13 @@ class RobotBrain:
         
         # Check permissions first
         if not self._check_permissions(intent['type']):
+            if not self.authenticated:
+                msg = "I need to see your face first. Please look at the camera so I can identify you."
+            else:
+                msg = "Sorry, only my master can give me physical commands like that."
             return {
                 'type': 'response',
-                'message': 'Sorry, you need to be authenticated for that action.'
+                'message': msg
             }
         
         # Make decision based on intent type
@@ -635,44 +656,51 @@ class RobotBrain:
     
     def _check_permissions(self, action_type: str) -> bool:
         """
-        Check if current user has permission for action
+        Check if current user has permission for the requested action.
         
-        Args:
-            action_type: Type of action to check
-            
-        Returns:
-            bool: True if permitted
+        Permission tiers:
+          - Public (anyone): social, query, conversation
+          - Authenticated (known face/voice): object_interaction, learning
+          - Master only: movement, system, hardware commands
         """
-        # Public actions (no auth required)
-        public_actions = ['social', 'query', 'conversation']
-        
-        if action_type in public_actions:
+        # Public actions — no auth needed
+        if action_type in ('social', 'query', 'conversation'):
             return True
         
-        # Check authentication
+        # Everything else requires authentication
         if not self.authenticated:
             return False
         
-        # Master-only actions
-        master_only = ['system', 'learning']
-        
+        # Physical / hardware / system actions — master only
+        master_only = ('system', 'movement', 'hardware')
         if action_type in master_only and not self.master_mode:
+            self.logger.warning(
+                "Non-master user %s attempted privileged action: %s",
+                self.current_user, action_type,
+            )
             return False
         
         return True
     
     def _generate_response_text(self) -> str:
-        """
-        Generate appropriate response text
-        
-        Returns:
-            Response text to speak
-        """
-        # Check context
+        """Generate appropriate response text using AI engine when available."""
         last_input = self.working_memory.get('last_input', '')
         current_task = self.current_task
         
-        # Generate based on context
+        # Use AI engine for intelligent responses
+        if self.ai_engine and last_input:
+            # Build context from sensors
+            context = {}
+            if 'object_detection' in self.modules:
+                objs = self.modules['object_detection'].get_current_objects()
+                if objs:
+                    context['objects'] = [o['label'] for o in objs[:5]]
+            from datetime import datetime as dt
+            context['time'] = dt.now().strftime('%H:%M')
+            
+            return self.ai_engine.think(last_input, context=context)
+        
+        # Fallback: rule-based responses
         if current_task and current_task.get('type') == 'social':
             greeting_type = current_task.get('greeting_type', 'greeting')
             if greeting_type == 'greeting':
@@ -687,7 +715,6 @@ class RobotBrain:
             elif query_type == 'name':
                 return f"My name is {behavior_config.robot_name}"
         
-        # Default response
         return "I understand. How can I help you?"
     
     # Memory Management
@@ -762,146 +789,123 @@ class RobotBrain:
         
         return sorted(relevant, key=lambda x: x.importance, reverse=True)
     
-    # Async Helper Methods
+    # Threaded Helper Methods
     
-    async def _listening_timeout(self):
+    def _listening_timeout(self):
         """Timeout for listening state"""
-        await asyncio.sleep(5.0)  # 5 second timeout
+        time.sleep(5.0)  # 5 second timeout
         
         if self.state == RobotState.LISTENING:
             self.logger.info("Listening timeout, returning to idle")
             self.return_idle()
     
-    async def _response_complete(self):
+    def _response_complete(self):
         """Wait for response completion"""
-        await asyncio.sleep(0.5)  # Brief pause
+        time.sleep(0.5)  # Brief pause
         self.return_idle()
     
-    async def _execute_generic_task(self, task: Dict):
+    def _execute_generic_task(self, task: Dict):
         """Execute a generic task"""
         try:
-            # Simulate task execution
-            await asyncio.sleep(2.0)
-            
+            time.sleep(2.0)
             self.logger.info(f"Task {task.get('name')} completed")
             self.return_idle()
-            
         except Exception as e:
             self.logger.error(f"Task execution failed: {e}")
             self.error_occurred(e)
     
-    async def _monitor_movement(self):
+    def _monitor_movement(self):
         """Monitor movement completion"""
-        # Wait for movement complete event
-        timeout = 10.0  # 10 second timeout
+        timeout = 10.0
         start_time = time.time()
         
         while time.time() - start_time < timeout:
             if self.state != RobotState.MOVING:
                 break
-            await asyncio.sleep(0.1)
+            time.sleep(0.1)
         
         if self.state == RobotState.MOVING:
             self.logger.warning("Movement timeout")
             self.return_idle()
     
-    async def _attempt_recovery(self, error: Exception):
+    def _attempt_recovery(self, error: Exception):
         """Attempt to recover from error"""
         self.logger.info(f"Attempting recovery from {error}")
+        time.sleep(2.0)
         
-        # Wait a moment
-        await asyncio.sleep(2.0)
-        
-        # Try to return to idle
         try:
             self.return_idle()
             self.logger.info("Recovery successful")
         except Exception as e:
             self.logger.error(f"Recovery failed: {e}")
-            # Last resort - emergency stop
             self.emergency_stop()
     
-    async def _patrol_loop(self):
+    def _patrol_loop(self):
         """Main patrol loop"""
         waypoints = self.working_memory.get('patrol_waypoints', [])
         waypoint_index = 0
         
         while self.state == RobotState.PATROLLING:
             if waypoints:
-                # Move to next waypoint
                 waypoint = waypoints[waypoint_index]
                 
-                # Navigate to waypoint
                 self.emit_event(RobotEvent(
                     type='navigate_to',
                     source='brain',
                     data={'destination': waypoint}
                 ))
                 
-                # Wait for arrival or timeout
-                await asyncio.sleep(10.0)
-                
-                # Next waypoint
+                time.sleep(10.0)
                 waypoint_index = (waypoint_index + 1) % len(waypoints)
             
-            # Check for interesting observations
-            if random.random() < 0.1:  # 10% chance
+            if random.random() < 0.1:
                 self.start_observing()
-                await asyncio.sleep(5.0)
+                time.sleep(5.0)
             
-            await asyncio.sleep(1.0)
+            time.sleep(1.0)
     
-    async def _learning_process(self, learning_data: Dict):
+    def _learning_process(self, learning_data: Dict):
         """Process learning task"""
         self.logger.info("Starting learning process")
         
         learning_type = learning_data.get('type', 'general')
         
         if learning_type == 'face':
-            # Learn new face
             if 'vision' in self.modules:
-                result = await self.modules['vision'].learn_face(learning_data)
+                result = self.modules['vision'].learn_face(learning_data)
                 self.add_memory(result, 'long_term', importance=0.9)
         
         elif learning_type == 'object':
-            # Learn new object
-            if 'vision' in self.modules:
-                result = await self.modules['vision'].learn_object(learning_data)
-                self.add_memory(result, 'long_term', importance=0.7)
+            if 'object_detection' in self.modules:
+                objects = self.modules['object_detection'].get_current_objects()
+                if objects and self.learning_db:
+                    for obj in objects:
+                        self.learning_db.save_object(obj['label'])
+                self.add_memory(objects, 'long_term', importance=0.7)
         
         elif learning_type == 'voice':
-            # Learn voice profile
-            if 'audio' in self.modules:
-                result = await self.modules['audio'].learn_voice(learning_data)
+            if 'audio' in self.modules and hasattr(self.modules['audio'], 'learn_voice'):
+                result = self.modules['audio'].learn_voice(learning_data)
                 self.add_memory(result, 'long_term', importance=0.8)
         
-        # Return to previous state
-        await asyncio.sleep(1.0)
+        time.sleep(1.0)
         self.return_idle()
     
-    async def _observation_loop(self):
+    def _observation_loop(self):
         """Continuous observation loop"""
-        observation_duration = 10.0  # Observe for 10 seconds
+        observation_duration = 10.0
         start_time = time.time()
         
         while time.time() - start_time < observation_duration:
             if self.state != RobotState.OBSERVING:
                 break
             
-            # Get vision data
-            if 'vision' in self.modules:
-                observations = self.modules['vision'].get_current_observations()
-                
-                # Process observations
+            if 'object_detection' in self.modules:
+                observations = self.modules['object_detection'].get_current_objects()
                 for obs in observations:
-                    if obs['type'] == 'person':
-                        self._handle_person_observation(obs)
-                    elif obs['type'] == 'object':
-                        self._handle_object_observation(obs)
-                    elif obs['type'] == 'anomaly':
-                        self.raise_alert({'message': f"Anomaly detected: {obs['description']}"})
+                    self._handle_object_observation(obs)
             
-            await asyncio.sleep(0.5)
+            time.sleep(0.5)
         
         self.return_idle()
     
@@ -927,6 +931,8 @@ class RobotBrain:
             self.master_mode = True
             self.authenticated = True
             self.current_user = face_id
+            if self.ai_engine:
+                self.ai_engine._current_user = face_id
             
             self.emit_event(RobotEvent(
                 type='speak',
@@ -938,6 +944,8 @@ class RobotBrain:
             # Known person
             self.authenticated = True
             self.current_user = face_id
+            if self.ai_engine:
+                self.ai_engine._current_user = face_id
             
             # Recall memories about this person
             memories = self.recall_memory(face_id)
@@ -1192,7 +1200,6 @@ class RobotBrain:
 
 
 # Import for other modules
-import random  # For patrol randomness
 
 if __name__ == "__main__":
     """Test the Robot Brain"""

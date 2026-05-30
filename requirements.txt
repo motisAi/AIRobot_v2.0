@@ -1,17 +1,36 @@
-aiohttp>=3.9.0
+# --- Core ---
 colorlog>=6.8.0
-deepface>=0.0.93
-face-recognition>=1.3.0
 numpy>=1.24.0
+psutil>=5.9.0
+python-dotenv>=1.0.1
+requests>=2.31.0
+transitions>=0.9.0
+
+# --- Vision ---
 opencv-python>=4.8.1.78
 pillow>=10.0.0
-psutil>=5.9.0
+deepface>=0.0.93
+
+# --- Audio ---
 pyaudio>=0.2.13
 pvporcupine>=3.0.2
 pvrecorder>=1.2.2
-python-dotenv>=1.0.1
-requests>=2.31.0
 SpeechRecognition>=3.10.0
-TTS>=0.22.0
-transitions>=0.9.0
 webrtcvad>=2.0.10
+pyttsx3>=2.90          # Lightweight offline TTS fallback
+# TTS>=0.22.0          # Coqui TTS — heavy; uncomment if you want neural voices
+
+# --- AI (online) ---
+openai>=1.0
+anthropic>=0.20
+
+# --- AI (offline) ---
+# llama-cpp-python>=0.2   # Uncomment to enable local GGUF LLM inference
+# whisper>=1.0            # OpenAI Whisper for offline STT
+
+# --- Hardware ---
+gpiozero>=2.0            # RPi GPIO helpers
+pyserial>=3.5            # ESP32 / SIM7600X UART
+
+# --- Hailo (system-installed, do NOT pip install) ---
+# hailo-platform  — provided by Hailo SDK deb packages on the Pi

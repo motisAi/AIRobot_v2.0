@@ -1,63 +1,103 @@
-# AIRobot Architecture
+# AIRobot Architecture (v2.0 — RPi5 + Hailo)
 
 ## High-Level Flow
 ```
-Wake Word (USB Mic) --> Speech Recognition --> Robot Brain --> Behaviors
-          ^                                              |
-          |                                              v
-  Text-to-Speech <----------------------------------- Event Bus
+                  ┌──────────────────────────────────────────────────────────┐
+                  │                    CameraManager                        │
+                  │  (single camera, distributes frames to subscribers)     │
+                  └────────┬────────────────────────────┬───────────────────┘
+                           │                            │
+                  ┌────────▼────────┐          ┌────────▼────────┐
+                  │ FaceRecognition │          │ ObjectDetection  │
+                  │   (DeepFace)    │          │ (HailoDetector)  │
+                  └────────┬────────┘          └────────┬────────┘
+                           │ face_detected              │ object_detected
+                  ┌────────▼────────────────────────────▼────────┐
+                  │                  Event Bus                    │
+                  │               (RobotBrain)                    │
+                  └──┬─────┬─────┬─────┬─────┬─────┬─────┬──────┘
+   wake_word_detected│     │     │     │     │     │     │dialogue_idle
+          ┌──────────▼─┐ ┌─▼─────▼─┐ ┌─▼─────▼─┐ ┌─▼─────▼──┐
+          │ WakeWord   │ │ Speech  │ │ TTS     │ │ AIEngine │
+          │ (Porcupine)│ │ Recog.  │ │         │ │ online/  │
+          └────────────┘ │(Whisper)│ │(Coqui/  │ │ offline  │
+                         └─────────┘ │ pyttsx3)│ └──────────┘
+                                     └─────────┘
+            AudioManager — exclusive mic/speaker leases per role
 ```
 
-1. **WakeWordModule** listens for "Gonzo" on a dedicated USB microphone.  It
-   emits a `wake_word_detected` event and pauses itself until dialogue ends.
-2. **SpeechRecognitionModule** records the command on demand, transcribes it via
-   Whisper, and emits `speech_recognized` or `speech_listen_failed` events.
-3. **RobotBrain** (state machine) transitions through `LISTENING -> PROCESSING ->
-   RESPONDING`.  It stores memories, manages authentication, and emits
-   `dialogue_idle` once the state returns to `IDLE`.
-4. **FaceRecognitionModule** continuously feeds `face_detected` events.  When the
-   master user is identified the brain unlocks privileged commands.
-5. **TextToSpeechModule** speaks the response, caches audio files, and emits
-   `speech_complete` events for visibility.
-6. **ESP32Controller** handles low-level hardware when enabled.  All commands go
-   through a queue so high-level behaviors remain asynchronous.
+1. **CameraManager** opens the USB camera once and distributes frames to all
+   vision subscribers (face recognition, object detection, future modules).
+2. **HailoDetector** runs YOLO on the Hailo NPU (HEF model). Falls back to
+   OpenCV DNN ONNX → MobileNet SSD Caffe → disabled if nothing is available.
+3. **ObjectDetectionModule** subscribes to CameraManager, runs HailoDetector,
+   tracks objects across frames via IoU, emits `object_detected` events.
+4. **FaceRecognitionModule** subscribes to CameraManager, runs DeepFace, emits
+   `face_detected` events. Master-user authentication unlocks privileged commands.
+5. **AudioManager** provides exclusive per-role leases (wake_word, dialogue,
+   playback) so modules never fight over mic/speaker devices.
+6. **WakeWordModule** listens for "Gonzo" on a dedicated USB mic, emits
+   `wake_word_detected`, pauses until dialogue completes.
+7. **SpeechRecognitionModule** records on demand, transcribes via Whisper, emits
+   `speech_recognized` or `speech_listen_failed`.
+8. **AIEngine** processes user input: OpenAI/Anthropic API (online) →
+   llama-cpp-python GGUF (offline) → keyword rules (fallback).
+9. **LearningDB** (SQLite) persists memories, faces, objects, conversations,
+   and preferences across reboots.
+10. **RobotBrain** state machine (`transitions`): IDLE → LISTENING → PROCESSING
+    → RESPONDING → IDLE. Manages working/long-term memory, event routing, and
+    behaviour triggers (patrol, learning, observing).
+11. **TextToSpeechModule** speaks the response, caches audio, emits
+    `speech_complete`. Uses Coqui TTS / pyttsx3 / espeak.
+12. **ESP32Controller** handles low-level motor/servo commands over UART (queued).
+13. **SIM7600XController** provides 4G LTE connectivity status and AT commands.
 
 ## Packages and Responsibilities
 | Package | Responsibility |
 | ------- | -------------- |
-| `config` | Loads `.env`, applies platform overrides, exports typed dataclasses. |
+| `config` | Loads `.env`, detects platform (RPi5/Jetson), applies overrides, exports typed dataclasses. |
 | `core` | Robot brain (state machine + memory + decision engine). |
-| `modules/audio` | Wake word, STT, and TTS subsystems with hardware-aware configuration. |
-| `modules/vision` | Face detection and recognition using DeepFace/OpenCV. |
-| `modules/hardware` | ESP32 + SIM7600X controllers with UART status tracking. |
+| `modules/ai` | AI engine (online/offline LLM) + SQLite learning database. |
+| `modules/audio` | Wake word, STT, and TTS with hardware-aware config. |
+| `modules/vision` | Face recognition (DeepFace) + Hailo/OpenCV object detection. |
+| `modules/hardware` | CameraManager, AudioManager, ESP32, SIM7600X controllers. |
 | `modules/connectivity` | Cloud/server bridge (disabled by default). |
 
 ## Event Types
-- `wake_word_detected` – emitted by `WakeWordModule`.
-- `speech_recognized` – emitted by `SpeechRecognitionModule` with `{text}`.
-- `speech_listen_failed` – emitted when audio capture/transcription fails.
-- `dialogue_idle` – emitted by `RobotBrain` after returning to `IDLE`; used to
-  resume the wake-word listener.
-- `speech_complete` – emitted by `TextToSpeechModule` after playback.
-- `face_detected` – emitted by `FaceRecognitionModule` with face metadata.
-- `battery_low`, `object_detected`, `sensor_reading`, etc. – available for
-  hardware integrations.
+| Event | Source | Data |
+| ----- | ------ | ---- |
+| `wake_word_detected` | WakeWordModule | `{}` |
+| `speech_recognized` | SpeechRecognitionModule | `{text}` |
+| `speech_listen_failed` | SpeechRecognitionModule | `{reason}` |
+| `speech_complete` | TextToSpeechModule | `{text}` |
+| `dialogue_idle` | RobotBrain | `{}` |
+| `face_detected` | FaceRecognitionModule | `{face_id, name, confidence, is_master}` |
+| `object_detected` | ObjectDetectionModule | `{label, confidence, bbox, is_new}` |
+| `user_authenticated` | main | `{user_id, method}` |
+| `battery_low` | ESP32Controller | `{level}` |
+| `emergency_stop` | any | `{}` |
 
-## Configuration Flags Worth Knowing
-- `hardware.is_esp_connected` – master switch for the ESP32 controller.
-- `hardware.wake_word_microphone_name` / `speech_microphone_name` – lock each
-  audio module to its own USB mic.
-- `system.platform_name` – set automatically via `config/platforms`.  Additional
-  overrides can be added for other boards.
-- `behavior.auto_charge` – placeholder for autonomous docking logic.
+## Configuration Flags
+- `hardware.is_esp_connected` — gates ESP32 controller.
+- `hardware.wake_word_microphone_name` / `speech_microphone_name` — per-role
+  mic routing via AudioManager.
+- `system.platform_name` — auto-detected (raspberry_pi5 / jetson_nano / generic).
+- `AI_MODE` env var — `auto` (default), `online`, `offline`.
+- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` — cloud LLM credentials.
+- `OFFLINE_MODEL_PATH` — path to local `.gguf` model.
 
 ## Data Storage
-- Faces/embeddings: `data/faces/` and `data/faces/face_db.pkl`.
-- Logs: `data/logs/` (rotating per run).
-- Whisper/TTS caches: `~/.cache/robot_whisper` and `data/tts_cache/`.
-- Emergency snapshots: `data/emergency_*.json`.
+| Path | Contents |
+| ---- | -------- |
+| `data/robot_memory.db` | SQLite learning database (memories, faces, objects, conversations, prefs) |
+| `data/faces/` | Face images and `face_db.pkl` embeddings |
+| `data/models/` | Hailo HEF / ONNX / Caffe model files |
+| `data/logs/` | Rotating per-run log files |
+| `data/tts_cache/` | Cached TTS audio files |
 
-Extend the system by adding new modules inside `modules/` and registering event
-handlers in `main.AIRobot._register_event_handlers`.  The brain only needs the
-`emit_event` contract, so you can plug in additional sensors or services without
-changing the control loop.
+## Adding New Modules
+1. Create your module in `modules/<category>/`.
+2. Accept `camera_manager` and/or `audio_manager` if it uses shared hardware.
+3. Register event handlers in `main.AIRobot._register_event_handlers()`.
+4. Instantiate and wire in `main.AIRobot.initialize_modules()`.
+5. The brain only needs the `emit_event(RobotEvent)` contract.

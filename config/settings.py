@@ -325,6 +325,8 @@ class BehaviorConfig:
 class RobotConfig:
     """Main configuration class that combines all settings"""
     
+    PROJECT_ROOT = PROJECT_ROOT  # Expose as class attribute for modules
+    
     def __init__(self, config_file: Optional[str] = None):
         """
         Initialize robot configuration

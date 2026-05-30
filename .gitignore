@@ -23,6 +23,9 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# Environment secrets
+.env
+
 # Project specific
 data/
 *.log

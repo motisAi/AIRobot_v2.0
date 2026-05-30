@@ -1,84 +1,111 @@
 # AIRobot v2.0
 
-An autonomous home robot stack that combines face recognition, wake-word driven
-speech control, and modular hardware integration.  The code base now targets a
-Jetson Nano running Ubuntu 18.04.6 LTS (aarch64, Tegra 4.9.253) but it gracefully
-falls back to CPU-only execution so you can iterate on any development machine.
+An autonomous AI home-robot stack for **Raspberry Pi 5 + Hailo-8/8L AI
+accelerator**.  The robot sees, listens, speaks, thinks (online & offline),
+and remembers — all while avoiding camera/microphone conflicts through
+shared hardware managers.
 
 ## Key Capabilities
-- Local-first identity management (faces + voices) so the robot always knows its
-  owner without uploading biometric data.
-- Always-on wake-word service for the "Gonzo" keyword with dedicated USB-mic
-  selection and automatic pause/resume during dialogues.
-- Speech pipeline that prefers Whisper for offline transcription and falls back
-  to standard `speech_recognition` if Whisper is not installed yet.
-- Modular robot brain with event bus, short/long term memory, patrol mode, and
-  pluggable behaviors.
-- Optional ESP32 over UART for motor control, servo control, and sensor fusion –
-  toggled via configuration so you can wire it up later without touching code.
+- **Hailo-accelerated vision** — YOLO object detection on the Hailo NPU with
+  automatic fallback to OpenCV DNN (ONNX) or MobileNet SSD (Caffe) on CPU.
+- **Shared camera & audio** — `CameraManager` distributes frames to all vision
+  modules; `AudioManager` provides exclusive-lease mic/speaker access so
+  wake-word, dialogue, and playback never fight.
+- **AI engine (online + offline)** — OpenAI / Anthropic APIs when connected,
+  local GGUF model via `llama-cpp-python` when offline, rule-based fallback
+  when neither is available.
+- **Persistent learning** — SQLite database stores memories, recognised faces,
+  detected objects, conversations, and user preferences across reboots.
+- **Wake-word → dialogue pipeline** — Picovoice Porcupine listens for "Gonzo",
+  Whisper transcribes speech, AI engine generates response, Coqui/pyttsx3
+  speaks it back.
+- **Face recognition** — DeepFace + OpenCV for real-time identification with a
+  persistent face database.
+- **Modular brain** — `transitions`-based state machine with event bus,
+  short/long-term memory, patrol mode, and pluggable behaviours.
+- **ESP32 over UART** — motor/servo control and sensor fusion, toggled via config.
+- **SIM7600X 4G** — LTE connectivity for remote access and cloud API calls.
 
 ## Repository Structure
 ```
-config/              Global settings + platform overrides
+config/              Global settings + platform overrides (RPi5, Jetson)
 core/                Robot brain (state machine, decisions, memory)
 modules/
+  ai/               AI engine (online/offline LLM) + SQLite learning DB
   audio/             Wake word, speech recognition, text to speech
-  hardware/          ESP32 + SIM7600X controllers
-  vision/            Face recognition (DeepFace + OpenCV)
-docs/                Jetson setup, architecture notes, API registration list
+  hardware/          Camera manager, audio manager, ESP32, SIM7600X controllers
+  vision/            Face recognition, Hailo/OpenCV object detection
+docs/                Setup guides, architecture notes, API registration list
 main.py              Entry point that wires every module together
 ```
 
-## Hardware Checklist
-1. **Jetson Nano** with JetPack (CUDA/cuDNN/TensorRT installed) – currently
-   tested on Ubuntu 18.04.6 LTS.
-2. **USB camera with microphone** (camera feed only) + a **dedicated USB
-   microphone** that handles the wake-word thread.
-3. **Optional ESP32** connected through UART. Toggle `is_esp_connected` inside
-   `config/settings.py` (or via a JSON override) when you are ready to bring the
-   board online.
-4. **Optional SIM7600X** module for LTE connectivity. The controller auto-detects
-   Jetson UART mappings and stays idle until the module is plugged in.
+## Hardware
+| Component | Purpose |
+|-----------|---------|
+| **Raspberry Pi 5** (4 GB / 8 GB) | Main compute board |
+| **Hailo-8 / 8L** (PCIe M.2) | AI accelerator for YOLO inference |
+| **USB camera** | Vision pipeline (shared via CameraManager) |
+| **USB microphone(s)** | Wake word + dialogue (managed via AudioManager) |
+| **SIM7600X 4G HAT** | LTE data connectivity |
+| **ESP32** (UART) | Motor / servo / sensor bridge |
 
 ## Software Requirements
-- Python 3.8+ (Jetson Nano images ship with 3.8; see `docs/jetson_setup.md` for
-  the recommended tooling stack).
-- System packages: `portaudio19-dev`, `python3-dev`, `ffmpeg`, `libssl-dev`.
-- Python packages listed in `requirements.txt`. Torch/Whisper wheels are **not**
-  included because Jetson users must install the matching CUDA wheels manually –
-  the setup guide explains the exact commands.
+- **OS**: Ubuntu Server 24.04 LTS (aarch64) or Raspberry Pi OS (64-bit).
+- **Python**: 3.10+.
+- **System packages**: `portaudio19-dev python3-dev ffmpeg libssl-dev`.
+- **Hailo SDK**: Install from Hailo developer portal (deb packages, NOT pip).
+- **Python packages**: `pip install -r requirements.txt`.
 
 ## Quick Start
 1. Create and activate a virtual environment.
-2. Install system libs and Python dependencies (`pip install -r requirements.txt`).
-3. Copy `.env.example` to `.env` (set `ROBOT_NAME`, `MASTER_USER_ID`, and leave
-   API keys blank if you are still evaluating the fallback modes).
-4. Run `python main.py --test` to execute the built-in diagnostics.
-5. Launch the robot normally with `python main.py` once all modules pass.
+2. Install system libs and Python deps: `pip install -r requirements.txt`.
+3. Copy `.env.example` to `.env` and configure:
+   - `ROBOT_NAME`, `MASTER_USER_ID`
+   - `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` (optional — offline fallback works)
+   - `OFFLINE_MODEL_PATH` (path to a `.gguf` model for offline LLM)
+   - `PICOVOICE_ACCESS_KEY` (for wake-word detection)
+4. Run `python main.py`.
 
 ## Configuration Overview
-- **Platform detection** lives in `config/platforms/`. The Jetson helper applies
-  CUDA-friendly defaults (camera indices, FPS caps, TensorRT toggles).
-- **Wake-word + mic routing** is configured inside `HardwareConfig` – specify the
-  ALSA/PortAudio device name so the always-on thread never conflicts with your
-  dialogue microphone.
-- **ESP32 flag** `hardware.is_esp_connected` gates the controller so you can ship
-  the code without serial drivers on your dev box.
-- **Security** settings in `SecurityConfig` keep the master user ID local-only.
+- **Platform detection** in `config/platforms/` auto-detects RPi5 and applies
+  Hailo-friendly defaults (model paths, thread counts, camera settings).
+- **AI mode** controlled by `AI_MODE` env var: `auto` (default), `online`, or
+  `offline`.
+- **Shared camera** — all vision modules subscribe to `CameraManager`; no
+  module opens its own `cv2.VideoCapture`.
+- **Audio leases** — `AudioManager` grants exclusive per-role mic access.
+- **ESP32 flag** `hardware.is_esp_connected` gates the serial controller.
 
-## Documentation Set
-- `docs/jetson_setup.md` – Driver, CUDA, and package installation cheat sheet.
-- `docs/architecture.md` – Module-level diagrams, event flow, and data paths.
-- `docs/service_accounts.txt` – Where to register for Picovoice, OpenAI, etc.
+## Toggling Features (config/config.json)
+Edit `config/config.json` to enable/disable features **without touching code**.
+The file is auto-loaded on startup. Key toggles:
 
-## Next Steps
-- Wire in SLAM/object tracking modules to extend the "environment learning"
-  layer once additional sensors (depth, proximity) are available.
-- Integrate the upcoming on-board CSI camera and proximity sensors by enabling
-  the ESP32 flag and populating the sensor map in `esp32_controller.py`.
-- Connect to your preferred LLM provider once API keys are ready. The
-  `docs/service_accounts.txt` file lists every required account.
+| Setting | Section | What it does |
+|---------|---------|-------------|
+| `is_esp_connected` | hardware | Enable ESP32 motor/servo controller |
+| `enable_sim7600x` | system | Enable SIM7600X 4G modem |
+| `enable_hailo` | system | Use Hailo accelerator for vision |
+| `patrol_mode_enabled` | system | Allow autonomous patrol behaviour |
+| `auto_learning_enabled` | system | Auto-learn objects and faces |
+| `learn_new_faces` | behavior | Auto-enroll unknown faces |
+| `remember_conversations` | behavior | Save chat history per user |
+| `remote_access_enabled` | security | Allow remote control (future app) |
+| `camera_index` | hardware | Which `/dev/video*` to use |
+| `sim7600x_apn` | hardware | Your carrier's APN |
+| `log_level` | system | DEBUG / INFO / WARNING / ERROR |
 
-Please read the docs and configuration comments before altering the code – every
-module contains detailed docstrings so you can reason about the execution flow
-quickly.
+Environment variables (`.env`) override `config.json` for secrets (API keys).
+
+## Self-Learning Features
+The robot learns automatically through normal use:
+- **Conversations** are stored per-user in SQLite and recalled in future chats.
+- **User preferences** ("I like coffee", "call me Dave") are auto-extracted
+  and remembered.
+- **Faces** are enrolled and recognized across reboots.
+- **Objects** detected by the camera are logged with timestamps and counts.
+- **Memories** are promoted from short-term to long-term when importance is high.
+
+## Documentation
+- `docs/rpi5_setup.md` — RPi5 + Hailo installation guide.
+- `docs/architecture.md` — Module diagrams, event flow, data paths.
+- `docs/service_accounts.txt` — Required API accounts and registration steps.

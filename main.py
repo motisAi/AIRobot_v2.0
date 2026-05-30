@@ -4,13 +4,13 @@ AI Robot Main Entry Point
 Main application that initializes all modules and runs the robot system.
 Handles module coordination, error recovery, and graceful shutdown.
 
+Target platform: Raspberry Pi 5 + Hailo AI Accelerator + Ubuntu Server 24.04
 """
 
 import sys
 import signal
 import time
 import logging
-import asyncio
 import argparse
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -22,54 +22,37 @@ import threading
 PROJECT_ROOT = Path(__file__).parent.absolute()
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# Check for Hailo availability
-USE_HAILO = False
-try:
-    import hailo
-    USE_HAILO = True
-    print("✓ Hailo detected - using hardware acceleration")
-except ImportError:
-    print("ℹ Hailo not found - using CPU-only mode")
-
-# Import configuration based on Hailo availability
-if USE_HAILO:
-    from config.settings import (
-        config, 
-        system_config, 
-        hardware_config,
-        security_config,
-        behavior_config
-    )
-else:
-    # Use CPU-optimized settings
-    from config.settings import config as original_config
-    from config.settings import (
-        system_config,
-        hardware_config,
-        security_config,
-        behavior_config
-    )
-    
-    # Override some settings for CPU-only mode
-    from config.settings import ModelConfig
-    model_config = ModelConfig()
-    model_config.whisper_model = "tiny"  # Use smaller model
-    model_config.object_model = "mobilenet"  # Use lighter model
-    system_config.frame_skip = 5  # Process less frames
-    hardware_config.camera_resolution = (320, 240)  # Lower resolution
-    hardware_config.camera_fps = 15  # Lower FPS
-    config = original_config
+# Import configuration — platform detection and Hailo availability are
+# handled inside config.settings automatically.
+from config.settings import (
+    config,
+    system_config,
+    hardware_config,
+    security_config,
+    behavior_config,
+)
 
 # Import core modules
 from core.robot_brain import RobotBrain, RobotEvent
 
-# Import vision modules
-from modules.vision.face_recognition import FaceRecognitionModule
+# Shared hardware managers
+from modules.hardware.camera_manager import CameraManager
+from modules.hardware.audio_manager import AudioManager
 
-# Import audio/hardware modules
+# Vision modules
+from modules.vision.face_recognition import FaceRecognitionModule
+from modules.vision.object_detection import ObjectDetectionModule
+
+# Audio modules
 from modules.audio.wake_word import WakeWordModule
 from modules.audio.speech_recognition import SpeechRecognitionModule
 from modules.audio.text_to_speech import TextToSpeechModule
+
+# AI modules
+from modules.ai.ai_engine import AIEngine
+from modules.ai.learning_db import LearningDB
+
+# Hardware controllers
 from modules.hardware.esp32_controller import ESP32Controller
 
 
@@ -94,9 +77,13 @@ class AIRobot:
         self.logger.info(f"   {behavior_config.robot_name} AI ROBOT SYSTEM")
         self.logger.info("=" * 60)
         
-        # Load custom configuration if provided
+        # Load custom configuration if provided, else try default config.json
+        default_config = PROJECT_ROOT / "config" / "config.json"
         if config_file:
             config.load_from_file(config_file)
+        elif default_config.exists():
+            config.load_from_file(str(default_config))
+            self.logger.info("Loaded settings from config/config.json")
         
         # Validate configuration
         if not config.validate():
@@ -107,6 +94,14 @@ class AIRobot:
         self.running = False
         self.modules: Dict[str, Any] = {}
         self.threads: Dict[str, threading.Thread] = {}
+        
+        # Shared hardware managers
+        self.camera_manager = CameraManager()
+        self.audio_manager = AudioManager()
+        
+        # AI subsystems
+        self.ai_engine = AIEngine()
+        self.learning_db = LearningDB()
         
         # Initialize robot brain
         self.brain = RobotBrain()
@@ -163,19 +158,53 @@ class AIRobot:
         )
     
     def initialize_modules(self):
-        """Initialize all robot modules"""
+        """Initialize all robot modules with shared hardware managers."""
         self.logger.info("Initializing modules...")
         
-        # Initialize Vision Module
+        # --- Wire AI subsystems to brain ---
+        self.brain.ai_engine = self.ai_engine
+        self.brain.learning_db = self.learning_db
+        
+        # Give AI engine access to the learning DB for memory recall
+        self.ai_engine.learning_db = self.learning_db
+        
+        # Start persistent systems first
+        self.learning_db.start()
+        self.ai_engine.start()
+        
+        # --- Start shared Camera Manager ---
+        try:
+            self.logger.info("Starting shared Camera Manager...")
+            self.camera_manager.start()
+            self.logger.info("✓ Camera Manager started")
+        except Exception as e:
+            self.logger.error(f"✗ Camera Manager failed: {e}")
+        
+        # --- Vision: Face Recognition (subscribes to shared camera) ---
         try:
             self.logger.info("Initializing Face Recognition...")
-            self.modules['face_recognition'] = FaceRecognitionModule(self.brain)
+            self.modules['face_recognition'] = FaceRecognitionModule(
+                brain=self.brain,
+                camera_manager=self.camera_manager,
+            )
             self.brain.modules['vision'] = self.modules['face_recognition']
             self.logger.info("✓ Face Recognition initialized")
         except Exception as e:
             self.logger.error(f"✗ Failed to initialize Face Recognition: {e}")
         
-        # Initialize Audio Modules
+        # --- Vision: Object Detection (subscribes to shared camera) ---
+        try:
+            self.logger.info("Initializing Object Detection (Hailo / OpenCV fallback)...")
+            self.modules['object_detection'] = ObjectDetectionModule(
+                camera_manager=self.camera_manager,
+                brain=self.brain,
+            )
+            self.brain.modules['object_detection'] = self.modules['object_detection']
+            self.logger.info("✓ Object Detection initialized")
+        except Exception as e:
+            self.logger.error(f"✗ Failed to initialize Object Detection: {e}")
+        
+        # --- Audio Modules ---
         try:
             self.logger.info("Initializing Wake Word Detection...")
             self.modules['wake_word'] = WakeWordModule(self.brain)
@@ -198,7 +227,7 @@ class AIRobot:
         except Exception as e:
             self.logger.error(f"✗ Failed to initialize TTS: {e}")
         
-        # Initialize Hardware Controllers
+        # --- Hardware Controllers ---
         if hardware_config.is_esp_connected:
             try:
                 self.logger.info("Initializing ESP32 Controller...")
@@ -234,6 +263,12 @@ class AIRobot:
         self.brain.register_event_handler(
             'face_detected',
             self._handle_face_detected
+        )
+        
+        # Object detection events
+        self.brain.register_event_handler(
+            'object_detected',
+            self._handle_object_detected
         )
         
         # Wake word events
@@ -290,6 +325,16 @@ class AIRobot:
                 },
                 priority=2
             ))
+    
+    def _handle_object_detected(self, event: RobotEvent):
+        """Handle object detection event — log to learning DB."""
+        obj_data = event.data
+        label = obj_data.get('label', 'unknown')
+        confidence = obj_data.get('confidence', 0)
+        self.logger.debug(f"Object detected: {label} ({confidence:.0%})")
+        
+        if self.learning_db:
+            self.learning_db.save_object(label, confidence=confidence)
     
     def _handle_wake_word(self, event: RobotEvent):
         """Handle wake word detection"""
@@ -377,13 +422,20 @@ class AIRobot:
         """Start all initialized modules"""
         self.logger.info("Starting modules...")
         
-        # Start face recognition
+        # Start vision modules (they subscribe to shared camera)
         if 'face_recognition' in self.modules:
             try:
                 self.modules['face_recognition'].start()
                 self.logger.info("✓ Face Recognition started")
             except Exception as e:
                 self.logger.error(f"✗ Failed to start Face Recognition: {e}")
+        
+        if 'object_detection' in self.modules:
+            try:
+                self.modules['object_detection'].start()
+                self.logger.info("✓ Object Detection started")
+            except Exception as e:
+                self.logger.error(f"✗ Failed to start Object Detection: {e}")
         
         if 'wake_word' in self.modules:
             try:
@@ -529,6 +581,26 @@ class AIRobot:
                     self.logger.info(f"✓ {name} stopped")
             except Exception as e:
                 self.logger.error(f"✗ Error stopping {name}: {e}")
+        
+        # Stop shared hardware managers
+        try:
+            self.camera_manager.stop()
+            self.logger.info("✓ Camera Manager stopped")
+        except Exception as e:
+            self.logger.error(f"✗ Error stopping Camera Manager: {e}")
+        
+        try:
+            self.audio_manager.release_all()
+            self.logger.info("✓ Audio Manager released")
+        except Exception as e:
+            self.logger.error(f"✗ Error releasing Audio Manager: {e}")
+        
+        # Close learning DB
+        try:
+            self.learning_db.close()
+            self.logger.info("✓ Learning DB closed")
+        except Exception as e:
+            self.logger.error(f"✗ Error closing Learning DB: {e}")
         
         # Save final state
         self._save_state()
