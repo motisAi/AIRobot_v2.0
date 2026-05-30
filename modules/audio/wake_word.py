@@ -168,12 +168,13 @@ class WakeWordModule:
             self.logger.error("PyAudio not installed; cannot run fallback detector")
             return
 
+        mic_rate = hardware_config.microphone_rate
         audio = pyaudio.PyAudio()
         try:
             stream = audio.open(
                 format=pyaudio.paInt16,
                 channels=1,
-                rate=16000,
+                rate=mic_rate,
                 input=True,
                 frames_per_buffer=512,
                 input_device_index=self.device_index,
@@ -294,6 +295,11 @@ class WakeWordModule:
             return True
 
         try:
-            return self.vad.is_speech(frame, 16000)
+            # WebRTC VAD only supports 8000, 16000, 32000, 48000 Hz
+            # If our rate doesn't match, skip VAD and rely on RMS only
+            rate = hardware_config.microphone_rate
+            if rate not in (8000, 16000, 32000, 48000):
+                return True
+            return self.vad.is_speech(frame, rate)
         except Exception:
             return True
