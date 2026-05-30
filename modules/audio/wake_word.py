@@ -290,7 +290,7 @@ class WakeWordModule:
     def _calculate_rms(frame: bytes) -> float:
         """Compute the root-mean-square energy for an audio frame."""
 
-        samples = np.frombuffer(frame, dtype=np.int16)
+        samples = np.frombuffer(frame, dtype=np.int16).astype(np.float64)
         if samples.size == 0:
             return 0.0
         return float(np.sqrt(np.mean(np.square(samples))))

@@ -154,11 +154,15 @@ class AIRobot:
         )
         file_handler.setFormatter(logging.Formatter(log_format))
         
-        # Configure root logger
-        logging.basicConfig(
-            level=getattr(logging, system_config.log_level),
-            handlers=[console_handler, file_handler]
-        )
+        # Configure root logger (force=True needed because imports may have
+        # already called logging.warning(), which auto-adds a default handler
+        # and makes basicConfig() a no-op without force)
+        root = logging.getLogger()
+        root.setLevel(getattr(logging, system_config.log_level))
+        # Remove any auto-added handlers
+        root.handlers.clear()
+        root.addHandler(console_handler)
+        root.addHandler(file_handler)
     
     def initialize_modules(self):
         """Initialize all robot modules with shared hardware managers."""
