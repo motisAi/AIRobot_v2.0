@@ -55,6 +55,9 @@ from modules.ai.learning_db import LearningDB
 # Hardware controllers
 from modules.hardware.esp32_controller import ESP32Controller
 
+# Web dashboard
+from modules.web.dashboard import WebDashboard
+
 
 class AIRobot:
     """
@@ -239,17 +242,20 @@ class AIRobot:
         else:
             self.logger.info("ESP32 flagged as disconnected – simulation mode enabled")
         
-        # Initialize Communication Modules
-        # TODO: Uncomment when modules are created
-        """
+        # --- Web Dashboard ---
         try:
-            if system_config.enable_web_interface:
-                self.logger.info("Initializing Web Server...")
-                self.modules['web_server'] = WebServer(self.brain)
-                self.logger.info("✓ Web Server initialized")
+            self.logger.info("Starting Web Dashboard...")
+            self.dashboard = WebDashboard(
+                camera_manager=self.camera_manager,
+                brain=self.brain,
+                learning_db=self.learning_db,
+                robot_name=behavior_config.robot_name,
+            )
+            self.dashboard.start()
+            self.logger.info("✓ Web Dashboard at http://0.0.0.0:5000")
         except Exception as e:
-            self.logger.error(f"✗ Failed to initialize Web Server: {e}")
-        """
+            self.logger.error(f"✗ Failed to start Web Dashboard: {e}")
+            self.dashboard = None
         
         self.logger.info(f"Initialized {len(self.modules)} modules")
         
@@ -581,6 +587,14 @@ class AIRobot:
                     self.logger.info(f"✓ {name} stopped")
             except Exception as e:
                 self.logger.error(f"✗ Error stopping {name}: {e}")
+        
+        # Stop web dashboard
+        if getattr(self, 'dashboard', None):
+            try:
+                self.dashboard.stop()
+                self.logger.info("✓ Web Dashboard stopped")
+            except Exception as e:
+                self.logger.error(f"✗ Error stopping Dashboard: {e}")
         
         # Stop shared hardware managers
         try:
