@@ -64,8 +64,8 @@ class WakeWordModule:
 
         self.detector_mode = "porcupine" if self._porcupine_ready() else "energy"
         self.porcupine = None
-        self.energy_threshold = 800.0
-        self.energy_window = deque(maxlen=20)
+        self.energy_threshold = 300.0
+        self.energy_window = deque(maxlen=50)
         self.vad = webrtcvad.Vad(2) if VAD_AVAILABLE else None
 
     # ------------------------------------------------------------------
@@ -210,7 +210,7 @@ class WakeWordModule:
 
                 debug_counter += 1
                 if debug_counter % 500 == 0:
-                    self.logger.debug(f"Energy: rms={rms:.0f}, threshold={dynamic_threshold:.0f}, window_mean={np.mean(self.energy_window):.0f}")
+                    self.logger.info(f"Energy: rms={rms:.0f}, threshold={dynamic_threshold:.0f}, window_mean={np.mean(self.energy_window):.0f}")
 
                 if rms > dynamic_threshold:
                     if self.vad and not self._contains_voice(frame):
