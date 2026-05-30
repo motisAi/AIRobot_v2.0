@@ -292,8 +292,8 @@ class FaceRecognitionModule:
                 face_area = face_data['area']
                 confidence = face_data.get('confidence', 0)
                 
-                # Recognize face
-                person_id, similarity = self._recognize_face(face_region)
+                # Recognize face (pass full frame + location for face_recognition lib)
+                person_id, similarity = self._recognize_face(face_region, frame, face_area)
                 
                 # Create result
                 result = {
@@ -401,12 +401,16 @@ class FaceRecognitionModule:
         
         return faces
     
-    def _recognize_face(self, face_image: np.ndarray) -> Tuple[str, float]:
+    def _recognize_face(self, face_image: np.ndarray,
+                        full_frame: np.ndarray = None,
+                        face_area: tuple = None) -> Tuple[str, float]:
         """
         Recognize a face against known faces
         
         Args:
             face_image: Face region image
+            full_frame: Original full camera frame
+            face_area: (x, y, w, h) face location in full_frame
             
         Returns:
             Tuple of (person_id, similarity_score)
@@ -418,7 +422,19 @@ class FaceRecognitionModule:
             # Get face embedding using face_recognition for speed
             face_encoding = None
             if FACE_RECOGNITION_AVAILABLE:
-                face_encoding = face_recognition_lib.face_encodings(face_image)
+                if full_frame is not None and face_area is not None:
+                    # Use full frame + face location (required by dlib backend)
+                    x, y, w, h = face_area
+                    # face_recognition uses (top, right, bottom, left) format
+                    face_locations = [(y, x + w, y + h, x)]
+                    rgb_frame = cv2.cvtColor(full_frame, cv2.COLOR_BGR2RGB)
+                    face_encoding = face_recognition_lib.face_encodings(
+                        rgb_frame, face_locations
+                    )
+                else:
+                    # Fallback: try with cropped face image
+                    rgb_face = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
+                    face_encoding = face_recognition_lib.face_encodings(rgb_face)
             
             if not face_encoding:
                 if not DEEPFACE_AVAILABLE:
