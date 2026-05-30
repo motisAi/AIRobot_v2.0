@@ -21,10 +21,20 @@ from dataclasses import dataclass
 from datetime import datetime
 import queue
 
-# Deep learning libraries
-from deepface import DeepFace
-from deepface.commons import functions
-import face_recognition
+# Deep learning libraries (optional – heavy deps)
+try:
+    from deepface import DeepFace
+    DEEPFACE_AVAILABLE = True
+except ImportError:
+    DeepFace = None
+    DEEPFACE_AVAILABLE = False
+
+try:
+    import face_recognition as face_recognition_lib
+    FACE_RECOGNITION_AVAILABLE = True
+except ImportError:
+    face_recognition_lib = None
+    FACE_RECOGNITION_AVAILABLE = False
 
 # Import configuration
 import sys
@@ -365,6 +375,9 @@ class FaceRecognitionModule:
             
             else:
                 # Use DeepFace with specified backend
+                if not DEEPFACE_AVAILABLE:
+                    self.logger.warning("DeepFace not available, skipping non-opencv detection")
+                    return faces
                 detections = DeepFace.extract_faces(
                     img_path=frame,
                     target_size=(224, 224),
@@ -403,9 +416,13 @@ class FaceRecognitionModule:
         
         try:
             # Get face embedding using face_recognition for speed
-            face_encoding = face_recognition.face_encodings(face_image)
+            face_encoding = None
+            if FACE_RECOGNITION_AVAILABLE:
+                face_encoding = face_recognition_lib.face_encodings(face_image)
             
             if not face_encoding:
+                if not DEEPFACE_AVAILABLE:
+                    return ('unknown', 0.0)
                 # Fallback to DeepFace
                 embedding = DeepFace.represent(
                     img_path=face_image,
@@ -490,7 +507,7 @@ class FaceRecognitionModule:
         for sample in self.learning_samples:
             try:
                 # Get embedding
-                encoding = face_recognition.face_encodings(sample)
+                encoding = face_recognition_lib.face_encodings(sample) if FACE_RECOGNITION_AVAILABLE else None
                 if encoding:
                     embeddings.append(encoding[0])
                     
@@ -759,7 +776,7 @@ class FaceRecognitionModule:
                 if img is None:
                     continue
                 rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                encodings = face_recognition.face_encodings(rgb)
+                encodings = face_recognition_lib.face_encodings(rgb) if FACE_RECOGNITION_AVAILABLE else []
                 if encodings:
                     embeddings.append(encodings[0])
             except Exception as e:
