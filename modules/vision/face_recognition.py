@@ -25,14 +25,14 @@ import queue
 try:
     from deepface import DeepFace
     DEEPFACE_AVAILABLE = True
-except ImportError:
+except (ImportError, SystemExit):
     DeepFace = None
     DEEPFACE_AVAILABLE = False
 
 try:
     import face_recognition as face_recognition_lib
     FACE_RECOGNITION_AVAILABLE = True
-except ImportError:
+except (ImportError, SystemExit):
     face_recognition_lib = None
     FACE_RECOGNITION_AVAILABLE = False
 
