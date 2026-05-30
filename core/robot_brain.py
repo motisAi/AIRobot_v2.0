@@ -245,9 +245,9 @@ class RobotBrain:
         """Called when starting to listen"""
         self.logger.info("Starting to listen for commands")
         
-        # Notify speech module to start recording
+        # Notify speech module to start listening
         if 'speech' in self.modules:
-            self.modules['speech'].start_recording()
+            self.modules['speech'].listen_for_command()
         
         # Visual feedback
         self.set_led_color('blue')
@@ -956,10 +956,11 @@ class RobotBrain:
                 self.ai_engine._current_user = face_id
             
             self._face_greet_times[face_id] = now
+            greeting = f"Welcome back, {name}!" if name and name != 'unknown' else "Welcome back, Master!"
             self.emit_event(RobotEvent(
                 type='speak',
                 source='brain',
-                data={'text': f"Welcome back, Master!"}
+                data={'text': greeting}
             ))
         
         else:

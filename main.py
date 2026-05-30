@@ -15,12 +15,23 @@ import argparse
 from pathlib import Path
 from typing import Dict, Any, Optional
 import json
+import os
 import psutil
 import threading
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.absolute()
 sys.path.insert(0, str(PROJECT_ROOT))
+
+# Load .env file if present (API keys, etc.)
+_env_file = PROJECT_ROOT / '.env'
+if _env_file.exists():
+    with open(_env_file) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith('#') and '=' in _line:
+                _key, _, _val = _line.partition('=')
+                os.environ.setdefault(_key.strip(), _val.strip())
 
 # Import configuration — platform detection and Hailo availability are
 # handled inside config.settings automatically.

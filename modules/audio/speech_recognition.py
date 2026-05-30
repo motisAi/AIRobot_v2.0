@@ -46,7 +46,7 @@ class SpeechRecognitionModule:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.brain = brain
 
-        self.sample_rate = hardware_config.microphone_rate
+        self.sample_rate = getattr(hardware_config, 'speech_microphone_rate', hardware_config.microphone_rate)
         self.chunk_size = hardware_config.microphone_chunk
         self.timeout = hardware_config.microphone_timeout
         self.phrase_limit = hardware_config.microphone_phrase_time_limit
