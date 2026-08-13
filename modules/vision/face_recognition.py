@@ -265,16 +265,33 @@ class FaceRecognitionModule:
             except Exception as e:
                 self.logger.error(f"Recognition error: {e}")
     
+    def _enhance_low_light(self, frame: np.ndarray) -> np.ndarray:
+        """Adaptively brighten dark frames (gamma) for low-light face recog."""
+        if not getattr(hardware_config, 'camera_low_light_boost', True):
+            return frame
+        try:
+            mean = float(np.mean(frame))
+            if mean >= 110:            # already bright enough
+                return frame
+            gamma = 0.5 if mean < 60 else 0.7   # smaller gamma = brighter
+            table = ((np.linspace(0, 1, 256) ** gamma) * 255).astype('uint8')
+            return cv2.LUT(frame, table)
+        except Exception:
+            return frame
+
     def _process_frame(self, frame: np.ndarray):
         """
         Process a single frame for face recognition
-        
+
         Args:
             frame: Video frame to process
         """
         self.processing = True
-        
+
         try:
+            # Brighten dark frames so faces are detectable/recognisable in low
+            # light (adaptive — well-lit frames pass through unchanged).
+            frame = self._enhance_low_light(frame)
             # Detect faces
             faces = self._detect_faces(frame)
             
@@ -332,9 +349,11 @@ class FaceRecognitionModule:
                             priority=4
                         ))
                 
-                # Handle learning mode
+                # Handle learning mode — store (full frame, face box) so we can
+                # encode exactly like recognition does (a bare crop makes dlib's
+                # compute_face_descriptor raise 'incompatible function arguments').
                 if self.learning_mode and person_id == 'unknown':
-                    self.learning_samples.append(face_region)
+                    self.learning_samples.append((frame.copy(), face_area))
             
             # Update results
             self.face_locations = [f['location'] for f in recognized_faces]
@@ -514,28 +533,36 @@ class FaceRecognitionModule:
         self.logger.info(f"Please look at the camera. Collecting {samples} samples...")
         
         start_time = time.time()
-        timeout = 30  # 30 seconds timeout
-        
+        timeout = 15  # seconds
+        min_needed = max(3, samples // 3)
+
         while len(self.learning_samples) < samples and time.time() - start_time < timeout:
-            time.sleep(0.5)
-        
+            time.sleep(0.3)
+
         # Exit learning mode
         self.learning_mode = False
-        
-        if len(self.learning_samples) < samples // 2:
-            self.logger.error(f"Not enough samples collected ({len(self.learning_samples)})")
+        self.logger.info("Collected %d face sample(s) for %s",
+                         len(self.learning_samples), name)
+
+        if len(self.learning_samples) < min_needed:
+            self.logger.warning("Not enough face samples (%d, need %d) — likely "
+                                "poor lighting or no face in view",
+                                len(self.learning_samples), min_needed)
             return False
         
-        # Process samples
+        # Process samples — each is (full_frame, (x, y, w, h))
         embeddings = []
-        
+
         for sample in self.learning_samples:
             try:
-                # Get embedding
-                encoding = face_recognition_lib.face_encodings(sample) if FACE_RECOGNITION_AVAILABLE else None
-                if encoding:
-                    embeddings.append(encoding[0])
-                    
+                if not FACE_RECOGNITION_AVAILABLE:
+                    break
+                frame_img, (x, y, w, h) = sample
+                rgb = cv2.cvtColor(frame_img, cv2.COLOR_BGR2RGB)
+                # face_recognition location format: (top, right, bottom, left)
+                enc = face_recognition_lib.face_encodings(rgb, [(y, x + w, y + h, x)])
+                if enc:
+                    embeddings.append(enc[0])
             except Exception as e:
                 self.logger.error(f"Failed to process sample: {e}")
         
@@ -548,7 +575,7 @@ class FaceRecognitionModule:
             id=self.learning_face_id,
             name=name,
             embeddings=embeddings,
-            images=self.learning_samples[:5],  # Keep first 5 images
+            images=[],  # don't store raw frames in the DB (keeps it small)
             first_seen=datetime.now(),
             last_seen=datetime.now(),
             is_master=(name == security_config.master_user_id),
@@ -923,7 +950,7 @@ class FaceRecognitionModule:
     
     def disable_continuous_capture(self):
         """Disable continuous capture mode"""
-        self.frame_skip = model_config.frame_skip
+        self.frame_skip = system_config.frame_skip
         self.logger.info("Continuous capture disabled")
     
     def shutdown(self):

@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Audit all dependencies for the AI Robot."""
-import subprocess, os, sys
+"""Audit dependencies & hardware for Gonzo (RPi5 + Hailo-10H)."""
+import subprocess, os, json, urllib.request
+from pathlib import Path
+
+def ok(b): return "OK" if b else "-- MISSING"
 
 print("=== Python Packages ===")
 pkgs = [
-    'openai', 'speech_recognition', 'pyttsx3', 'pygame', 'face_recognition',
-    'dlib', 'cv2', 'numpy', 'flask', 'whisper', 'pvporcupine', 'pvrecorder',
-    'webrtcvad', 'pyaudio', 'TTS', 'requests', 'dotenv', 'transitions',
-    'scipy', 'soundfile', 'sounddevice', 'torch', 'torchaudio'
+    'yaml', 'numpy', 'cv2', 'face_recognition', 'dlib', 'pyaudio', 'webrtcvad',
+    'pygame', 'pyttsx3', 'speech_recognition', 'vosk', 'ddgs', 'openai',
+    'anthropic', 'serial', 'gpiozero', 'flask', 'transitions', 'dotenv', 'psutil',
 ]
 for p in pkgs:
     try:
@@ -15,88 +17,71 @@ for p in pkgs:
         v = getattr(m, '__version__', getattr(m, 'VERSION', 'ok'))
         print(f"  {p}: {v}")
     except Exception:
-        print(f"  {p}: NOT INSTALLED")
+        print(f"  {p}: -- NOT INSTALLED (optional for some features)")
 
 print("\n=== System Tools ===")
-for tool in ['flac', 'ffmpeg', 'espeak-ng', 'arecord', 'aplay', 'curl', 'sox']:
+for tool in ['espeak-ng', 'arecord', 'aplay', 'curl', 'ffmpeg', 'hailortcli']:
     r = subprocess.run(['which', tool], capture_output=True)
-    status = "FOUND" if r.returncode == 0 else "MISSING"
-    print(f"  {tool}: {status}")
+    print(f"  {tool}: {ok(r.returncode == 0)}")
 
-print("\n=== Env Vars ===")
-from pathlib import Path
-env_file = Path(__file__).parent / '.env'
-if env_file.exists():
-    for line in env_file.read_text().splitlines():
-        if '=' in line and not line.startswith('#'):
-            key = line.split('=', 1)[0].strip()
-            print(f"  {key}: SET")
-else:
-    print("  .env file: NOT FOUND")
-print(f"  OPENAI_API_KEY (env): {'SET' if os.getenv('OPENAI_API_KEY') else 'NOT SET'}")
-print(f"  PICOVOICE_ACCESS_KEY (env): {'SET' if os.getenv('PICOVOICE_ACCESS_KEY') else 'NOT SET'}")
+print("\n=== Hailo-10H NPU ===")
+try:
+    r = subprocess.run(['hailortcli', 'fw-control', 'identify'],
+                       capture_output=True, text=True, timeout=10)
+    line = next((l for l in r.stdout.splitlines() if 'Architecture' in l), '')
+    print(f"  device: {line.strip() or 'detected' if r.returncode==0 else 'NOT FOUND'}")
+except Exception as e:
+    print(f"  hailortcli: -- {e}")
 
-print("\n=== Microphone Test ===")
+print("\n=== On-device LLM (hailo-ollama) ===")
+try:
+    with urllib.request.urlopen("http://localhost:8000/api/tags", timeout=4) as resp:
+        tags = json.loads(resp.read().decode())
+    models = [m.get('name') for m in tags.get('models', [])]
+    print(f"  installed models: {', '.join(models) or 'NONE (pull one via /hailo/v1/pull)'}")
+except Exception as e:
+    print(f"  hailo-ollama: -- not reachable ({e})")
+
+print("\n=== Wake-word model (Vosk) ===")
+vosk_dir = Path(__file__).parent / 'data' / 'models' / 'vosk-small-en'
+print(f"  {vosk_dir}: {ok(vosk_dir.exists())}")
+
+print("\n=== Config ===")
+try:
+    from config.settings import config, ai_config, microcontroller_config
+    print(f"  config loaded: robot={config.behavior.robot_name}, "
+          f"ai.mode={ai_config.mode}, npu_model={ai_config.hailo_ollama_model}, "
+          f"microcontroller={microcontroller_config.connected}")
+except Exception as e:
+    print(f"  config: -- FAILED {e}")
+
+print("\n=== Microphones ===")
 try:
     import pyaudio
     pa = pyaudio.PyAudio()
-    # Try reading from device 0 (camera mic - wake word)
-    try:
-        s = pa.open(format=pyaudio.paInt16, channels=1, rate=48000, input=True,
-                    frames_per_buffer=512, input_device_index=0)
-        data = s.read(512, exception_on_overflow=False)
-        import struct, math
-        samples = struct.unpack(f'{len(data)//2}h', data)
-        rms = math.sqrt(sum(x*x for x in samples) / len(samples))
-        print(f"  Device 0 (camera mic): OK, RMS={rms:.0f}")
-        s.close()
-    except Exception as e:
-        print(f"  Device 0 (camera mic): FAILED - {e}")
-    # Try reading from device 2 (USB PnP - speech)
-    try:
-        s = pa.open(format=pyaudio.paInt16, channels=1, rate=44100, input=True,
-                    frames_per_buffer=512, input_device_index=2)
-        data = s.read(512, exception_on_overflow=False)
-        samples = struct.unpack(f'{len(data)//2}h', data)
-        rms = math.sqrt(sum(x*x for x in samples) / len(samples))
-        print(f"  Device 2 (USB PnP): OK, RMS={rms:.0f}")
-        s.close()
-    except Exception as e:
-        print(f"  Device 2 (USB PnP): FAILED - {e}")
+    for idx in range(pa.get_device_count()):
+        info = pa.get_device_info_by_index(idx)
+        if info.get('maxInputChannels', 0) > 0:
+            print(f"  [{idx}] {info.get('name')}")
     pa.terminate()
 except Exception as e:
-    print(f"  PyAudio: FAILED - {e}")
+    print(f"  PyAudio: -- FAILED {e}")
 
-print("\n=== OpenAI API Test ===")
-try:
-    from openai import OpenAI
-    from dotenv import load_dotenv
-    load_dotenv()
-    client = OpenAI()
-    r = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": "Say hello in one word"}],
-        max_tokens=5
-    )
-    print(f"  GPT-4o-mini: OK - '{r.choices[0].message.content}'")
-except Exception as e:
-    print(f"  GPT-4o-mini: FAILED - {e}")
+print("\n=== Playback devices ===")
+r = subprocess.run(['aplay', '-l'], capture_output=True, text=True)
+for l in r.stdout.splitlines():
+    if l.startswith('card'):
+        print(f"  {l}")
 
-print("\n=== Google Speech API Test ===")
+print("\n=== Web search (free) ===")
 try:
-    import speech_recognition as sr
-    print(f"  speech_recognition: {sr.__version__}")
-    # Check if FLAC works
-    r2 = subprocess.run(['flac', '--version'], capture_output=True)
-    print(f"  FLAC: {r2.stdout.decode().strip() if r2.returncode == 0 else 'MISSING'}")
+    from modules.ai.web_search import search_web, available
+    res = search_web("hello world", max_results=1)
+    print(f"  backend={available()} results={len(res)} {ok(bool(res))}")
 except Exception as e:
-    print(f"  Speech Recognition: FAILED - {e}")
+    print(f"  web search: -- {e}")
 
-print("\n=== TTS Test ===")
-try:
-    import pyttsx3
-    engine = pyttsx3.init()
-    print(f"  pyttsx3: OK")
-    engine.stop()
-except Exception as e:
-    print(f"  pyttsx3: FAILED - {e}")
+print("\n=== Env / secrets (.env) ===")
+print(f"  OPENAI_API_KEY: {ok(bool(os.getenv('OPENAI_API_KEY')))}")
+print(f"  ANTHROPIC_API_KEY: {ok(bool(os.getenv('ANTHROPIC_API_KEY')))}")
+print("\nDone.")

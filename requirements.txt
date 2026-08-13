@@ -1,36 +1,47 @@
+# ============================================================================
+#  Gonzo AI Robot — Python dependencies  (Raspberry Pi 5 + Hailo-10H)
+#  Install:  venv/bin/pip install -r requirements.txt
+# ============================================================================
+
 # --- Core ---
 colorlog>=6.8.0
-numpy>=1.24.0
+numpy>=1.24,<2         # hailort requires numpy<2 — do NOT upgrade to 2.x
+setuptools<81         # provides pkg_resources for webrtcvad
 psutil>=5.9.0
 python-dotenv>=1.0.1
 requests>=2.31.0
 transitions>=0.9.0
+PyYAML>=6.0            # config/config.yaml loader
 
 # --- Vision ---
-opencv-python>=4.8.1.78
+opencv-python-headless>=4.8.1   # headless build (no GUI) suits a robot
 pillow>=10.0.0
-deepface>=0.0.93
+face-recognition>=1.3.0         # dlib-based face embeddings (CPU)
+# deepface>=0.0.93              # optional alternative face backend (heavy)
 
 # --- Audio ---
 pyaudio>=0.2.13
-pvporcupine>=3.0.2
-pvrecorder>=1.2.2
-SpeechRecognition>=3.10.0
 webrtcvad>=2.0.10
-pyttsx3>=2.90          # Lightweight offline TTS fallback
-# TTS>=0.22.0          # Coqui TTS — heavy; uncomment if you want neural voices
+pygame>=2.5                     # audio playback
+pyttsx3>=2.90                   # offline TTS (espeak-ng)
+SpeechRecognition>=3.10.0       # free Google recognizer for STT (no key)
+vosk>=0.3.45                    # offline wake-word ("Gonzo") + optional STT
+# pvporcupine>=3.0.2            # optional: Picovoice wake word (needs paid key)
+# TTS>=0.22.0                   # optional: Coqui neural voices (heavy)
 
-# --- AI (online) ---
-openai>=1.0
-anthropic>=0.20
-
-# --- AI (offline) ---
-# llama-cpp-python>=0.2   # Uncomment to enable local GGUF LLM inference
-# whisper>=1.0            # OpenAI Whisper for offline STT
+# --- AI ---
+openai>=1.0                     # optional cloud LLM (online / hybrid modes)
+anthropic>=0.20                 # optional cloud LLM (online / hybrid modes)
+ddgs>=6.0                       # free DuckDuckGo web search (no key)
+# llama-cpp-python>=0.2         # optional CPU offline GGUF fallback
 
 # --- Hardware ---
-gpiozero>=2.0            # RPi GPIO helpers
-pyserial>=3.5            # ESP32 / SIM7600X UART
+pyserial>=3.5                   # ESP32 / Pi Zero / SIM7600X UART
+gpiozero>=2.0                   # RPi GPIO helpers
+
+# --- Web dashboard ---
+Flask>=3.0
 
 # --- Hailo (system-installed, do NOT pip install) ---
-# hailo-platform  — provided by Hailo SDK deb packages on the Pi
+# hailort + hailo-ollama are provided by the Hailo SDK / apt packages on the Pi.
+# The on-device LLM is served by the hailo-ollama systemd service (port 8000).

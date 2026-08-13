@@ -239,9 +239,8 @@ class WakeWordModule:
             audio = None
             self._stream_closed_event.set()
 
-        # If the mic isn't ready yet (e.g. USB still settling after a reboot), don't
-        # give up — the loop below re-tries _open() every second until it succeeds.
-        _open()
+        if not _open():
+            return
 
         rec = KaldiRecognizer(self._vosk_model, TARGET_RATE)
         self.logger.info("Vosk wake-word detector active for phrases: %s", self.wake_phrases)

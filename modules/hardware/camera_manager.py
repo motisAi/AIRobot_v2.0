@@ -84,6 +84,7 @@ class CameraManager:
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
             cap.set(cv2.CAP_PROP_FPS, self.fps)
             cap.set(cv2.CAP_PROP_BUFFERSIZE, self.buffer_size)
+            self._apply_camera_controls(cap)
 
             # Verify with a test read
             ok, _ = cap.read()
@@ -100,6 +101,37 @@ class CameraManager:
             self.logger.info("Camera started (index=%d, res=%s, fps=%d)",
                              self.camera_index, self.resolution, self.fps)
             return True
+
+    def _apply_camera_controls(self, cap) -> None:
+        """Apply image controls (brightness/gain/exposure/etc.) from config.
+        Only sets values that are configured (non-None) so we don't override
+        good camera defaults."""
+        try:
+            hc = hardware_config
+            mapping = [
+                (cv2.CAP_PROP_AUTO_EXPOSURE, getattr(hc, 'camera_auto_exposure', None)),
+                (cv2.CAP_PROP_BRIGHTNESS, getattr(hc, 'camera_brightness', None)),
+                (cv2.CAP_PROP_CONTRAST, getattr(hc, 'camera_contrast', None)),
+                (cv2.CAP_PROP_GAIN, getattr(hc, 'camera_gain', None)),
+                (cv2.CAP_PROP_GAMMA, getattr(hc, 'camera_gamma', None)),
+            ]
+            applied = []
+            for prop, val in mapping:
+                if val is not None:
+                    cap.set(prop, float(val))
+                    applied.append((prop, val))
+            # Auto white-balance ON so colours are reported accurately (helps the
+            # vision model), and auto-exposure adapts to the room light.
+            try:
+                cap.set(cv2.CAP_PROP_AUTO_WB, 1.0)
+                if getattr(hc, 'camera_auto_exposure', None) is None:
+                    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3.0)
+            except Exception:
+                pass
+            if applied:
+                self.logger.info("Applied %d camera control(s) from config", len(applied))
+        except Exception as exc:
+            self.logger.warning("Could not apply camera controls: %s", exc)
 
     def stop(self) -> None:
         """Release the camera and stop the capture thread."""

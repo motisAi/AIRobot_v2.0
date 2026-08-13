@@ -90,16 +90,19 @@ def enroll(name: str, samples: int, auto: bool, camera: int = None) -> bool:
         print("  face_recognition not available (dlib not built).")
         print("  Images will be saved; embeddings computed on the Pi.\n")
 
-    if auto:
-        print(f"  Auto-capturing {samples} frames in 3 seconds...")
-        print(f"  Look straight at the camera.\n")
-        time.sleep(3)
-    else:
-        print(f"  Press SPACE to capture (need {samples} shots)")
-        print(f"  Press Q to finish early")
-        print(f"  Try different angles: front, slight left, slight right\n")
+    # Headless capture (OpenCV here has no GUI / imshow). We auto-capture a
+    # spread of samples and prompt you in the TERMINAL to change angles.
+    print(f"  Capturing {samples} samples (headless — no preview window).")
+    print(f"  Look at the camera and SLOWLY change your pose as prompted.\n")
+    time.sleep(2)
 
-    last_auto_time = 0
+    prompts = ["Look STRAIGHT at the camera", "Turn head slightly LEFT",
+               "Turn head slightly RIGHT", "Tilt head UP a bit",
+               "Tilt head DOWN a bit", "Look straight, smile", "Move a bit closer",
+               "Lean back a little"]
+    print(f"  >> {prompts[0]}")
+    last_capture = 0.0
+    no_face_ticks = 0
 
     while len(collected_frames) < samples:
         ret, frame = cap.read()
@@ -107,54 +110,38 @@ def enroll(name: str, samples: int, auto: bool, camera: int = None) -> bool:
             time.sleep(0.1)
             continue
 
-        display = frame.copy()
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = face_cascade.detectMultiScale(gray, 1.3, 5, minSize=(80, 80))
 
-        for (x, y, w, h) in faces:
-            cv2.rectangle(display, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
-        # Status text
-        status = f"Captured: {len(collected_frames)}/{samples}"
-        cv2.putText(display, status, (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-
-        if len(faces) == 0:
-            cv2.putText(display, "No face detected - adjust position", (10, 60),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-
-        cv2.imshow("Master Enrollment", display)
-
-        capture_now = False
-
-        if auto:
-            if len(faces) > 0 and time.time() - last_auto_time > 0.5:
-                capture_now = True
-                last_auto_time = time.time()
-        else:
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord(' ') and len(faces) > 0:
-                capture_now = True
-            elif key == ord('q'):
-                break
-
-        if capture_now and len(faces) > 0:
+        now = time.time()
+        if len(faces) > 0 and now - last_capture > 0.8:
+            # Use the largest detected face, and compute the embedding at that
+            # exact location (matches how the robot recognises faces).
+            x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
             collected_frames.append(frame.copy())
-
-            # Compute embedding if library is available
             if HAS_FR:
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                encodings = fr.face_encodings(rgb)
-                if encodings:
-                    collected_embeddings.append(encodings[0])
-
-            print(f"  [+] Captured sample {len(collected_frames)}/{samples}")
-
-        if auto:
-            cv2.waitKey(1)
+                encs = fr.face_encodings(rgb, [(y, x + w, y + h, x)])
+                if encs:
+                    collected_embeddings.append(encs[0])
+            last_capture = now
+            n = len(collected_frames)
+            print(f"  [+] Captured {n}/{samples}")
+            if n < samples and n % 2 == 0:
+                print(f"  >> {prompts[(n // 2) % len(prompts)]}")
+        elif len(faces) == 0:
+            no_face_ticks += 1
+            if no_face_ticks % 25 == 0:
+                print("  (no face detected — move into frame / improve lighting)")
+            time.sleep(0.04)
+        else:
+            time.sleep(0.04)
 
     cap.release()
-    cv2.destroyAllWindows()
+    try:
+        cv2.destroyAllWindows()
+    except Exception:
+        pass
 
     if len(collected_frames) < MIN_SAMPLES:
         print(f"\nERROR: Only got {len(collected_frames)} samples (need {MIN_SAMPLES}).")

@@ -1,111 +1,200 @@
-# AIRobot v2.0
+# Stella — Smart Self‑Learning AI Robot 🤖
 
-An autonomous AI home-robot stack for **Raspberry Pi 5 + Hailo-8/8L AI
-accelerator**.  The robot sees, listens, speaks, thinks (online & offline),
-and remembers — all while avoiding camera/microphone conflicts through
-shared hardware managers.
+Stella runs on a **Raspberry Pi 5 + Hailo‑10H**, with a USB camera (+ mic) and a
+**5‑finger robotic hand** driven by an **ESP32‑S3 + PCA9685**. She recognises faces,
+holds a natural spoken conversation, thinks with cloud + on‑device LLMs, sees through a
+vision model, plays music, guards your home, gestures and mirrors your hand, has a
+cheeky personality (and a memory for grudges), and talks to you on Telegram.
 
-## Key Capabilities
-- **Hailo-accelerated vision** — YOLO object detection on the Hailo NPU with
-  automatic fallback to OpenCV DNN (ONNX) or MobileNet SSD (Caffe) on CPU.
-- **Shared camera & audio** — `CameraManager` distributes frames to all vision
-  modules; `AudioManager` provides exclusive-lease mic/speaker access so
-  wake-word, dialogue, and playback never fight.
-- **AI engine (online + offline)** — OpenAI / Anthropic APIs when connected,
-  local GGUF model via `llama-cpp-python` when offline, rule-based fallback
-  when neither is available.
-- **Persistent learning** — SQLite database stores memories, recognised faces,
-  detected objects, conversations, and user preferences across reboots.
-- **Wake-word → dialogue pipeline** — Picovoice Porcupine listens for "Gonzo",
-  Whisper transcribes speech, AI engine generates response, Coqui/pyttsx3
-  speaks it back.
-- **Face recognition** — DeepFace + OpenCV for real-time identification with a
-  persistent face database.
-- **Modular brain** — `transitions`-based state machine with event bus,
-  short/long-term memory, patrol mode, and pluggable behaviours.
-- **ESP32 over UART** — motor/servo control and sensor fusion, toggled via config.
-- **SIM7600X 4G** — LTE connectivity for remote access and cloud API calls.
+Everything is driven by one human‑editable file — **`config/config.yaml`** — and all
+secrets live in **`.env`**.
 
-## Repository Structure
+---
+
+## Table of contents
+- [Capabilities](#capabilities)
+- [Everyday commands](#everyday-commands)
+- [The robotic hand](#the-robotic-hand)
+- [Home guard](#home-guard)
+- [Configuration](#configuration-configconfigyaml)
+- [Secrets (.env)](#secrets-env)
+- [Hardware setup](#hardware-setup)
+- [Run & ops](#run--ops)
+- [Known quirks](#known-quirks--notes)
+
+---
+
+## Capabilities
+
+### 🎙️ Voice & conversation
+- **Wake word** ("Stella" / "hey Stella"), fully offline (Vosk).
+- **Two microphones, two roles** — the camera mic listens for the wake word; the USB
+  mic captures your command (voice‑activity detection ends the sentence).
+- **Multi‑turn conversation** — greets you, chats, and after a few seconds of silence
+  asks "anything else?", then says goodbye and returns to listening.
+- **Natural neural voice** — Piper (offline). Speech‑to‑text: Google online with an
+  offline Vosk fallback.
+- **Language switch** — `behavior.language: en | he` flips listening + speaking between
+  **English and Hebrew** (her brain understands both).
+- **Clean pages** — each conversation starts fresh (no old topics bleeding in); the
+  transcript is still saved to her memory DB.
+
+### 🧠 Brain (LLM) with graceful fallback
+Tried in order, so she stays responsive:
+1. **Groq Llama‑3.3‑70B** — smartest (free tier; daily token cap).
+2. **Groq GPT‑OSS‑20B** — kicks in when the 70B hits its rate‑limit (fresh, separate limit).
+3. **On‑device Hailo‑10H NPU** — free/offline fallback *(currently unstable on this box —
+   see [Known quirks](#known-quirks--notes))*.
+
+Extras: a **60s cooldown** skips a rate‑limited provider instead of retrying it every
+turn; **per‑user memory** (names, preferences) in a SQLite DB; and **anti‑fabrication**
+rules so she won't invent facts or fire tools on vague "yes/ok" filler.
+
+### 🤖 Agent tools (she chooses when to use them, and chains them)
+| Tool | What it does |
+|------|--------------|
+| `get_time` | Current time; pass a timezone for other cities (e.g. Tokyo → `Asia/Tokyo`) |
+| `get_weather` | Live weather for a place (wttr.in) |
+| `web_search` | Look things up on the web (DuckDuckGo, free) |
+| `look` | Describe what the camera sees / "what am I holding?" (Moondream VLM) |
+| `set_reminder` | "Remind me in 10 minutes to…" (spoken when due; survives restarts) |
+| `control_device` | "Turn on the light" → microcontroller (ESP32/Pi Zero) |
+| `set_guard_mode` | Arm / disarm home guard |
+| `send_telegram` | Send you a text message |
+| `send_photo` | Snap the camera and send it to your phone |
+| `play_music` / `stop_music` | Play/stop a song from YouTube |
+| `do_gesture` | Hand gestures: wave, thumbs_up, point, peace, fist, count, middle_finger… |
+
+### 👁️ Vision
+- **Face recognition + enrollment** — recognises people by face, asks a new person's
+  name and remembers them; master authentication for privileged actions. Tunable
+  threshold + an "identity memory" window so she doesn't forget you mid‑chat.
+- **Scene / object understanding** — Moondream cloud VLM answers "what do you see?".
+- **Auto white‑balance / exposure** for accurate colours.
+
+### ✋ Robotic hand (5 fingers)
+- **Gestures:** `fist`, `open`, `hello` wave, `point`, `peace`, `thumbs_up`, `count N`,
+  and `middle_finger` (plus a **hold‑until‑told** version).
+- **Copy‑my‑hand mirror** — say *"copy my hand"* and she mirrors your finger positions
+  in real time (MediaPipe hand‑landmarks → her servos). *"stop copying"* ends it.
+- **Homes to a closed fist** on boot (its known start position).
+
+### 🎭 Personality
+- **Greets with a wave**, waves goodbye, **thumbs‑up** when pleased.
+- **Insult her** → 🖕 + a random sassy comeback ("Back at you", "Go look in the mirror"…),
+  and she **holds a grudge** (saved to that person's memory) — turning cold and reluctant
+  until they **apologise**, then she forgives.
+- Ask *"what would you do if I called you stupid?"* → she **demonstrates** (no real grudge).
+
+### 🛡️ Home guard / security mode
+- **Motion & body detection** — while armed, alerts on **movement or a human body**
+  (no clear face needed). Face recognition only *suppresses* alerts (so she ignores you),
+  and she **auto‑disarms + greets** when she recognises you.
+- **Interactive phone alert:** 📸 photo → *"Do you recognise this person? YES/NO"* →
+  if **NO** → *"Sound the alarm? YES"* → she **screams** a loud, distorted alarm voice:
+  *"THIEF! GET OUT NOW!"* 🚨
+- Arm/disarm by **voice** (arming goes quiet after), **Telegram**, or dashboard. Tunable
+  sensitivity; disarming is master‑only (recent face, pass‑phrase, or the phone).
+
+### 🎵 Music
+- **"Play \<song\>"** → she finds it on YouTube, confirms, and plays it out the speaker
+  (yt‑dlp + ffmpeg — no mpv needed).
+- Live control: **louder / quieter / set volume to N / pause / resume / stop / what's playing?**
+- **Auto‑ducks** and frees the speaker while she talks, then resumes.
+
+### 📱 Telegram (two‑way)
+- Guard alerts (photo + text), and **chat with her from anywhere** — questions,
+  "what do you see?", reminders, device control, music, gestures, `guard on/off`, `status`.
+- Fresh context per chat (no stale‑topic bleed).
+
+### 🔌 Real‑world & 🖥️ ops
+- **Microcontroller/hand bridge** over USB‑serial (ESP32‑S3). Navigation hooks ready for
+  future wheels/sensors.
+- **Web dashboard** at `http://<pi-ip>:5000` (camera + type/read the conversation).
+- **Autostart** as a systemd service (`airobot`) on boot.
+
+---
+
+## Everyday commands
+- "Stella… what's the weather in Tel Aviv?" · "what time is it in Tokyo?"
+- "What do you see?" / "What am I holding?"  (she points 👉 then looks)
+- "Play *Bohemian Rhapsody*" → then "louder" / "pause" / "stop the music"
+- "Remind me in 15 minutes to take out the laundry."
+- "Copy my hand" → mirror → "stop copying"
+- "Give me a thumbs up" · "count to three" · (insult her → 🖕 → "sorry" → forgiven)
+- "Guard on" (goes quiet, armed) / "I'm home" / "Guard off"
+- Telegram: "status", "send me a picture", "what do you see?"
+
+---
+
+## The robotic hand
+**Channels (PCA9685):** `0=pinky 1=ring 2=middle 3=index 4=thumb`.
+Calibrated pulses — open `{1500,1500,1500,1500,2000}` · closed `{2600,2600,2600,2600,500}`.
+
+**Firmware** (`firmware/hand/hand.ino`, ESP32‑S3, I²C on GPIO 8/9). Serial @115200:
 ```
-config/              Global settings + platform overrides (RPi5, Jetson)
-core/                Robot brain (state machine, decisions, memory)
-modules/
-  ai/               AI engine (online/offline LLM) + SQLite learning DB
-  audio/             Wake word, speech recognition, text to speech
-  hardware/          Camera manager, audio manager, ESP32, SIM7600X controllers
-  vision/            Face recognition, Hailo/OpenCV object detection
-docs/                Setup guides, architecture notes, API registration list
-main.py              Entry point that wires every module together
+fist | open | home | hello | middle | middlehold | point | peace | thumbs | count N
+f <ch> open|close      one finger        m <ch> <us>   smooth move
+s <ch> <us>            instant            set <5bits>   all fingers at once (mirror)
+lower | rest           back to fist       pos           report tracked positions
+speed slow|med|fast    off <ch> | off all
+```
+Stella holds one persistent serial link on **`/dev/ttyACM0`** (`hand.enabled: true`).
+**Reflashing:** `sudo systemctl stop airobot`, upload, `sudo systemctl start airobot`.
+Build target: `esp32:esp32:esp32s3`.
+
+---
+
+## Home guard
+1. Arm: *"Stella, guard on"* (she goes quiet), Telegram `guard on`, or dashboard.
+2. On movement/a body while armed → 📸 + *"Do you recognise this person? YES/NO"* to Telegram.
+3. **NO** → *"Sound the alarm? YES"* → **screamed alarm** on the speaker.
+4. Disarm: your face (auto), *"I'm home"* (recent‑face/pass‑phrase gated), Telegram, or dashboard.
+
+---
+
+## Configuration (`config/config.yaml`)
+- `behavior.robot_name`, `behavior.language` (`en`/`he`)
+- `ai.mode`, `ai.online_provider`, `ai.groq_model`, `ai.groq_fast_model`, `ai.fallback_order`
+- `security.guard_*` — motion detection, sensitivity, alert cooldown, disarm rules
+- `hand.enabled`, `hand.serial_port`, `hand.wave_on_greeting`, `hand.middle_finger_on_insult`
+- `music.default_volume`, `music.duck_volume`, `music.volume_step`
+- `hardware.audio_output_*` — where she speaks (HDMI auto‑detected)
+- `model.face_recognition_threshold`, `model.piper_*`, `model.wake_word_*`
+- `system.enable_hailo` (leave `false` so the NPU is free for the offline LLM)
+
+## Secrets (`.env`)
+One documented file with every key: `GROQ_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`GEMINI_API_KEY`, `MOONDREAM_API_KEY`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`.
+Edit a value → `sudo systemctl restart airobot`.
+
+---
+
+## Hardware setup
+- **Pi 5 + Hailo‑10H**, USB camera (+ mic), USB mic, HDMI monitor for audio.
+- **Hand:** ESP32‑S3 → PCA9685 `3V3→VCC, GND→GND, GPIO8→SDA, GPIO9→SCL`. Servos on
+  channels 0–4. **External 5–6 V** into the PCA9685 **V+** screw terminal (never from the
+  ESP32/Pi), with a **common ground**. Firm, soldered power wiring (loose jumpers cause shorts).
+- **Deps:** `arduino-cli` + `esp32` core (flashing), `yt-dlp`+`ffmpeg` (music),
+  `mediapipe 0.10.18`+`opencv 4.11`+`numpy<2` (hand mirror), `face_recognition`, `vosk`, `piper`.
+
+## Run & ops
+```bash
+sudo systemctl restart airobot     # start/restart (autostarts on boot)
+journalctl -u airobot -f           # watch logs   (app log: data/logs/gonzo.log)
+# manual: source venv/bin/activate && python main.py
 ```
 
-## Hardware
-| Component | Purpose |
-|-----------|---------|
-| **Raspberry Pi 5** (4 GB / 8 GB) | Main compute board |
-| **Hailo-8 / 8L** (PCIe M.2) | AI accelerator for YOLO inference |
-| **USB camera** | Vision pipeline (shared via CameraManager) |
-| **USB microphone(s)** | Wake word + dialogue (managed via AudioManager) |
-| **SIM7600X 4G HAT** | LTE data connectivity |
-| **ESP32** (UART) | Motor / servo / sensor bridge |
+---
 
-## Software Requirements
-- **OS**: Ubuntu Server 24.04 LTS (aarch64) or Raspberry Pi OS (64-bit).
-- **Python**: 3.10+.
-- **System packages**: `portaudio19-dev python3-dev ffmpeg libssl-dev`.
-- **Hailo SDK**: Install from Hailo developer portal (deb packages, NOT pip).
-- **Python packages**: `pip install -r requirements.txt`.
-
-## Quick Start
-1. Create and activate a virtual environment.
-2. Install system libs and Python deps: `pip install -r requirements.txt`.
-3. Copy `.env.example` to `.env` and configure:
-   - `ROBOT_NAME`, `MASTER_USER_ID`
-   - `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` (optional — offline fallback works)
-   - `OFFLINE_MODEL_PATH` (path to a `.gguf` model for offline LLM)
-   - `PICOVOICE_ACCESS_KEY` (for wake-word detection)
-4. Run `python main.py`.
-
-## Configuration Overview
-- **Platform detection** in `config/platforms/` auto-detects RPi5 and applies
-  Hailo-friendly defaults (model paths, thread counts, camera settings).
-- **AI mode** controlled by `AI_MODE` env var: `auto` (default), `online`, or
-  `offline`.
-- **Shared camera** — all vision modules subscribe to `CameraManager`; no
-  module opens its own `cv2.VideoCapture`.
-- **Audio leases** — `AudioManager` grants exclusive per-role mic access.
-- **ESP32 flag** `hardware.is_esp_connected` gates the serial controller.
-
-## Toggling Features (config/config.json)
-Edit `config/config.json` to enable/disable features **without touching code**.
-The file is auto-loaded on startup. Key toggles:
-
-| Setting | Section | What it does |
-|---------|---------|-------------|
-| `is_esp_connected` | hardware | Enable ESP32 motor/servo controller |
-| `enable_sim7600x` | system | Enable SIM7600X 4G modem |
-| `enable_hailo` | system | Use Hailo accelerator for vision |
-| `patrol_mode_enabled` | system | Allow autonomous patrol behaviour |
-| `auto_learning_enabled` | system | Auto-learn objects and faces |
-| `learn_new_faces` | behavior | Auto-enroll unknown faces |
-| `remember_conversations` | behavior | Save chat history per user |
-| `remote_access_enabled` | security | Allow remote control (future app) |
-| `camera_index` | hardware | Which `/dev/video*` to use |
-| `sim7600x_apn` | hardware | Your carrier's APN |
-| `log_level` | system | DEBUG / INFO / WARNING / ERROR |
-
-Environment variables (`.env`) override `config.json` for secrets (API keys).
-
-## Self-Learning Features
-The robot learns automatically through normal use:
-- **Conversations** are stored per-user in SQLite and recalled in future chats.
-- **User preferences** ("I like coffee", "call me Dave") are auto-extracted
-  and remembered.
-- **Faces** are enrolled and recognized across reboots.
-- **Objects** detected by the camera are logged with timestamps and counts.
-- **Memories** are promoted from short-term to long-term when importance is high.
-
-## Documentation
-- `docs/rpi5_setup.md` — RPi5 + Hailo installation guide.
-- `docs/architecture.md` — Module diagrams, event flow, data paths.
-- `docs/service_accounts.txt` — Required API accounts and registration steps.
+## Known quirks & notes
+- **Offline Hailo LLM is unstable** — the NPU reports `OUT_OF_PHYSICAL_DEVICES` and stays
+  jammed even after a reboot (a Hailo gen‑AI‑stack quirk). She relies on Groq; a small
+  CPU model (llama.cpp) is the reliable offline alternative if needed.
+- **HDMI audio card numbers reshuffle** across reboots — the TTS **auto‑detects** the live
+  HDMI port, but it can throw a transient "device busy". A USB audio dongle would be rock‑solid.
+- **USB device order reshuffles** on reboot — if the wake mic fails to open at boot, a
+  restart re‑opens it; the ESP32 hand is expected on `/dev/ttyACM0`.
+- **Groq free tier** rate‑limits (per‑minute + daily). GPT‑OSS‑20B adds headroom; a paid
+  Claude/Anthropic key removes the limits entirely.
+- Reflashing the ESP32 requires stopping `airobot` first (it holds the serial port).

@@ -47,13 +47,3 @@ __all__ = [
     "is_raspberry_pi5",
     "apply_rpi5_overrides",
 ]
-
-
-__all__ = [
-    "detect_platform",
-    "PLATFORM_OVERRIDES",
-    "is_raspberry_pi5",
-    "apply_rpi5_overrides",
-    "is_jetson_nano",
-    "apply_jetson_overrides",
-]

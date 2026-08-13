@@ -24,8 +24,8 @@
         "sim7600x_apn": "internet",
         "hailo_device_id": 0,
         "hailo_power_mode": "performance",
-        "wake_word_microphone_name": null,
-        "speech_microphone_name": null
+        "wake_word_microphone_name": "Auto Focus Camera",
+        "speech_microphone_name": "USB PnP Sound Device"
     },
     "system": {
         "enable_hailo": true,

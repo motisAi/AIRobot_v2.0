@@ -8,18 +8,35 @@ cycles.
 
 from __future__ import annotations
 
+import json
 import logging
 import tempfile
 import threading
 import time
 import wave
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
+
+import numpy as np
 
 try:
     import pyaudio
 except ImportError:  # pragma: no cover - optional dependency
     pyaudio = None
+
+try:
+    import webrtcvad
+    VAD_AVAILABLE = True
+except Exception:  # pragma: no cover
+    webrtcvad = None
+    VAD_AVAILABLE = False
+
+try:
+    from vosk import Model as VoskModel, KaldiRecognizer, SetLogLevel as _VoskSetLogLevel
+    _VoskSetLogLevel(-1)
+    VOSK_AVAILABLE = True
+except Exception:  # pragma: no cover
+    VOSK_AVAILABLE = False
 
 try:
     import whisper
@@ -35,8 +52,11 @@ except ImportError:  # pragma: no cover - optional dependency
     sr = None
     SR_AVAILABLE = False
 
-from config.settings import model_config, hardware_config
+from config.settings import model_config, hardware_config, behavior_config
 from core.robot_brain import RobotEvent
+
+# behavior.language -> Google STT BCP-47 code
+_STT_LANG = {"en": "en-US", "he": "he-IL"}
 
 
 class SpeechRecognitionModule:
@@ -74,6 +94,16 @@ class SpeechRecognitionModule:
 
         self.recognizer = sr.Recognizer() if SR_AVAILABLE else None
 
+        # Recognition language (Google STT), from the single behavior.language switch.
+        _lang = (getattr(behavior_config, 'language', 'en') or 'en').lower()
+        self.stt_language = _STT_LANG.get(_lang[:2], "en-US")
+
+        # STT mode + offline Vosk fallback
+        self.stt_mode = getattr(model_config, 'stt_mode', 'auto').lower()
+        self.vosk_model_path = getattr(model_config, 'vosk_model_path', '')
+        self._vosk_model = None
+        self._vad = webrtcvad.Vad(2) if VAD_AVAILABLE else None
+
     # ------------------------------------------------------------------
     def start(self) -> None:
         """Flag the service as available. Heavy models load lazily."""
@@ -96,6 +126,134 @@ class SpeechRecognitionModule:
         if self.active_listener and self.active_listener.is_alive():
             self.active_listener.join(timeout=2.0)
         self.active_listener = None
+
+    # ------------------------------------------------------------------
+    # Synchronous, silence-aware capture for the conversation session
+    # ------------------------------------------------------------------
+    def capture_utterance(self, start_timeout: float = 12.0,
+                          end_silence: float = 1.2,
+                          max_seconds: float = 12.0) -> Optional[str]:
+        """Record ONE spoken sentence and return its transcript (or None).
+
+        Uses voice-activity detection so it stops as soon as you finish talking.
+        Returns None if the user says nothing within ``start_timeout`` seconds.
+        Blocking — call from the conversation loop, not the event thread.
+        """
+        if pyaudio is None:
+            return None
+        from modules.hardware.audio_pa import get_pa
+        audio = get_pa()
+        if audio is None:
+            return None
+
+        TARGET = 16000
+        frame_ms = 30
+        # Open the command mic; prefer 16k, else 44.1k and resample per-frame.
+        stream = None
+        rate = TARGET
+        for r in (16000, 44100, 48000):
+            try:
+                stream = audio.open(format=pyaudio.paInt16, channels=1, rate=r,
+                                    input=True, frames_per_buffer=int(r * frame_ms / 1000),
+                                    input_device_index=self.device_index)
+                rate = r
+                break
+            except Exception:
+                stream = None
+        if stream is None:
+            self.logger.error("Could not open command mic for capture")
+            return None
+
+        in_frame = int(rate * frame_ms / 1000)
+        voiced: List[bytes] = []
+        started = False
+        t0 = time.time()
+        silence = 0.0
+        try:
+            while True:
+                try:
+                    raw = stream.read(in_frame, exception_on_overflow=False)
+                except Exception:
+                    break
+                frame16 = raw if rate == TARGET else self._resample_16k(raw, rate)
+                speech = self._is_speech(frame16)
+                if not started:
+                    if speech:
+                        started = True
+                        voiced.append(frame16)
+                    elif time.time() - t0 > start_timeout:
+                        return None  # user never spoke
+                else:
+                    voiced.append(frame16)
+                    silence = 0.0 if speech else silence + frame_ms / 1000.0
+                    if silence >= end_silence:
+                        break
+                    if len(voiced) * frame_ms / 1000.0 >= max_seconds:
+                        break
+        finally:
+            try:
+                stream.stop_stream(); stream.close()
+            except Exception:
+                pass
+
+        if not voiced:
+            return None
+        return self._transcribe_pcm16k(b''.join(voiced))
+
+    def _is_speech(self, frame16k: bytes) -> bool:
+        """VAD on a 30ms/16k frame; if VAD unavailable, use an energy gate."""
+        if self._vad is not None and len(frame16k) == 960:
+            try:
+                return self._vad.is_speech(frame16k, 16000)
+            except Exception:
+                pass
+        samples = np.frombuffer(frame16k, dtype=np.int16).astype(np.float32)
+        return samples.size > 0 and float(np.sqrt((samples ** 2).mean())) > 300
+
+    @staticmethod
+    def _resample_16k(raw: bytes, src_rate: int) -> bytes:
+        s = np.frombuffer(raw, dtype=np.int16)
+        if s.size == 0:
+            return raw
+        n = int(round(s.size * 16000 / src_rate))
+        x_old = np.linspace(0, 1, s.size, endpoint=False)
+        x_new = np.linspace(0, 1, n, endpoint=False)
+        return np.interp(x_new, x_old, s).astype(np.int16).tobytes()
+
+    def _transcribe_pcm16k(self, pcm: bytes) -> Optional[str]:
+        """Transcribe raw 16k mono PCM using the configured STT mode."""
+        mode = self.stt_mode
+        # Google first (unless forced vosk)
+        if mode in ('auto', 'google') and SR_AVAILABLE and self.recognizer:
+            try:
+                audio = sr.AudioData(pcm, 16000, 2)
+                text = self.recognizer.recognize_google(audio, language=self.stt_language)
+                if text:
+                    return text.strip()
+            except Exception as exc:
+                if mode == 'google':
+                    self.logger.warning("Google STT failed: %s", exc)
+                    return None
+                self.logger.info("Google STT unavailable, trying offline Vosk: %s", exc)
+        # Vosk offline fallback
+        if mode in ('auto', 'vosk'):
+            return self._transcribe_vosk(pcm)
+        return None
+
+    def _transcribe_vosk(self, pcm: bytes) -> Optional[str]:
+        if not VOSK_AVAILABLE or not self.vosk_model_path or not Path(self.vosk_model_path).exists():
+            return None
+        try:
+            if self._vosk_model is None:
+                self._vosk_model = VoskModel(str(self.vosk_model_path))
+            rec = KaldiRecognizer(self._vosk_model, 16000)
+            rec.AcceptWaveform(pcm)
+            result = json.loads(rec.FinalResult())
+            text = result.get('text', '').strip()
+            return text or None
+        except Exception as exc:
+            self.logger.warning("Vosk STT failed: %s", exc)
+            return None
 
     # ------------------------------------------------------------------
     def listen_for_command(self, timeout: Optional[float] = None) -> bool:
@@ -166,7 +324,11 @@ class SpeechRecognitionModule:
             return None
 
         device_index = self._resolve_microphone_index()
-        audio = pyaudio.PyAudio()
+        from modules.hardware.audio_pa import get_pa
+        audio = get_pa()          # shared instance — do NOT terminate it
+        if audio is None:
+            self.logger.error("PyAudio missing; cannot capture audio")
+            return None
         try:
             stream = audio.open(
                 format=pyaudio.paInt16,
@@ -195,7 +357,6 @@ class SpeechRecognitionModule:
         finally:
             stream.stop_stream()
             stream.close()
-            audio.terminate()
 
         if not frames:
             return None
@@ -231,7 +392,7 @@ class SpeechRecognitionModule:
             with sr.AudioFile(audio_path) as source:
                 audio = self.recognizer.record(source)
             try:
-                text = self.recognizer.recognize_google(audio)
+                text = self.recognizer.recognize_google(audio, language=self.stt_language)
                 return text.strip()
             except Exception as exc:
                 self.logger.warning(f"SpeechRecognition fallback failed: {exc}")
@@ -261,10 +422,13 @@ class SpeechRecognitionModule:
         if self.device_index is not None:
             return self.device_index
 
-        if pyaudio is None or not self.device_name:
+        if not self.device_name:
             return None
 
-        audio = pyaudio.PyAudio()
+        from modules.hardware.audio_pa import get_pa
+        audio = get_pa()          # shared instance — do NOT terminate it
+        if audio is None:
+            return None
         try:
             for idx in range(audio.get_device_count()):
                 info = audio.get_device_info_by_index(idx)
@@ -272,8 +436,6 @@ class SpeechRecognitionModule:
                     return idx
         except Exception as exc:
             self.logger.warning(f"Could not enumerate microphones: {exc}")
-        finally:
-            audio.terminate()
 
         return None
 

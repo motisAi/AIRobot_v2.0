@@ -35,3 +35,15 @@ package_info.json
 *.tmp
 *.temp
 venv/Scripts/activate
+
+# secrets & strays
+.env.bak*
+/chat_gonzo.py
+/test_hailo_ai.py
+/test_offline_quick.py
+/config.yaml
+/manager.py
+/robot_brain.py
+/settings.py
+/telegram_bridge.py
+/text_to_speech.py

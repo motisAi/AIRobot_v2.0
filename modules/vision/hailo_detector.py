@@ -110,7 +110,11 @@ class HailoDetector:
         if self._init_opencv_dnn():
             return True
 
-        self.logger.error("No object detection backend available")
+        self.logger.info(
+            "Object detection off — no model present (optional camera object "
+            "recognition). Add a YOLO .hef (Hailo) or .onnx to data/models/ to "
+            "enable it. Face, voice, and chat are unaffected."
+        )
         return False
 
     def stop(self) -> None:

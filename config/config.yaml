@@ -1,0 +1,263 @@
+# ============================================================================
+#  GONZO  —  AI Robot control panel   (Raspberry Pi 5 + Hailo-10H)
+# ============================================================================
+#  This is the ONE file you edit to change how the robot behaves.
+#  Change a value, save, and restart the robot (python main.py).
+#  Secrets (API keys) do NOT go here — they live in the .env file.
+#
+#  Booleans are true / false (lowercase). Lists use [a, b, c].
+# ============================================================================
+
+# ------------------------------------------------------------------ behavior
+behavior:
+  robot_name: "Stella"           # what the robot calls itself
+  language: "en"                 # en = English | he = Hebrew (Stella listens & speaks in this)
+  personality_type: "helpful"    # helpful | playful | professional
+  response_style: "concise"      # concise | detailed | chatty
+  greeting_message: "Hi {name}, how can I help you?"
+  goodbye_message: "Goodbye! Talk to you later."
+  unknown_person_response: "Hello! I don't think we've met. What's your name?"
+  learn_new_faces: true          # auto-remember new people it meets
+  learn_new_objects: true
+  remember_conversations: true   # save chat history per user
+  max_memories: 1000
+
+# ------------------------------------------------------------------ AI brain
+# How Gonzo thinks and talks back.
+ai:
+  # mode:
+  #   local  -> on-device Hailo-10H NPU (qwen 1.5B). Free, offline, ~5s. Works
+  #             now with no signup. Decent with web search.   <-- default
+  #   online -> cloud provider (see online_provider). Fast + smart, but needs a
+  #             working API key with credits/quota.
+  #   hybrid -> local by default, escalate hard questions to the cloud.
+  mode: "online"
+  allow_cloud_escalation: false  # only used when mode: hybrid
+
+  # Cloud provider for online/hybrid mode:
+  #   groq      -> FREE, fast, smart (Llama-3.3-70B). Get a key at
+  #                console.groq.com (2-min signup), put GROQ_API_KEY in .env,
+  #                then set mode: online.  <-- recommended smart+free option
+  #   openai    -> gpt-4o-mini (needs OPENAI_API_KEY with credits).
+  #   anthropic -> claude (needs ANTHROPIC_API_KEY).
+  online_provider: "groq"
+  openai_model: "gpt-4o-mini"
+  groq_model: "llama-3.3-70b-versatile"
+  # Faster Groq model (same key) used automatically when the big model is
+  # rate-limited (HTTP 429). NOTE: llama-3.1-8b-instant is decommissioned
+  # 2026-08-16 -> replaced with Groq's recommended GPT-OSS-20B.
+  groq_fast_model: "openai/gpt-oss-20b"
+  gemini_model: "gemini-2.0-flash"
+  # Fallback chain: tries these in order per question; on rate-limit/error it
+  # falls to the next. "hailo" (local NPU) always works, so Stella never dies.
+  # Only providers with a key/availability are used. Keys go in .env:
+  #   GROQ_API_KEY=...   GEMINI_API_KEY=...   (OPENAI_API_KEY / ANTHROPIC_API_KEY)
+  fallback_order: ["groq", "gemini", "hailo"]
+
+  anthropic_model: "claude-sonnet-4-20250514"
+
+  # On-device NPU model (used for local mode / offline fallback).
+  # NOTE: llama3.2:3b is installed but TOO SLOW on this NPU (85s warmup, queries
+  # time out). qwen2.5-instruct:1.5b is the only responsive local model (~5s).
+  hailo_ollama_url: "http://localhost:8000"
+  hailo_ollama_model: "qwen2.5-instruct:1.5b"
+
+  max_tokens: 400
+  temperature: 0.7
+  conversation_memory_turns: 20
+
+# ------------------------------------------------------------------ conversation
+# How the multi-turn voice chat behaves after the wake word.
+conversation:
+  idle_timeout: 12.0        # seconds of silence before Gonzo asks "anything else?"
+  end_silence: 1.2          # seconds of silence that ends one spoken sentence
+  max_utterance: 12.0       # max length of a single spoken sentence (seconds)
+  greeting: "How can I help you{name}?"
+  wrap_up_prompt: "Can I do anything else for you{name}?"
+  farewell: "See you later{name}!"
+  # Saying any of these ends the conversation:
+  end_phrases: ["no", "nope", "no thanks", "nothing", "that's all", "bye",
+                "goodbye", "see you", "stop", "i'm good", "nothing else"]
+
+# ------------------------------------------------------------------ music
+# Play songs from YouTube out loud (needs mpv + yt-dlp on the Pi).
+# Ask: "play <song>", then "louder"/"quieter"/"pause"/"resume"/"stop the music".
+music:
+  default_volume: 70   # 0-100
+  duck_volume: 25      # music drops to this while Stella talks to you, then restores
+  volume_step: 20      # louder/quieter step size
+
+# ------------------------------------------------------------------ web search
+# Lets Gonzo answer questions using the live web, like Claude/Copilot.
+web_search:
+  enabled: true
+  provider: "duckduckgo"         # duckduckgo = free, no API key | none = off
+  max_results: 4
+  allow_auto_search: true        # let the AI decide when to look things up
+  timeout: 8.0
+
+# ------------------------------------------------------------------ robotic hand
+# 5-finger hand on ESP32 + PCA9685 (gesture firmware in firmware/hand/).
+# Stella holds one serial link and sends gestures: hello, fist, open, thumbs,
+# point, peace, middle, count. NOTE: while enabled, Stella owns /dev/ttyUSB0 —
+# stop the service before re-flashing the ESP32.
+hand:
+  enabled: true                  # set true after flashing the ESP32 hand firmware
+  serial_port: "/dev/ttyACM0"    # ESP32-S3 UART bridge (classic ESP32 was ttyUSB0)
+  baud: 115200
+  wave_on_greeting: true         # wave hello when she greets someone
+  wave_on_goodbye: true          # wave when she says goodbye
+  middle_finger_on_insult: true  # cheeky: middle finger when insulted
+
+# ------------------------------------------------------------------ microcontroller
+# Bridge to an ESP32 / Pi Zero / Arduino for real-world commands
+# ("turn on the light"). While `connected: false`, commands are logged only —
+# so you can build & test the whole voice pipeline before wiring hardware.
+microcontroller:
+  connected: false               # <-- set true when your ESP32 / Pi Zero is wired
+  transport: "serial"            # serial (USB-UART) | network (Wi-Fi) | null
+  # --- serial transport (ESP32/Arduino over USB) ---
+  serial_port: "/dev/ttyUSB0"
+  baudrate: 115200
+  protocol: "json"               # json (line-delimited) | esp32_binary
+  # --- network transport (Pi Zero / ESP32 over Wi-Fi) ---
+  host: "192.168.11.50"
+  port: 8080
+  network_path: "/command"
+  ack_timeout: 2.0
+  # Say-this  ->  device the firmware understands.
+  device_map:
+    light: "relay1"
+    lamp: "relay1"
+    fan: "relay2"
+    door: "servo1"
+
+# ------------------------------------------------------------------ navigation
+# Future "learn my house" / autonomous driving. All off until hardware exists.
+navigation:
+  enabled: false
+  has_wheels: false
+  has_lidar: false
+  has_ultrasonic: false
+  has_imu: false
+  has_wheel_encoders: false
+  mapping_enabled: false         # build & save a map of the house
+  exploration_enabled: false     # drive around autonomously to map
+  obstacle_stop_distance_cm: 20.0
+  cruise_speed: 0.3              # m/s
+
+# ------------------------------------------------------------------ hardware
+hardware:
+  # --- camera ---
+  camera_index: 0                # /dev/video0 (the USB camera)
+  camera_resolution: [640, 480]
+  camera_fps: 30
+  # Image controls for low light. Leave null to keep the camera's defaults.
+  # For a dim room, try camera_gain: 150 and/or camera_brightness: 60.
+  camera_auto_exposure: 3        # 3 = auto (adapts to light), 1 = manual
+  camera_brightness: null        # e.g. 40-120
+  camera_contrast: null
+  camera_gain: null              # e.g. 100-200 brightens low light
+  camera_gamma: null
+  # Adaptive software brightening for face recognition (recommended on).
+  camera_low_light_boost: true
+
+  # --- microphones (two mics, one per role) ---
+  # Wake word listens on the camera's built-in mic; commands use the USB mic.
+  wake_word_microphone_name: "Auto Focus Camera"   # ALSA card 1 (camera mic)
+  speech_microphone_name: "USB PnP Sound Device"    # ALSA card 0 (USB mic)
+  microphone_rate: 48000
+  speech_microphone_rate: 44100
+
+  # --- audio OUTPUT (where Gonzo speaks) ---
+  # Sound currently goes to the HDMI monitor (plugged into HDMI port 2 = ALSA
+  # card 3 / vc4hdmi1). To use a USB speaker later: set audio_output_device to
+  # "usb" and audio_output_card to null (it will auto-detect the USB card).
+  audio_output_device: "hdmi"    # hdmi | usb | analog | auto | default
+  # Leave card null: HDMI card numbers change across reboots, so Stella now
+  # auto-detects which HDMI port the monitor is on. Set a name like "vc4hdmi0"
+  # to pin a specific port, or a card index to force one.
+  audio_output_card: null        # null = auto-detect the live HDMI port
+  audio_output_name: null        # or pin by name, e.g. "vc4hdmi0" / "USB"
+  tts_output_volume: 1.0
+
+  # --- Hailo-10H AI accelerator ---
+  hailo_device_id: 0
+  hailo_power_mode: "performance"
+
+# ------------------------------------------------------------------ model tuning
+model:
+  # Face recognition (runs on CPU via OpenCV + dlib; no cloud, no key)
+  face_backend: "opencv"                 # opencv (Haar) detector
+  # dlib embeddings need EUCLIDEAN distance (~0.6), NOT cosine. Cosine made a
+  # stranger look identical to the master. Lower threshold = stricter.
+  face_distance_metric: "euclidean"
+  face_recognition_threshold: 0.50
+  # Object detection (Hailo NPU). Needs a compiled .hef in data/models/.
+  object_model: "yolov8n"
+  object_confidence_threshold: 0.5
+  # Voice (Text-to-Speech). Piper = free, offline, natural neural voice.
+  tts_engine: "piper"                       # piper | pyttsx3 | espeak
+  # Voice — swap piper_voice to any INSTALLED voice below (all in data/models/piper/):
+  #   en_US-amy-medium                  US female (default, warm)
+  #   en_US-lessac-medium               US female (clear, neutral)
+  #   en_US-ryan-medium                 US male   (calm, natural)
+  #   en_GB-alba-medium                 UK female
+  #   en_GB-northern_english_male-medium  UK male
+  # More voices to download: https://huggingface.co/rhasspy/piper-voices
+  # (grab the .onnx + .onnx.json into data/models/piper/, then point here.)
+  piper_voice: "data/models/piper/en_US-amy-medium.onnx"
+  piper_length_scale: 0.92                   # speed: >1 slower, <1 faster (try 1.1 / 0.9)
+  piper_pitch: 2.0                           # pitch in semitones: + higher, - lower (try 2 / -2)
+  piper_noise_scale: 0.667                   # expressiveness: 0.3 flat .. 1.0 varied
+
+  # Speech-to-text: auto (Google online, fall back to offline Vosk) | google | vosk
+  stt_mode: "auto"
+
+  # Wake word — "Hey Gonzo"
+  wake_word: "stella"
+  wake_word_sensitivity: 0.5
+  # Engine: auto | vosk | porcupine | energy
+  #   vosk   = free, offline, detects the actual word "gonzo" (recommended)
+  #   energy = loudness trigger (works with zero setup, not word-specific)
+  wake_word_engine: "auto"
+  wake_word_phrases: ["stella", "hey stella"]
+
+# ------------------------------------------------------------------ system
+system:
+  enable_hailo: false            # leave the Hailo NPU for hailo-ollama (offline LLM);
+                                 # Stella's vision uses the cloud VLM, not the NPU
+
+  frame_skip: 8                  # process every Nth camera frame (higher = lighter CPU)
+  auto_learning_enabled: true
+  patrol_mode_enabled: false
+  conversation_timeout: 60.0     # seconds of silence before ending a chat
+  idle_timeout: 300.0
+  log_level: "INFO"              # DEBUG | INFO | WARNING | ERROR
+  debug_mode: false
+
+# ------------------------------------------------------------------ security
+security:
+  require_authentication: true   # master-only for privileged commands
+  store_faces: true
+  store_recordings: false
+  # Web dashboard on http://<pi-ip>:5000 (LAN only) — shows the camera and lets
+  # you see/type the conversation from your Windows browser. Turn off if unwanted.
+  remote_access_enabled: true
+  emergency_stop_enabled: true
+
+  # --- Home guard / security mode ---
+  # When ARMED (say "Stella, guard on", text "guard on", or use the dashboard),
+  # Stella alerts on MOVEMENT or a human body — she does NOT need to see a face.
+  # Face recognition only SUPPRESSES alerts: if she sees you, it's not an intruder.
+  guard_motion_detection: true   # alert on movement/body (recommended). false = face-only
+  guard_sensitivity: "medium"    # low | medium | high  (high = smaller movements trigger)
+  guard_detect_person: true      # label alerts "a person" vs "movement" (body detector)
+  guard_alert_cooldown: 30       # minimum seconds between phone alerts
+  # Disarming is master-only (arming isn't). Face rec is unreliable, so the
+  # reliable way to disarm by VOICE is a secret phrase; Telegram always works.
+  guard_require_master_to_disarm: true   # false = anyone present can say "guard off"
+  guard_disarm_phrase: ""        # set a secret word, e.g. "sunflower" -> "guard off sunflower"
+  # Seconds Stella keeps trusting who she saw (so she doesn't ask your name again
+  # 8s after glancing at you). Higher bridges sparse face detection.
+  identity_memory_seconds: 60

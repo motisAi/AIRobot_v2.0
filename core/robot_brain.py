@@ -140,8 +140,12 @@ class RobotBrain:
         
         # User management
         self.current_user = None
+        self.current_user_name = None
+        self.last_face_time = 0.0   # when a face was last recognised (for identity recency)
+        self.last_master_time = 0.0  # when the master was last recognised (guard grace)
         self.authenticated = False
         self.master_mode = False
+        self.guard_mode = False   # home-guard/security mode (master toggles it)
         
         # Timers and counters
         self.idle_timer = 0
@@ -248,16 +252,41 @@ class RobotBrain:
             self.execute_task(task)
     
     def on_start_listening(self):
-        """Called when starting to listen"""
+        """Called when starting to listen. Greets the user (by name when known)
+        or asks a newcomer for their name, then opens the command mic."""
         self.logger.info("Starting to listen for commands")
-        
+
+        audio = self.modules.get('audio')
+
+        # Decide the spoken prompt based on who (if anyone) we recognise.
+        if self.authenticated and self.current_user_name:
+            prompt = f"How can I help you, {self.current_user_name}?"
+        elif self.authenticated:
+            prompt = "How can I help you?"
+        elif behavior_config.learn_new_faces:
+            # We don't know who this is — ask their name and route the next
+            # utterance into the enrollment flow.
+            prompt = behavior_config.unknown_person_response
+            self.working_memory['awaiting_name'] = True
+            self.working_memory['awaiting_name_time'] = time.time()
+        else:
+            prompt = "How can I help you?"
+
+        # Speak the prompt to completion (so we don't record our own voice),
+        # then open the command microphone.
+        if audio is not None and hasattr(audio, 'speak'):
+            try:
+                audio.speak(prompt, wait=True)
+            except Exception as e:
+                self.logger.warning("Greeting prompt failed: %s", e)
+
+        # Visual feedback
+        self.set_led_color('blue')
+
         # Notify speech module to start listening
         if 'speech' in self.modules:
             self.modules['speech'].listen_for_command()
-        
-        # Visual feedback
-        self.set_led_color('blue')
-        
+
         # Set timeout for listening (thread-safe, no asyncio)
         threading.Thread(target=self._listening_timeout, daemon=True).start()
     
@@ -326,32 +355,83 @@ class RobotBrain:
             self.start_observing()
         elif task_type == 'learning':
             self.start_learning(task)
+        elif task_type == 'device_control':
+            threading.Thread(target=self._execute_device_control, args=(task,), daemon=True).start()
         else:
             # Generic task execution (threaded)
             threading.Thread(target=self._execute_generic_task, args=(task,), daemon=True).start()
+
+    def _execute_device_control(self, task: Dict[str, Any]):
+        """Send a real-world command to the microcontroller and confirm by voice."""
+        params = task.get('parameters', {}) or {}
+        action = params.get('action', 'on')
+        target = params.get('target', 'device')
+        hw = self.modules.get('hardware')
+        spoken_action = {
+            'on': 'turned on', 'off': 'turned off',
+            'open': 'opened', 'close': 'closed',
+        }.get(action, action)
+
+        try:
+            reply = None
+            if hw is not None and hasattr(hw, 'send_command'):
+                if action in ('on', 'off'):
+                    reply = hw.set_output(target, action == 'on')
+                else:
+                    reply = hw.send_command(action, target=target)
+
+            connected = bool(getattr(hw, 'connected', False)) if hw is not None else False
+            if hw is None:
+                message = "I don't have a microcontroller to control that yet."
+            elif not connected:
+                # Log-only mode: acknowledge but be honest.
+                message = (f"Okay, I would have {spoken_action} the {target}, but no "
+                           f"microcontroller is connected yet.")
+            else:
+                message = f"Okay, I {spoken_action} the {target}."
+
+            self.emit_event(RobotEvent(type='speak', source='brain', data={'text': message}))
+            self.logger.info("device_control %s %s -> %s", action, target, reply)
+        except Exception as e:
+            self.logger.error(f"Device control failed: {e}")
+            self.emit_event(RobotEvent(type='speak', source='brain',
+                                       data={'text': f"Sorry, I couldn't control the {target}."}))
+        finally:
+            self.return_idle()
     
     def on_start_moving(self, movement_data: Dict):
         """Start movement action"""
         self.logger.info(f"Starting movement: {movement_data}")
-        
-        if 'hardware' in self.modules:
-            self.modules['hardware'].move(movement_data)
-        
+
+        hw = self.modules.get('hardware')
+        if hw is not None:
+            # The microcontroller bridge exposes move(); older ESP32 controllers
+            # expose discrete move_* methods. Route defensively.
+            if hasattr(hw, 'move'):
+                hw.move(movement_data)
+            elif hasattr(hw, 'send_command'):
+                params = movement_data if isinstance(movement_data, dict) else {}
+                hw.send_command('move', **params)
+            else:
+                self.logger.warning("Hardware module has no movement API; ignoring")
+
         # Monitor movement completion (threaded)
         threading.Thread(target=self._monitor_movement, daemon=True).start()
-    
+
     def on_emergency_stop(self):
         """Handle emergency stop"""
         self.logger.critical("EMERGENCY STOP ACTIVATED!")
-        
+
         # Stop all motors immediately
-        if 'hardware' in self.modules:
-            self.modules['hardware'].stop_all_motors()
-        
+        hw = self.modules.get('hardware')
+        if hw is not None and hasattr(hw, 'stop_all_motors'):
+            hw.stop_all_motors()
+
         # Alert
         self.set_led_color('red')
-        if 'audio' in self.modules:
-            self.modules['audio'].play_alert_sound()
+        audio = self.modules.get('audio')
+        if audio is not None and hasattr(audio, 'play_alert_sound'):
+            audio.play_alert_sound()
         
         # Save state for debugging
         self._save_emergency_state()
@@ -503,9 +583,11 @@ class RobotBrain:
     def _handle_builtin_event(self, event: RobotEvent):
         """Handle built-in system events"""
         
+        # NOTE: wake_word_detected and speech_recognized are intentionally NOT
+        # handled here. The ConversationManager (main._handle_wake_word) owns the
+        # full wake -> multi-turn dialogue flow. Handling them here too would run
+        # a second, conflicting listen loop and fight over the command mic.
         event_map = {
-            'wake_word_detected': lambda: self.wake_word_heard(),
-            'speech_recognized': lambda: self.speech_received(event.data.get('text')),
             'face_detected': lambda: self._handle_face_detection(event.data),
             'object_detected': lambda: self._handle_object_detection(event.data),
             'movement_complete': lambda: self.return_idle(),
@@ -519,13 +601,38 @@ class RobotBrain:
     
     # Decision Making
     
+    @staticmethod
+    def _detect_device_control(text_lower: str) -> Optional[Dict[str, Any]]:
+        """Detect real-world device commands like 'turn on the light'."""
+        on_phrases = ("turn on", "switch on", "power on", "activate", "enable")
+        off_phrases = ("turn off", "switch off", "power off", "deactivate", "disable")
+        action = None
+        if any(p in text_lower for p in on_phrases):
+            action = "on"
+        elif any(p in text_lower for p in off_phrases):
+            action = "off"
+        elif "open" in text_lower:
+            action = "open"
+        elif "close" in text_lower or "shut" in text_lower:
+            action = "close"
+        if action is None:
+            return None
+        devices = ("light", "lights", "lamp", "fan", "door", "plug", "socket",
+                   "outlet", "tv", "heater", "ac", "curtain", "blind", "gate",
+                   "pump", "relay", "led")
+        for d in devices:
+            if d in text_lower:
+                target = d[:-1] if d.endswith("s") else d
+                return {"action": action, "target": target}
+        return None
+
     def _analyze_intent(self, text: str) -> Dict[str, Any]:
         """
         Analyze user intent from speech text
-        
+
         Args:
             text: Speech text to analyze
-            
+
         Returns:
             Intent dictionary with type and entities
         """
@@ -538,7 +645,15 @@ class RobotBrain:
         
         # Convert to lowercase for analysis
         text_lower = text.lower()
-        
+
+        # Device control ("turn on the light") — checked before movement.
+        device = self._detect_device_control(text_lower)
+        if device is not None:
+            intent['type'] = 'device_control'
+            intent['entities'] = device
+            intent['confidence'] = 0.9
+            return intent
+
         # Movement commands
         if any(word in text_lower for word in ['move', 'go', 'come', 'follow', 'stop']):
             intent['type'] = 'movement'
@@ -607,9 +722,12 @@ class RobotBrain:
             Action to execute or None
         """
         action = None
-        
+
+        # LLM-provided intents may omit 'type' — default to conversation.
+        intent_type = intent.get('type') or 'conversation'
+
         # Check permissions first
-        if not self._check_permissions(intent['type']):
+        if not self._check_permissions(intent_type):
             if not self.authenticated:
                 msg = "I need to see your face first. Please look at the camera so I can identify you."
             else:
@@ -618,51 +736,46 @@ class RobotBrain:
                 'type': 'response',
                 'message': msg
             }
-        
+
+        # Conversational intents (query, object questions, social, plain
+        # conversation) return None so on_process_speech falls through to
+        # generate_response() -> AIEngine.think(), which answers naturally and
+        # can search the web. Only physical/stateful intents become tasks.
+        if intent_type in ('query', 'object_interaction', 'social', 'conversation'):
+            return None
+
         # Make decision based on intent type
-        if intent['type'] == 'movement':
+        if intent_type == 'movement':
             action = {
                 'type': 'movement',
                 'name': 'move_robot',
-                'parameters': intent['entities']
+                'parameters': intent.get('entities', {})
             }
-        
-        elif intent['type'] == 'query':
-            action = {
-                'type': 'query',
-                'name': 'answer_query',
-                'query_type': intent['entities'].get('query_type')
-            }
-        
-        elif intent['type'] == 'object_interaction':
-            action = {
-                'type': 'vision',
-                'name': 'find_object',
-                'parameters': intent['entities']
-            }
-        
-        elif intent['type'] == 'learning':
+
+        elif intent_type == 'learning':
             action = {
                 'type': 'learning',
                 'name': 'learn_information',
                 'data': {'source': 'user_command'}
             }
-        
-        elif intent['type'] == 'system':
-            command = intent['entities'].get('command')
+
+        elif intent_type == 'device_control':
+            # Route real-world commands ("turn on the light") to the
+            # microcontroller bridge (ESP32 / Pi Zero). Handled in on_execute_task.
+            action = {
+                'type': 'device_control',
+                'name': 'device_command',
+                'parameters': intent.get('entities', {}),
+            }
+
+        elif intent_type == 'system':
+            command = intent.get('entities', {}).get('command')
             if command == 'shutdown' and self.master_mode:
                 action = {
                     'type': 'system',
                     'name': 'shutdown'
                 }
-        
-        elif intent['type'] == 'social':
-            action = {
-                'type': 'social',
-                'name': 'social_response',
-                'greeting_type': intent['entities'].get('greeting_type')
-            }
-        
+
         return action
     
     def _check_permissions(self, action_type: str) -> bool:
@@ -683,7 +796,7 @@ class RobotBrain:
             return False
         
         # Physical / hardware / system actions — master only
-        master_only = ('system', 'movement', 'hardware')
+        master_only = ('system', 'movement', 'hardware', 'device_control')
         if action_type in master_only and not self.master_mode:
             self.logger.warning(
                 "Non-master user %s attempted privileged action: %s",
@@ -935,54 +1048,71 @@ class RobotBrain:
         if not hasattr(self, '_face_greet_times'):
             self._face_greet_times = {}
             last_greet = self._face_greet_times
-        
+
+        # Record recency of a RECOGNISED face (drives identity verification in
+        # the conversation — she won't claim to know you if she hasn't seen you).
+        if face_id and face_id != 'unknown':
+            self.last_face_time = now
+
         if face_id in last_greet and (now - last_greet[face_id]) < 30:
             return  # Already greeted recently
-        
+
+        # During an active conversation the ConversationManager owns the voice,
+        # so we update identity silently and skip passive greetings.
+        suppress = getattr(self, '_suppress_greetings', False)
+
         if face_id == 'unknown':
-            # Unknown person detected — ask their name
-            if behavior_config.learn_new_faces:
-                self._face_greet_times['unknown'] = now
-                response = behavior_config.unknown_person_response
-                self.emit_event(RobotEvent(
-                    type='speak',
-                    source='brain',
-                    data={'text': response}
-                ))
-                # Set state to expect a name response
-                self.working_memory['awaiting_name'] = True
-                self.working_memory['awaiting_name_time'] = now
+            # A stranger is in frame — drop any master privileges so the robot
+            # doesn't keep treating a new person as the master.
+            if self.master_mode or self.current_user is not None:
+                self.logger.info("Unknown face — clearing previous identity/master")
+                self.master_mode = False
+                self.authenticated = False
+                self.current_user = None
+                self.current_user_name = None
+                if self.ai_engine:
+                    self.ai_engine._current_user = None
+            # NOTE: asking the name + enrolling is handled by main._handle_face_detected,
+            # which starts a real conversation session (so the command mic actually
+            # listens). We only mark the greet time here for the cooldown.
+            self._face_greet_times['unknown'] = now
         
         elif is_master or face_id == security_config.master_user_id:
             # Master detected
             self.master_mode = True
             self.authenticated = True
+            self.last_master_time = now
             self.current_user = face_id
+            self.current_user_name = name if name and name != 'unknown' else None
             if self.ai_engine:
                 self.ai_engine._current_user = face_id
-            
+
             self._face_greet_times[face_id] = now
-            greeting = f"Welcome back, {name}!" if name and name != 'unknown' else "Welcome back, Master!"
-            self.emit_event(RobotEvent(
-                type='speak',
-                source='brain',
-                data={'text': greeting}
-            ))
+            if not suppress:
+                greeting = f"Welcome back, {name}!" if name and name != 'unknown' else "Welcome back, Master!"
+                self.emit_event(RobotEvent(
+                    type='speak',
+                    source='brain',
+                    data={'text': greeting}
+                ))
         
         else:
-            # Known person
+            # Known person (not the master) — ensure master privileges are off.
+            self.master_mode = False
             self.authenticated = True
             self.current_user = face_id
+            self.current_user_name = name if name and name != 'unknown' else None
             if self.ai_engine:
                 self.ai_engine._current_user = face_id
-            
+
             self._face_greet_times[face_id] = now
             # Personalized greeting
-            self.emit_event(RobotEvent(
-                type='speak',
-                source='brain',
-                data={'text': f"Hello {name}! Nice to see you again."}
-            ))
+            if not suppress:
+                self.emit_event(RobotEvent(
+                    type='speak',
+                    source='brain',
+                    data={'text': f"Hello {name}! Nice to see you again."}
+                ))
             
             # Recall memories about this person
             memories = self.recall_memory(face_id)
