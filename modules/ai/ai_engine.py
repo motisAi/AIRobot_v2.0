@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -61,6 +62,23 @@ import urllib.error
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent.absolute()
 MODELS_DIR = PROJECT_ROOT / "data" / "models"
+
+# Some models (e.g. GPT-OSS reasoning) sometimes emit a tool call as TEXT, like
+#   <function=look {"question": "..."}</function>
+# instead of using the function-calling channel. Detect / strip those.
+_TEXT_TOOLCALL_RE = re.compile(
+    r"<function[=\s:]+([a-zA-Z_]\w*)\s*(\{.*?\})?\s*(?:</function>|/?>)", re.DOTALL)
+
+
+def _strip_tool_tags(text: str) -> str:
+    """Remove any leaked tool-call syntax so it's never spoken/shown."""
+    if not text:
+        return text
+    text = _TEXT_TOOLCALL_RE.sub("", text)
+    text = re.sub(r"</?function[^>]*>", "", text)
+    text = re.sub(r"<tool_call>.*?</tool_call>", "", text, flags=re.DOTALL)
+    return text.strip()
+
 
 # System prompt shared across backends
 SYSTEM_PROMPT = (
@@ -322,7 +340,7 @@ class AIEngine:
                 "stream": False,
             }
             req = urllib.request.Request(
-                f"{self.cfg.hailo_ollama_url}/api/chat",
+                f"{self.cfg.hailo_ollama_url}/v1/chat/completions",
                 data=json.dumps(payload).encode(),
                 headers={"Content-Type": "application/json"},
                 method="POST",
@@ -457,6 +475,10 @@ class AIEngine:
         if not reply:
             reply = self._rule_based_response(user_input)
 
+        # Final safety: never let leaked tool-call syntax reach her voice.
+        cleaned = _strip_tool_tags(reply)
+        reply = cleaned if cleaned else "Sorry, let me try that again."
+
         self._conversation_history.append({"role": "assistant", "content": reply})
 
         # Automatically extract and save preferences from the conversation
@@ -484,23 +506,18 @@ class AIEngine:
         return ""
 
     def _query_hailo_messages(self, messages) -> str:
-        """Chat with the local Hailo-10H NPU (hailo-ollama). Raises on failure."""
+        """Chat with the local Hailo-10H NPU (hailo-ollama, OpenAI-compatible API).
+        Raises on failure."""
         payload = {"model": self.cfg.hailo_ollama_model, "messages": messages,
-                   "stream": False}
+                   "stream": False, "max_tokens": self.cfg.max_tokens,
+                   "temperature": self.cfg.temperature}
         req = urllib.request.Request(
-            f"{self.cfg.hailo_ollama_url}/api/chat",
+            f"{self.cfg.hailo_ollama_url}/v1/chat/completions",
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            raw = resp.read().decode()
-        parts = []
-        for line in raw.strip().split("\n"):
-            if not line.strip():
-                continue
-            content = json.loads(line).get("message", {}).get("content", "")
-            if content:
-                parts.append(content)
-        return "".join(parts).strip()
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            data = json.loads(resp.read().decode())
+        return (data.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
 
     # ------------------------------------------------------------------
     # Agent (tool-calling) support
@@ -576,7 +593,26 @@ class AIEngine:
             m = resp.choices[0].message
             calls = getattr(m, "tool_calls", None)
             if not calls:
-                return (m.content or "").strip() or None
+                content = (m.content or "").strip()
+                # Handle models that emit tool calls as TEXT (<function=name {..}>):
+                # execute them and feed the result back, instead of speaking the tag.
+                text_calls = _TEXT_TOOLCALL_RE.findall(content)
+                if text_calls:
+                    msgs.append({"role": "assistant", "content": content})
+                    for tname, targs in text_calls:
+                        try:
+                            targ = json.loads(targs) if targs.strip() else {}
+                        except Exception:
+                            targ = {}
+                        self.logger.info("agent text-tool: %s(%s)", tname, targ)
+                        try:
+                            tres = self._agent_dispatch(tname, targ)
+                        except Exception as exc:
+                            tres = f"error: {exc}"
+                        msgs.append({"role": "user",
+                                     "content": f"[result of {tname}] {str(tres)[:1500]}"})
+                    continue
+                return _strip_tool_tags(content) or None
             msgs.append({
                 "role": "assistant", "content": m.content or "",
                 "tool_calls": [{"id": c.id, "type": "function",
@@ -876,30 +912,22 @@ class AIEngine:
             "model": self.cfg.hailo_ollama_model,
             "messages": messages,
             "stream": False,
+            "max_tokens": self.cfg.max_tokens,
+            "temperature": self.cfg.temperature,
         }
 
         try:
             req = urllib.request.Request(
-                f"{self.cfg.hailo_ollama_url}/api/chat",
+                f"{self.cfg.hailo_ollama_url}/v1/chat/completions",
                 data=json.dumps(payload).encode(),
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                raw = resp.read().decode()
-
-            # hailo-ollama may return streaming NDJSON even with stream=false
-            full_content = []
-            for line in raw.strip().split("\n"):
-                if not line.strip():
-                    continue
-                chunk = json.loads(line)
-                msg = chunk.get("message", {})
-                content = msg.get("content", "")
-                if content:
-                    full_content.append(content)
-
-            return "".join(full_content).strip() or "I'm not sure how to respond."
+            with urllib.request.urlopen(req, timeout=90) as resp:
+                data = json.loads(resp.read().decode())
+            content = (data.get("choices", [{}])[0]
+                       .get("message", {}).get("content") or "").strip()
+            return content or "I'm not sure how to respond."
         except Exception as exc:
             self.logger.error("hailo-ollama query failed: %s", exc)
             # Try llama.cpp fallback

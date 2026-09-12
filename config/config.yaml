@@ -42,12 +42,12 @@ ai:
   #   anthropic -> claude (needs ANTHROPIC_API_KEY).
   online_provider: "groq"
   openai_model: "gpt-4o-mini"
-  groq_model: "llama-3.3-70b-versatile"
+  groq_model: "openai/gpt-oss-120b"
   # Faster Groq model (same key) used automatically when the big model is
   # rate-limited (HTTP 429). NOTE: llama-3.1-8b-instant is decommissioned
   # 2026-08-16 -> replaced with Groq's recommended GPT-OSS-20B.
   groq_fast_model: "openai/gpt-oss-20b"
-  gemini_model: "gemini-2.0-flash"
+  gemini_model: "gemini-3.6-flash"
   # Fallback chain: tries these in order per question; on rate-limit/error it
   # falls to the next. "hailo" (local NPU) always works, so Stella never dies.
   # Only providers with a key/availability are used. Keys go in .env:
@@ -62,7 +62,7 @@ ai:
   hailo_ollama_url: "http://localhost:8000"
   hailo_ollama_model: "qwen2.5-instruct:1.5b"
 
-  max_tokens: 400
+  max_tokens: 512
   temperature: 0.7
   conversation_memory_turns: 20
 
@@ -192,7 +192,7 @@ model:
   # dlib embeddings need EUCLIDEAN distance (~0.6), NOT cosine. Cosine made a
   # stranger look identical to the master. Lower threshold = stricter.
   face_distance_metric: "euclidean"
-  face_recognition_threshold: 0.50
+  face_recognition_threshold: 0.60
   # Object detection (Hailo NPU). Needs a compiled .hef in data/models/.
   object_model: "yolov8n"
   object_confidence_threshold: 0.5
@@ -261,3 +261,10 @@ security:
   # Seconds Stella keeps trusting who she saw (so she doesn't ask your name again
   # 8s after glancing at you). Higher bridges sparse face detection.
   identity_memory_seconds: 60
+
+# ---- MQTT device hub: control networked switches/lights on RobotNet ----
+mqtt:
+  enabled: true
+  broker: "localhost"
+  port: 1883
+  devices:

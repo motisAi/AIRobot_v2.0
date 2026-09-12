@@ -121,6 +121,17 @@ class TelegramBridge:
             self._send("Guard mode off. Welcome home.")
             return
 
+        # --- screen face: show / hide from the phone ---
+        if ("face" in low or "screen" in low) and any(v in low for v in
+                ("show", "open", "hide", "close", "turn off", "turn on", "wake")):
+            f = getattr(self.robot, "face", None)
+            if f is not None:
+                if any(v in low for v in ("hide", "close", "turn off")):
+                    f.hide_face(); self._send("Okay, hiding my face.")
+                else:
+                    f.show_face(); self._send("Showing my face on the screen.")
+                return
+
         # Stop the hand mirror from the phone (in case voice is busy).
         if any(k in low for k in ("stop copying", "stop mirroring", "stop imitating", "stop copy")):
             hm = getattr(self.robot, "hand_mirror", None)

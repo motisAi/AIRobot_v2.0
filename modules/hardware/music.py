@@ -35,6 +35,7 @@ class MusicPlayer:
         self.volume_step = int(volume_step)
 
         self._ff = None          # ffmpeg (decoder) process
+        self._yt = None          # yt-dlp (fetch) process -> pipes into ffmpeg
         self._ap = None          # aplay (output) process
         self._ap_lock = threading.Lock()
         self._out_paused = False  # output device released (e.g. Stella is speaking)
@@ -57,22 +58,74 @@ class MusicPlayer:
     def title(self):
         return self._title
 
-    # -- discovery (for "I found X, play it?") ----------------------------
-    def search_title(self, query: str):
-        target = query if query.startswith("http") else f"ytsearch1:{query}"
+    # -- discovery / smart pick -------------------------------------------
+    # Titles that are almost never the song the user asked for.
+    _JUNK = ("tutorial", "lesson", "how to play", "cover", "guitar tab",
+             "bass tab", " tab ", "tabs", "reaction", "karaoke", "backing track",
+             "instrumental", "sped up", "slowed", "8 bit", "8-bit", "nightcore",
+             "chords", "drum cover", "piano cover", "loop", "1 hour", "1hour")
+
+    def _search_candidates(self, query: str, n: int = 5):
+        """Return [(id, title, duration, channel)] for the top n search hits."""
         try:
             r = subprocess.run(
                 [self.ytdlp, "--no-playlist", "--skip-download", "--no-warnings",
-                 "--flat-playlist", "--print", "title", target],
-                capture_output=True, text=True, timeout=30)
-            title = (r.stdout or "").strip().split("\n")[0].strip()
-            return title or None
+                 *self._YT_CLIENT, "--flat-playlist", "--print",
+                 "%(id)s\t%(title)s\t%(duration)s\t%(channel)s",
+                 f"ytsearch{n}:{query}"],
+                capture_output=True, text=True, timeout=35)
+            out = []
+            for line in (r.stdout or "").splitlines():
+                parts = line.split("\t")
+                if len(parts) >= 2 and parts[0].strip():
+                    vid = parts[0].strip()
+                    title = parts[1].strip()
+                    dur = parts[2].strip() if len(parts) > 2 else ""
+                    chan = parts[3].strip() if len(parts) > 3 else ""
+                    out.append((vid, title, dur, chan))
+            return out
         except Exception as exc:
-            logger.warning("search_title failed: %s", exc)
+            logger.warning("search candidates failed: %s", exc)
+            return []
+
+    def _pick_best(self, query: str, cands):
+        """Choose the best real-song candidate; skip tutorials/covers/etc."""
+        if not cands:
             return None
+        qwords = [w for w in query.lower().split() if len(w) > 2]
+        want_live = "live" in query.lower()
+        best, best_score = None, -1e9
+        for i, (vid, title, dur, chan) in enumerate(cands):
+            tl = title.lower(); cl = chan.lower()
+            score = 100 - i * 5           # slight preference for higher rank
+            if any(j in tl for j in self._JUNK):
+                score -= 300
+            if ("live" in tl) and not want_live:
+                score -= 120
+            if cl.endswith("- topic") or "official" in tl or "vevo" in cl:
+                score += 60
+            score += 8 * sum(1 for w in qwords if w in tl)  # matches request
+            if score > best_score:
+                best, best_score = (vid, title), score
+        return best
+
+    def search_title(self, query: str):
+        if query.startswith("http"):
+            return None
+        picked = self._pick_best(query, self._search_candidates(query))
+        return picked[1] if picked else None
 
     def _resolve_url(self, query: str):
-        target = query if query.startswith("http") else f"ytsearch1:{query}"
+        # Direct URL -> resolve straight through.
+        if query.startswith("http"):
+            target = query
+        else:
+            picked = self._pick_best(query, self._search_candidates(query))
+            if picked:
+                self._picked_title = picked[1]
+                target = "https://www.youtube.com/watch?v=" + picked[0]
+            else:
+                target = f"ytsearch1:{query}"   # last-resort fallback
         try:
             r = subprocess.run(
                 [self.ytdlp, "-f", "bestaudio/best", "--no-playlist",
@@ -84,25 +137,47 @@ class MusicPlayer:
             logger.warning("resolve url failed: %s", exc)
             return None
 
+    # YouTube client that needs no PO token (default web client 403s the stream).
+    _YT_CLIENT = ["--extractor-args", "youtube:player_client=android"]
+
+    def _pick_target(self, query: str):
+        """Return a concrete YouTube watch URL (or ytsearch fallback) for the
+        best real-song match, and remember its title."""
+        if query.startswith("http"):
+            return query
+        picked = self._pick_best(query, self._search_candidates(query))
+        if picked:
+            self._picked_title = picked[1]
+            return "https://www.youtube.com/watch?v=" + picked[0]
+        return f"ytsearch1:{query}"
+
     # -- playback ----------------------------------------------------------
     def play(self, query: str, title=None, volume=None) -> bool:
         self.stop()
-        url = self._resolve_url(query)
-        if not url:
+        target = self._pick_target(query)
+        if not target:
             return False
         vol = self.default_volume if volume is None else int(volume)
         self._volume = vol
         self._factor = vol / 100.0
         self._ducked = False
-        self._title = title or query
+        self._title = title or getattr(self, "_picked_title", None) or query
         try:
-            self._ff = subprocess.Popen(
-                ["ffmpeg", "-hide_banner", "-loglevel", "quiet", "-i", url,
-                 "-f", "s16le", "-ar", str(RATE), "-ac", str(CHANNELS), "pipe:1"],
+            # yt-dlp fetches (android client, no 403) and streams to stdout;
+            # ffmpeg decodes that pipe to raw PCM for our volume pump.
+            self._yt = subprocess.Popen(
+                [self.ytdlp, "-f", "bestaudio/best", "--no-playlist",
+                 "--no-warnings", *self._YT_CLIENT, "-o", "-", target],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            self._ff = subprocess.Popen(
+                ["ffmpeg", "-hide_banner", "-loglevel", "quiet", "-i", "pipe:0",
+                 "-f", "s16le", "-ar", str(RATE), "-ac", str(CHANNELS), "pipe:1"],
+                stdin=self._yt.stdout, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL)
+            self._yt.stdout.close()  # let ffmpeg own the read end (SIGPIPE on stop)
             self._ap = self._start_aplay()
         except Exception as exc:
-            logger.error("failed to start ffmpeg/aplay: %s", exc)
+            logger.error("failed to start yt-dlp/ffmpeg/aplay: %s", exc)
             self._terminate_procs()
             return False
         self._stop_evt.clear()
@@ -233,7 +308,7 @@ class MusicPlayer:
         self._thread = None
 
     def _terminate_procs(self):
-        for p in (self._ap, self._ff):
+        for p in (self._ap, self._ff, self._yt):
             try:
                 if p and p.poll() is None:
                     p.terminate()

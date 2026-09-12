@@ -46,7 +46,7 @@ class Hand:
 
     def _connect(self):
         try:
-            self._ser = serial.Serial(self.port, self.baud, timeout=1)
+            self._ser = serial.Serial(self.port, self.baud, timeout=1, write_timeout=2)
             time.sleep(2.5)   # ESP32 resets on connect and homes to a fist
             logger.info("Hand connected on %s (ESP32 homed to fist)", self.port)
         except Exception as exc:
@@ -56,6 +56,22 @@ class Hand:
     @property
     def available(self) -> bool:
         return self.enabled and self._ser is not None
+
+    def reconnect(self, port: str = None) -> bool:
+        """Re-open the serial link (e.g. after the ESP32 got a new /dev port)."""
+        if not self.enabled:
+            return False
+        with self._lock:
+            if self._ser:
+                try:
+                    self._ser.close()
+                except Exception:
+                    pass
+                self._ser = None
+        if port:
+            self.port = port
+        self._connect()
+        return self.available
 
     def send(self, cmd: str) -> bool:
         if not self.available:

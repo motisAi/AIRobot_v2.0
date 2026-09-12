@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import random
 import threading
+import time
 from typing import Optional
 
 from config.settings import (conversation_config, behavior_config, security_config,
@@ -40,11 +41,16 @@ class ConversationManager:
     def active(self) -> bool:
         return self._active
 
-    def start_session(self):
-        """Begin a conversation (called when the wake word fires)."""
+    def start_session(self, opener: str = None):
+        """Begin a conversation (wake word, or a proactive on-sight greeting).
+
+        opener: if given, Stella speaks this line instead of the generic
+        greeting -- used for emotion-aware openers ("You look happy, what's up?").
+        """
         if self._active:
             return
         self._active = True
+        self._opener = opener
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="conversation", daemon=True)
         self._thread.start()
@@ -63,6 +69,7 @@ class ConversationManager:
         tts = self.robot.modules.get('tts')
         if tts and getattr(tts, 'running', False):
             try:
+                self._face_speak(True)   # move the mouth while she talks
                 # Prefer the reliable inline path; fall back to queued speak.
                 if hasattr(tts, 'speak_blocking'):
                     ok = tts.speak_blocking(text)
@@ -72,6 +79,24 @@ class ConversationManager:
                     tts.speak(text, wait=True)
             except Exception as exc:
                 self.logger.warning("speak failed: %s", exc)
+            finally:
+                self._face_speak(False)
+
+    def _face_speak(self, on):
+        fn = getattr(self.robot, 'face_speak', None)
+        if fn:
+            try:
+                fn(on)
+            except Exception:
+                pass
+
+    def _face_emotion(self, value, intensity=1.0):
+        fn = getattr(self.robot, 'face_emotion', None)
+        if fn:
+            try:
+                fn(value, intensity)
+            except Exception:
+                pass
 
     def _dashboard_log(self, msg: str):
         dash = getattr(self.robot, 'dashboard', None)
@@ -122,6 +147,7 @@ class ConversationManager:
             pass
 
         try:
+            self._face_emotion("listening")   # attentive look while chatting
             # Verify WHO we're talking to first (face must be seen recently),
             # so we greet correctly and save memory to the right person.
             self._resolve_identity()
@@ -133,10 +159,17 @@ class ConversationManager:
                 if answer:
                     self._enroll_name(answer)
 
-            # Greeting (+ wave hello if the hand is connected)
-            if getattr(hand_config, 'wave_on_greeting', True):
-                self._gesture('wave')
-            self._speak(cfg.greeting.format(name=self._name_suffix()))
+            # Greeting. An emotion-aware opener (set by the on-sight welcome)
+            # wins. Otherwise the generic greeting -- but SKIP it if she just
+            # welcomed this person on sight seconds ago, so she never greets by
+            # name twice in a row. (No wave here; the wave happens on sight.)
+            opener = getattr(self, "_opener", None)
+            self._opener = None
+            recent_onsight = time.time() - getattr(brain, "_last_onsight_greet", 0.0) < 45
+            if opener:
+                self._speak(opener)
+            elif not recent_onsight:
+                self._speak(cfg.greeting.format(name=self._name_suffix()))
 
             wrapped = False
             while self.robot.running and not self._stop.is_set():
@@ -170,6 +203,7 @@ class ConversationManager:
             self.logger.error("Conversation error: %s", exc)
         finally:
             brain._suppress_greetings = False
+            self._face_emotion("neutral")   # relax the face when the chat ends
             # Clean page when the conversation ends: wipe the short-term chat so
             # the next one starts fresh (the transcript is already saved to the DB).
             engine2 = getattr(self.robot, 'ai_engine', None)
@@ -224,6 +258,10 @@ class ConversationManager:
         if self._maybe_insult(text):
             return
 
+        # Air conditioner (Sensibo) — natural commands.
+        if self._maybe_ac(text):
+            return
+
         if intent.get('type') == 'device_control':
             self._do_device_control(intent.get('entities', {}))
             return
@@ -238,6 +276,10 @@ class ConversationManager:
 
         # Hand mirror: "copy my hand" / "stop copying".
         if self._maybe_mirror(text):
+            return
+
+        # Screen face: "show your face" / "hide your face".
+        if self._maybe_face(text):
             return
 
         # Vision requests ("what am I holding?", "what colour is this?").
@@ -297,11 +339,17 @@ class ConversationManager:
                 "parameters": {"type": "object", "properties": {
                     "question": {"type": "string"}}, "required": ["question"]}}},
             {"type": "function", "function": {
-                "name": "control_device", "description": "Turn a home device on or off (light, fan, etc.). Master only.",
+                "name": "control_device", "description": "Turn any switch/plug/socket/light/appliance ON or OFF by name. Use for ANY on/off intent, including phrasings like 'kill the light', 'power off the plug', 'switch on the socket', 'shut it down', 'kill power'. Master only.",
                 "parameters": {"type": "object", "properties": {
-                    "target": {"type": "string"},
+                    "target": {"type": "string", "description": "device name, e.g. 'plug', 'light', 'socket', 'fan'"},
                     "action": {"type": "string", "enum": ["on", "off"]}},
                     "required": ["target", "action"]}}},
+            {"type": "function", "function": {
+                "name": "set_ac", "description": "Control the air conditioner. Use for ANY comfort/temperature intent, e.g. 'it's hot', 'I'm cold/freezing', 'cool it down', 'make it warmer', 'too warm in here', 'set the AC to 22', 'turn on/off the AC'. Provide any of: power; temperature (16-30 C); mode: cool (=cold), heat (=warm/hot), fan, dry, auto. Master only.",
+                "parameters": {"type": "object", "properties": {
+                    "power": {"type": "string", "enum": ["on", "off"]},
+                    "temperature": {"type": "integer", "description": "16 to 30 Celsius"},
+                    "mode": {"type": "string", "enum": ["cool", "heat", "fan", "dry", "auto"]}}}}},
             {"type": "function", "function": {
                 "name": "set_reminder", "description": "Set a reminder to be announced after some minutes.",
                 "parameters": {"type": "object", "properties": {
@@ -358,12 +406,41 @@ class ConversationManager:
                 if not (getattr(self.robot.brain, "master_mode", False)
                         or getattr(self.robot, "_remote_master", False)):
                     return "denied: only the master can control devices"
-                mc = self.robot.modules.get("microcontroller")
                 target = str(args.get("target", "device")); action = str(args.get("action", "on"))
+                tq = getattr(self.robot, "tuya", None)
+                if tq is not None and tq.known(target):
+                    ok = tq.set(target, action == "on")
+                    return (f"turned {action} the {target}" if ok else f"couldn't reach the {target}")
+                mq = getattr(self.robot, "mqtt", None)
+                if mq is not None and mq.known(target):
+                    ok = mq.set(target, action == "on")
+                    return (f"turned {action} the {target}" if ok else f"couldn't reach the {target}")
+                mc = self.robot.modules.get("microcontroller")
                 if mc:
                     mc.set_output(target, action == "on")
                 connected = bool(getattr(mc, "connected", False)) if mc else False
                 return f"{action} {target}" + ("" if connected else " (logged only — no microcontroller connected yet)")
+            if name == "set_ac":
+                if not (getattr(self.robot.brain, "master_mode", False)
+                        or getattr(self.robot, "_remote_master", False)):
+                    return "denied: only the master can control the AC"
+                s = getattr(self.robot, "sensibo", None)
+                if not (s and getattr(s, "enabled", False)):
+                    return "the air conditioner isn't available"
+                power = args.get("power"); temp = args.get("temperature"); mode = args.get("mode")
+                ok = s.set(power=(None if power is None else power == "on"),
+                           temperature=temp, mode=mode)
+                if not ok:
+                    return "couldn't reach the air conditioner"
+                bits = []
+                if mode:
+                    bits.append({"cool": "cooling", "heat": "heating", "fan": "fan only",
+                                 "dry": "dry", "auto": "auto"}.get(mode, mode))
+                if temp is not None:
+                    bits.append(f"{temp} degrees")
+                if power:
+                    bits.append("on" if power == "on" else "off")
+                return "AC: " + (", ".join(bits) if bits else "done")
             if name == "set_reminder":
                 rem = getattr(self.robot, "reminders", None)
                 if not rem:
@@ -563,7 +640,6 @@ class ConversationManager:
             question = ("What is the person holding up or showing to the camera? "
                         "Answer in one short, clear sentence.")
 
-        self._gesture('point')   # point at what she's looking at
         self._speak("Let me take a look.")
         try:
             answer = vlm.look(question=question)
@@ -576,8 +652,15 @@ class ConversationManager:
         return True
 
     def _maybe_wifi(self, text: str) -> bool:
-        """Handle spoken WiFi/internet requests. Returns True if handled."""
+        """Handle spoken WiFi requests. Returns True if handled."""
         t = text.lower()
+        # A web/research query mentions the internet but is NOT a WiFi request
+        # ("research the internet about X", "search online for Y", "look up Z") —
+        # let it fall through to the web-search / LLM path.
+        if any(k in t for k in ("research", "search", "look up", "look it up",
+                                "google", "find out", "tell me about", " about ",
+                                "what is", "who is", "who was", "how do", "how to")):
+            return False
         conn_words = ("internet", "wifi", "wi-fi", "network", "online")
         if not any(k in t for k in conn_words):
             return False
@@ -697,19 +780,25 @@ class ConversationManager:
         return True
 
     INSULT_HYPO = ("would you", "will you", "what do you do", "what happens",
-                   "how do you react", "what would happen", "what will you do")
+                   "how do you react", "what would happen", "what will you do",
+                   "what would you say", "what will you say", "how would you respond",
+                   "what do you say", "how do you respond")
 
     def _maybe_insult_demo(self, text: str) -> bool:
-        """If asked HYPOTHETICALLY what she'd do when insulted, show + tell (no grudge)."""
+        """If asked HYPOTHETICALLY what she'd do/say when insulted, show + tell
+        with real example comebacks (no real grudge)."""
         t = text.lower()
-        hypo = "if" in t and any(k in t for k in self.INSULT_HYPO)
+        hypo = any(k in t for k in self.INSULT_HYPO)
         mentions = any(w in t for w in ("insult", "stupid", "curse", "rude", "call you",
-                                        "mean to you", "bad name", "swear", "offend"))
+                                        "mean to you", "bad name", "swear", "offend",
+                                        "call me names", "disrespect", "nasty"))
         if not (hypo and mentions):
             return False
         self._gesture('middle')
-        self._speak("If someone is rude to me, I do this — and I stay upset with "
-                    "them until they say sorry.")
+        ex = random.sample(self.INSULT_RETORTS, 2)
+        self._speak(f"If someone's rude to me? I'd do this — and say something like "
+                    f"\"{ex[0]}\" or \"{ex[1]}\". And I'd stay upset with them until "
+                    f"they apologise.")
         return True
 
     def _farewell(self):
@@ -739,6 +828,64 @@ class ConversationManager:
             hm.set_active(True)
             self._speak("Okay, show me your hand and I'll copy it. Say 'stop copying' "
                         "when you're done.")
+            return True
+        return False
+
+    def _maybe_ac(self, text: str) -> bool:
+        """Control the Sensibo AC by voice. Returns True if handled."""
+        s = getattr(self.robot, 'sensibo', None)
+        if s is None or not getattr(s, 'enabled', False):
+            return False
+        low = text.lower()
+        if not any(w in low for w in (" ac", "a/c", "air condition", "aircon",
+                                      "air-con", "conditioner", "climate")):
+            return False
+        import re
+        room = None
+        if any(w in low for w in ("living", "salon", "lounge")):
+            room = "living"
+        elif "moti" in low:
+            room = "moti"
+
+        def done(ok, said):
+            self._speak(said if ok else "I couldn't reach the air conditioner right now.")
+            return True
+
+        if any(w in low for w in ("turn off", "shut off", "switch off",
+                                  "turn it off", "shut it", "stop the ac")):
+            return done(s.set_power(False, room), "Okay, turning off the air conditioner.")
+        m = re.search(r"\b(1[6-9]|2[0-9]|30)\b", low)
+        if m and any(w in low for w in ("set", " to ", "degree", "temperature", "make it")):
+            t = int(m.group(1))
+            return done(s.set_temp(t, room), f"Setting the air conditioner to {t} degrees.")
+        if any(w in low for w in ("cold", "cool", "chilly", "freezing")):
+            return done(s.set_mode("cool", room), "Cooling the room.")
+        if any(w in low for w in ("hot", "warm", "heat", "heating")):
+            return done(s.set_mode("heat", room), "Warming the room.")
+        if any(w in low for w in ("turn on", "switch on", "start the",
+                                  "put on", "turn it on", "power on")):
+            return done(s.set_power(True, room), "Okay, turning on the air conditioner.")
+        return False
+
+    def _maybe_face(self, text: str) -> bool:
+        """Show/hide Stella's animated face on the external screen (Surface/tablet).
+        The screen only lights up when asked, so it doesn't hog the computer."""
+        low = text.lower()
+        face = getattr(self.robot, "face", None)
+        if face is None:
+            return False
+        # STT often mishears "face" as "base"/"space" and "hide your face" as
+        # "hide your base", so be generous: a show/hide verb near face/base/screen.
+        subj = any(w in low for w in ("face", "base", "screen", "display", "space"))
+        if not subj:
+            return False
+        if any(w in low for w in ("hide", "close", "turn off", "put away", "go away", " off")):
+            face.hide_face()
+            self._speak("Okay, hiding my face.")
+            return True
+        if any(w in low for w in ("show", "open", "wake", "turn on", "bring up", "come up")):
+            face.show_face()
+            self._speak("Here's my face. Give the screen a moment to come up.")
             return True
         return False
 
@@ -923,6 +1070,21 @@ class ConversationManager:
         # Only the master may actuate hardware.
         if security_config.require_authentication and not getattr(brain, 'master_mode', False):
             self._speak("Sorry, only my master can control devices.")
+            return
+
+        # Tuya devices (smart plug etc.) first.
+        tq = getattr(self.robot, 'tuya', None)
+        if tq is not None and tq.known(target):
+            ok = tq.set(target, action == 'on')
+            self._speak(f"Okay, I {spoken} the {target}." if ok else f"I couldn't reach the {target}.")
+            return
+
+        # A networked device on RobotNet (MQTT) takes priority over the wired MCU.
+        mq = getattr(self.robot, 'mqtt', None)
+        if mq is not None and mq.known(target):
+            ok = mq.set(target, action == 'on')
+            self._speak(f"Okay, I {spoken} the {target}." if ok
+                        else f"I couldn't reach the {target}.")
             return
 
         mc = self.robot.modules.get('microcontroller')

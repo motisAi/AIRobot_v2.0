@@ -66,6 +66,66 @@ class CameraManager:
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
+    # Video nodes that are NOT plain cv2-readable cameras (Pi CSI pipeline +
+    # ISP + hardware codec). We must skip these when probing.
+    _SKIP_NODE_HINTS = ("rp1-cfe", "pispbe", "rpivid", "codec", "isp")
+
+    def _candidate_indices(self):
+        """Order camera indices to try: real USB/UVC webcams (found by name in
+        /sys) first, then the configured index, then a numeric fallback. The Pi
+        CSI / ISP nodes (rp1-cfe / pispbe / ...) are EXCLUDED entirely — opening
+        them spams "csi2_chN node link is not enabled" to the console and they are
+        not cv2-readable anyway. Detecting by name survives node renumbering."""
+        import os, re
+        usb, skip = [], set()
+        try:
+            for d in sorted(os.listdir("/sys/class/video4linux")):
+                m = re.match(r"video(\d+)$", d)
+                if not m:
+                    continue
+                idx = int(m.group(1))
+                try:
+                    name = open("/sys/class/video4linux/%s/name" % d).read().strip().lower()
+                except Exception:
+                    name = ""
+                if any(h in name for h in self._SKIP_NODE_HINTS):
+                    skip.add(idx)      # CSI/ISP node -> never open it
+                else:
+                    usb.append(idx)    # real capture device (USB webcam)
+        except Exception:
+            pass
+        order = usb + [self.camera_index] + list(range(0, 16))
+        seen, out = set(), []
+        for i in order:
+            if i not in seen and i not in skip:
+                seen.add(i); out.append(i)
+        return out
+
+    def _open_index(self, index: int):
+        """Open one index with MJPG + config resolution, then warm-read for up to
+        ~2.5s (USB cams routinely fail the first few reads). Returns an opened,
+        frame-producing VideoCapture or None."""
+        cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
+        if not cap.isOpened():
+            cap.release()
+            return None
+        try:
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        except Exception:
+            pass
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
+        cap.set(cv2.CAP_PROP_FPS, self.fps)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, self.buffer_size)
+        self._apply_camera_controls(cap)
+        for _ in range(16):
+            ok, frame = cap.read()
+            if ok and frame is not None:
+                return cap
+            time.sleep(0.15)
+        cap.release()
+        return None
+
     def start(self) -> bool:
         """Open the camera and start the capture thread.
 
@@ -75,22 +135,18 @@ class CameraManager:
             if self._running:
                 return True
 
-            cap = cv2.VideoCapture(self.camera_index)
-            if not cap.isOpened():
-                self.logger.error("Failed to open camera index %d", self.camera_index)
-                return False
-
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
-            cap.set(cv2.CAP_PROP_FPS, self.fps)
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, self.buffer_size)
-            self._apply_camera_controls(cap)
-
-            # Verify with a test read
-            ok, _ = cap.read()
-            if not ok:
-                self.logger.error("Camera opened but test read failed")
-                cap.release()
+            cap = None
+            for idx in self._candidate_indices():
+                cap = self._open_index(idx)
+                if cap is not None:
+                    if idx != self.camera_index:
+                        self.logger.info("Camera auto-detected at index %d "
+                                         "(configured was %d)", idx, self.camera_index)
+                    self.camera_index = idx
+                    break
+            if cap is None:
+                self.logger.error("No readable camera found (tried CSI/USB nodes). "
+                                  "Is the USB webcam plugged in?")
                 return False
 
             self._cap = cap
@@ -209,17 +265,17 @@ class CameraManager:
                 time.sleep(0.1)
 
     def _reopen(self) -> None:
-        """Try to reopen the camera after a disconnect."""
+        """Try to reopen the camera after a disconnect (re-probing indices, since
+        a USB re-enumeration may have moved the node)."""
         with self._lock:
             if self._cap:
                 self._cap.release()
-            cap = cv2.VideoCapture(self.camera_index)
-            if cap.isOpened():
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
-                cap.set(cv2.CAP_PROP_FPS, self.fps)
-                self._cap = cap
-                self.logger.info("Camera reopened successfully")
-            else:
                 self._cap = None
-                self.logger.warning("Camera reopen failed — will retry")
+            for idx in self._candidate_indices():
+                cap = self._open_index(idx)
+                if cap is not None:
+                    self.camera_index = idx
+                    self._cap = cap
+                    self.logger.info("Camera reopened successfully (index=%d)", idx)
+                    return
+            self.logger.warning("Camera reopen failed — will retry")

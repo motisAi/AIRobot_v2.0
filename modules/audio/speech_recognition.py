@@ -220,10 +220,50 @@ class SpeechRecognitionModule:
         x_new = np.linspace(0, 1, n, endpoint=False)
         return np.interp(x_new, x_old, s).astype(np.int16).tobytes()
 
+    def _transcribe_groq(self, pcm: bytes) -> Optional[str]:
+        """Transcribe via Groq Whisper (whisper-large-v3-turbo). Fast + accurate +
+        free. Returns None if no key / offline / failure (caller falls back)."""
+        import io as _io, os as _os, uuid as _uuid, urllib.request as _url
+        key = _os.getenv("GROQ_API_KEY", "")
+        if not key or not pcm:
+            return None
+        try:
+            buf = _io.BytesIO()
+            with wave.open(buf, "wb") as w:
+                w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+                w.writeframes(pcm)
+            wav = buf.getvalue()
+            b = "----stella" + _uuid.uuid4().hex
+            lang = (self.stt_language or "en")[:2]
+            pre = (
+                f"--{b}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper-large-v3-turbo\r\n"
+                f"--{b}\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\n{lang}\r\n"
+                f"--{b}\r\nContent-Disposition: form-data; name=\"response_format\"\r\n\r\ntext\r\n"
+                f"--{b}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.wav\"\r\nContent-Type: audio/wav\r\n\r\n"
+            )
+            body = pre.encode() + wav + f"\r\n--{b}--\r\n".encode()
+            req = _url.Request(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                data=body, method="POST",
+                headers={"Authorization": "Bearer " + key,
+                         "Content-Type": f"multipart/form-data; boundary={b}",
+                         "User-Agent": "Mozilla/5.0"})
+            with _url.urlopen(req, timeout=15) as r:
+                txt = r.read().decode(errors="ignore").strip()
+            return txt or None
+        except Exception as exc:
+            self.logger.info("Groq STT unavailable: %s", exc)
+            return None
+
     def _transcribe_pcm16k(self, pcm: bytes) -> Optional[str]:
         """Transcribe raw 16k mono PCM using the configured STT mode."""
         mode = self.stt_mode
-        # Google first (unless forced vosk)
+        # Groq Whisper first — fast, accurate, free.
+        if mode in ('auto', 'google', 'groq'):
+            t = self._transcribe_groq(pcm)
+            if t:
+                return t
+        # Google (secondary online fallback)
         if mode in ('auto', 'google') and SR_AVAILABLE and self.recognizer:
             try:
                 audio = sr.AudioData(pcm, 16000, 2)
@@ -236,7 +276,7 @@ class SpeechRecognitionModule:
                     return None
                 self.logger.info("Google STT unavailable, trying offline Vosk: %s", exc)
         # Vosk offline fallback
-        if mode in ('auto', 'vosk'):
+        if mode in ('auto', 'vosk', 'groq', 'google'):
             return self._transcribe_vosk(pcm)
         return None
 

@@ -376,6 +376,17 @@ class AIRobot:
         else:
             self.logger.info("Vision off (set MOONDREAM_API_KEY in .env to enable)")
 
+        # --- On-demand screen face (additive, isolated: never crashes Stella) ---
+        self.face = None
+        try:
+            from face_bridge import FaceBridge
+            self.face = FaceBridge(host="0.0.0.0", port=8080)
+            self.face.start()
+            self.logger.info("✓ Face bridge ready on :8080 (say 'show your face')")
+            self._start_gaze_feed()
+        except Exception as exc:
+            self.logger.warning("Face bridge not started: %s", exc)
+
         # --- Music player (YouTube via mpv + yt-dlp), routed to Stella's speaker ---
         self.music = None
         try:
@@ -414,8 +425,15 @@ class AIRobot:
         try:
             if getattr(hand_config, 'enabled', False):
                 from modules.hardware.hand import Hand
+                import glob as _glob
+                _port = getattr(hand_config, 'serial_port', '/dev/ttyACM0')
+                if not os.path.exists(_port):
+                    _cands = sorted(_glob.glob('/dev/ttyACM*') + _glob.glob('/dev/ttyUSB*'))
+                    if _cands:
+                        self.logger.info("Hand port %s missing; auto-using %s", _port, _cands[0])
+                        _port = _cands[0]
                 self.hand = Hand(
-                    port=getattr(hand_config, 'serial_port', '/dev/ttyUSB0'),
+                    port=_port,
                     baud=getattr(hand_config, 'baud', 115200),
                     enabled=True)
                 self.logger.info("✓ Robotic hand ready" if self.hand.available
@@ -428,7 +446,7 @@ class AIRobot:
         # --- Hand mirror (MediaPipe): Stella copies your hand when asked ---
         self.hand_mirror = None
         try:
-            if self.hand is not None and getattr(self.hand, 'available', False):
+            if self.hand is not None:   # watchdog keeps the serial healthy
                 from modules.vision.hand_mirror import HandMirror
                 self.hand_mirror = HandMirror(self.camera_manager, self.hand)
                 self.hand_mirror.start()
@@ -436,6 +454,44 @@ class AIRobot:
                                  else "Hand mirror off (mediapipe not available)")
         except Exception as e:
             self.logger.error("✗ Hand mirror init failed: %s", e)
+
+        # --- MQTT device hub (control switches/lights on RobotNet) ---
+        self.mqtt = None
+        try:
+            import yaml as _yaml
+            _mcfg = ((_yaml.safe_load(open(PROJECT_ROOT / "config" / "config.yaml"))
+                      or {}).get("mqtt") or {})
+            if _mcfg.get("enabled", True):
+                from modules.hardware.mqtt_devices import MqttDevices
+                self.mqtt = MqttDevices(_mcfg.get("broker", "localhost"),
+                                        _mcfg.get("port", 1883),
+                                        _mcfg.get("devices", {}))
+                self.logger.info("\u2713 MQTT device hub ready (%d device(s))",
+                                 len(self.mqtt.devices))
+        except Exception as _e:
+            self.logger.warning("MQTT hub not started: %s", _e)
+
+        # --- Tuya devices (LSPA8 plug etc.) via tinytuya local control ---
+        self.tuya = None
+        try:
+            from modules.hardware.tuya_devices import TuyaDevices
+            self.tuya = TuyaDevices(str(PROJECT_ROOT / "devices.json"))
+            if self.tuya.devices:
+                self.logger.info("\u2713 Tuya devices ready (%d): %s",
+                                 len(self.tuya.devices), self.tuya.list_devices())
+        except Exception as _e:
+            self.logger.warning("Tuya init failed: %s", _e)
+
+        # --- Sensibo AC control (cloud API; needs SENSIBO_API_KEY in .env) ---
+        self.sensibo = None
+        try:
+            from modules.hardware.sensibo import Sensibo
+            self.sensibo = Sensibo()
+            if self.sensibo.enabled and self.sensibo.pods:
+                self.logger.info("\u2713 Sensibo AC ready (%d unit(s)): %s",
+                                 len(self.sensibo.pods), self.sensibo.list_units())
+        except Exception as _e:
+            self.logger.warning("Sensibo init failed: %s", _e)
 
         # --- Conversation session manager ---
         self.conversation = ConversationManager(self)
@@ -477,7 +533,18 @@ class AIRobot:
             )
         
         self.logger.info(f"Initialized {len(self.modules)} modules")
-        
+
+        # --- Hardware watchdog: background self-healing for shifted device
+        #     indices/ports (mics, ESP32 hand serial, HDMI audio card). ---
+        self.watchdog = None
+        try:
+            from modules.hardware.watchdog import HardwareWatchdog
+            self.watchdog = HardwareWatchdog(self, interval=20.0)
+            self.watchdog.start()
+            self.logger.info("✓ Hardware watchdog started")
+        except Exception as e:
+            self.logger.error("✗ Hardware watchdog failed: %s", e)
+
         # Register event handlers
         self._register_event_handlers()
     
@@ -549,24 +616,44 @@ class AIRobot:
         # Authenticate if master
         if face_data.get('is_master'):
             self._unknown_streak = 0
-            # Coming home while armed -> recognise you and auto-disarm + greet,
-            # so you never have to fight the "only my master can disarm" wall.
-            if getattr(self.brain, 'guard_mode', False):
+            now = time.time()
+            gap = now - getattr(self, '_last_master_seen', 0.0)
+            self._last_master_seen = now
+            conv = getattr(self, 'conversation', None)
+            busy = (conv is not None and conv.active) or \
+                getattr(self.brain, '_suppress_greetings', False)
+            # Auto-disarm ("welcome home") only when the master RETURNS after
+            # being away (gap since last seen). Arming while standing in front of
+            # the camera (gap small) must NOT instantly disarm.
+            was_armed = getattr(self.brain, 'guard_mode', False)
+            returning = gap > 60
+            if was_armed and returning:
                 self.brain.guard_mode = False
-                self.logger.info("Master recognised while armed — auto-disarming guard")
-                self._announce("Welcome home. Guard mode is now off.")
+                self.logger.info("Master returned (gap=%.0fs) while armed — auto-disarming guard", gap)
                 if getattr(self, 'notifier', None) and self.notifier.available:
                     threading.Thread(
                         target=self.notifier.send_message,
                         args=("✅ Welcome home — I recognised you, guard disarmed.",),
                         daemon=True).start()
+            # Wave + welcome only when you RE-appear (gap since last seen), never
+            # every frame and never mid-conversation. Threaded: it may do a (slow)
+            # cloud emotion read before deciding what to say.
+            since_welcome = now - getattr(self, '_last_welcome', 0.0)
+            if (gap > 90 and since_welcome > 240 and not busy
+                    and not getattr(self, '_greeting_inflight', False)):
+                self._greeting_inflight = True
+                self._last_welcome = now
+                nm = face_data.get('name') or 'Moti'
+                self.logger.info("on-sight welcome for %s (gap=%.0fs)", nm, gap)
+                threading.Thread(target=self._welcome_master,
+                                 kwargs={'name': nm, 'was_armed': was_armed and returning},
+                                 daemon=True).start()
+            elif was_armed and returning:
+                self._announce("Welcome home. Guard mode is now off.")
             self.brain.emit_event(RobotEvent(
                 type='user_authenticated',
                 source='main',
-                data={
-                    'user_id': face_data['face_id'],
-                    'method': 'face'
-                },
+                data={'user_id': face_data['face_id'], 'method': 'face'},
                 priority=2
             ))
             return
@@ -598,8 +685,80 @@ class AIRobot:
                 now = time.time()
                 if now - getattr(self, '_last_unknown_session', 0) > 60:
                     self._last_unknown_session = now
-                    self.logger.info("Unknown face — starting greet/enroll conversation")
+                    # Wave hello to the new person, then greet/enroll them.
+                    if self.hand is not None and getattr(self.hand, 'available', False):
+                        try:
+                            self.hand.wave()
+                        except Exception:
+                            pass
+                    self.logger.info("Unknown face — waving + starting greet/enroll conversation")
                     conv.start_session()
+
+    def _welcome_master(self, name="Moti", was_armed=False):
+        """Wave + a spoken welcome when the master re-appears. If a cloud emotion
+        read spots a strong mood (happy/sad/crying/tired/...), open a short
+        proactive conversation tailored to it instead of the plain welcome."""
+        try:
+            if self.hand is not None and getattr(self.hand, 'available', False):
+                try:
+                    self.hand.wave()
+                except Exception:
+                    pass
+            opener = self._emotion_opener(name)
+            conv = getattr(self, 'conversation', None)
+            self.brain._last_onsight_greet = time.time()
+            if opener and conv is not None and not conv.active:
+                # She speaks the mood-aware opener AND then listens for a reply.
+                conv.start_session(opener=opener)
+            else:
+                self._announce(("Welcome home, %s — guard is off." % name)
+                               if was_armed else ("Welcome back, %s." % name))
+        finally:
+            self._greeting_inflight = False
+
+    def _emotion_opener(self, name="Moti"):
+        """One quick cloud VLM read of the person's facial expression, mapped to a
+        mood-appropriate conversation opener. Returns None for a neutral face (or
+        if the VLM is unavailable / was read recently) so she just gives the plain
+        welcome. Rate-limited to protect the free VLM tier."""
+        vlm = getattr(self, 'vlm', None)
+        if not (vlm and getattr(vlm, 'available', False)):
+            return None
+        now = time.time()
+        if now - getattr(self, '_last_emotion_read', 0.0) < 600:
+            return None
+        self._last_emotion_read = now
+        try:
+            ans = vlm.look("Look only at the person's face and describe their emotion "
+                           "in ONE word: happy, sad, crying, angry, surprised, tired, "
+                           "or neutral.")
+        except Exception:
+            ans = None
+        if not ans:
+            return None
+        e = ans.strip().lower()
+        self.logger.info("emotion read for %s: %r", name, ans)
+        # (keywords, face emotion, spoken opener)
+        table = [
+            (("cry", "tears", "sob"), 'sad',
+             "Hey %s, are you okay? It looks like you've been crying. "
+             "I'm right here if you want to talk about it."),
+            (("sad", "down", "unhapp", "upset"), 'sad',
+             "You seem a little down, %s. Want to tell me what's going on?"),
+            (("angr", "mad", "frustrat", "annoy"), 'alert',
+             "You look a bit worked up, %s. What happened? Talk to me."),
+            (("tired", "exhaust", "sleep"), 'thinking',
+             "You look tired, %s. Long day? I can play something relaxing if you like."),
+            (("happy", "smil", "joy", "excit", "glad"), 'happy',
+             "You look happy today, %s! What's the good news?"),
+            (("surpris", "shock"), 'curious',
+             "You look surprised, %s! What's up?"),
+        ]
+        for keys, emo, line in table:
+            if any(k in e for k in keys):
+                self.face_emotion(emo)
+                return line % name
+        return None  # neutral / unrecognised -> plain welcome
 
     def _on_guard_motion(self, reason: str, frame=None):
         """Motion guard callback — alert about movement/a body (no face needed)."""
@@ -620,6 +779,7 @@ class AIRobot:
         self._last_guard_alert = now
         stamp = _t.strftime("%H:%M:%S")
         self.logger.warning("GUARD: %s detected at %s", reason, stamp)
+        self.face_emotion('alert')
         if frame is None:
             cm = getattr(self, 'camera_manager', None)
             if cm is not None:
@@ -883,15 +1043,75 @@ class AIRobot:
 
         self.logger.info("All modules started")
 
+    # ---- screen-face helpers (safe no-ops if no face is connected) --------
+    def face_emotion(self, value, intensity=1.0):
+        f = getattr(self, 'face', None)
+        if f:
+            try:
+                f.set_emotion(value, intensity)
+            except Exception:
+                pass
+
+    def face_speak(self, on):
+        f = getattr(self, 'face', None)
+        if f:
+            try:
+                f.speak_start() if on else f.speak_end()
+            except Exception:
+                pass
+
     def _announce(self, msg: str):
         """Speak a proactive message (reminders, alerts) out loud + to console."""
         print(f"\n{behavior_config.robot_name}: {msg}\n", flush=True)
         tts = self.modules.get('tts')
         if tts and getattr(tts, 'running', False):
             try:
+                # move the mouth for ~the spoken duration (tts.speak is async, so
+                # estimate from word count and close the mouth on a timer).
+                self.face_speak(True)
+                dur = max(1.0, len(str(msg).split()) * 0.38)
+                threading.Timer(dur, lambda: self.face_speak(False)).start()
                 tts.speak(msg)
             except Exception:
-                pass
+                self.face_speak(False)
+
+    def _start_gaze_feed(self):
+        """Stream the primary detected face's centre to the screen face so her eyes
+        follow you. Reads the face module's locations (frame pixels) ~7x/sec, only
+        while the face is on screen. Fully guarded — never fatal."""
+        import threading as _th
+        import time as _t
+        MIRROR_X = True  # tablet acts like a mirror; set False if gaze feels reversed
+
+        def loop():
+            fm = self.modules.get('face_recognition')
+            missing = 0
+            while getattr(self, 'running', True):
+                try:
+                    f = getattr(self, 'face', None)
+                    if f is not None and getattr(f, 'showing', False) and fm is not None:
+                        locs = list(getattr(fm, 'face_locations', []) or [])
+                        if locs:
+                            missing = 0
+                            x, y, w, h = max(locs, key=lambda b: b[2] * b[3])
+                            fr = self.camera_manager.get_latest_frame()
+                            img = getattr(fr, 'image', fr)
+                            fh, fw = img.shape[:2]
+                            nx = (x + w / 2.0) / max(1, fw)
+                            ny = (y + h / 2.0) / max(1, fh)
+                            gx = ((1.0 - nx) if MIRROR_X else nx) * 2.0 - 1.0
+                            gy = (ny * 2.0 - 1.0) * 0.7
+                            f.look_at(max(-1, min(1, gx)), max(-1, min(1, gy)))
+                        else:
+                            missing += 1
+                            if missing == 3:
+                                f.gaze_mode('idle')   # no one there -> gentle idle drift
+                except Exception:
+                    pass
+                _t.sleep(0.15)
+
+        _th.Thread(target=loop, name="gaze_feed", daemon=True).start()
+        self.logger.info("✓ Gaze feed started (eyes follow you when the face is shown)")
 
     def _network_monitor_loop(self):
         """Announce (once) when the internet connection is lost, and point the
@@ -901,22 +1121,25 @@ class AIRobot:
         except Exception:
             return
         was_online = True
+        misses = 0
         while self.running:
             online = wifi.is_online()
-            if was_online and not online:
-                conv = getattr(self, 'conversation', None)
-                if not (conv and conv.active):   # don't talk over a conversation
-                    msg = ("I've lost my internet connection. You can reconnect me "
-                           "from the dashboard WiFi panel.")
-                    print(f"\n{behavior_config.robot_name}: {msg}\n", flush=True)
-                    tts = self.modules.get('tts')
-                    if tts and getattr(tts, 'running', False):
-                        try:
-                            tts.speak(msg)
-                        except Exception:
-                            pass
-            was_online = online
-            time.sleep(30)
+            misses = 0 if online else (misses + 1)
+            conv = getattr(self, 'conversation', None)
+            busy = bool(conv and conv.active)
+            # Debounce: ~2 consecutive misses => really offline (avoids a blip).
+            if was_online and misses >= 2:
+                was_online = False
+                self.logger.warning("Internet connection LOST")
+                if not busy:
+                    self._announce("I've lost my internet connection. You can "
+                                   "reconnect me from the dashboard WiFi panel.")
+            elif (not was_online) and online:
+                was_online = True
+                self.logger.info("Internet connection RESTORED")
+                if not busy:
+                    self._announce("My internet connection is back.")
+            time.sleep(8)
     
     def start_performance_monitor(self):
         """Start performance monitoring thread"""

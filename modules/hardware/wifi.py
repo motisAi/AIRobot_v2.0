@@ -20,11 +20,12 @@ HELPER = "/usr/local/bin/stella-wifi-helper.sh"
 
 def is_online(timeout: float = 3.0) -> bool:
     """True if the internet is reachable (DNS to a public resolver)."""
+    # Use a per-call timeout; do NOT touch the global default socket timeout
+    # (socket.setdefaulttimeout would apply to every socket in the app).
     for host in ("1.1.1.1", "8.8.8.8"):
         try:
-            socket.setdefaulttimeout(timeout)
-            socket.create_connection((host, 53))
-            return True
+            with socket.create_connection((host, 53), timeout=timeout):
+                return True
         except Exception:
             continue
     return False

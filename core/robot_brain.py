@@ -1089,12 +1089,10 @@ class RobotBrain:
 
             self._face_greet_times[face_id] = now
             if not suppress:
-                greeting = f"Welcome back, {name}!" if name and name != 'unknown' else "Welcome back, Master!"
-                self.emit_event(RobotEvent(
-                    type='speak',
-                    source='brain',
-                    data={'text': greeting}
-                ))
+                # Spoken welcome is owned by main._welcome_master (wave +
+                # emotion-aware opener + starts a listening session); the brain
+                # stays silent here to avoid a double "Welcome back" greeting.
+                pass
         
         else:
             # Known person (not the master) — ensure master privileges are off.

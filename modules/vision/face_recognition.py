@@ -498,7 +498,7 @@ class FaceRecognitionModule:
             
             # Check threshold
             if best_distance < self.threshold:
-                similarity = 1 - (best_distance / self.threshold)
+                similarity = max(0.0, 1.0 - best_distance)
                 
                 # Update last seen
                 self.known_faces[best_match].last_seen = datetime.now()

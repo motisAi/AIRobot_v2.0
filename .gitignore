@@ -47,3 +47,8 @@ venv/Scripts/activate
 /settings.py
 /telegram_bridge.py
 /text_to_speech.py
+devices.json
+snapshot.json
+tinytuya.json
+
+tuya-raw.json

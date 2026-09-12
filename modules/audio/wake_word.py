@@ -209,6 +209,14 @@ class WakeWordModule:
             audio = get_pa()          # shared instance — do NOT terminate it
             if audio is None:
                 return False
+            # Re-resolve the mic index by NAME on every attempt: PortAudio indices
+            # shift when USB devices reshuffle (reboot/replug), and retrying a stale
+            # index fails forever. This lets the retry loop self-heal without a restart.
+            idx = self._resolve_microphone_index(
+                name_hint=hardware_config.wake_word_microphone_name,
+                explicit_index=hardware_config.wake_word_device_index)
+            if idx is not None:
+                self.device_index = idx
             # 48k first: the camera mic doesn't support 16k and would spam
             # paInvalidSampleRate. We resample to 16k for Vosk anyway.
             for rate in (48000, 44100, 16000):
