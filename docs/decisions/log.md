@@ -417,3 +417,14 @@ http://<pi>:8080/phone on the phone and say "show your face on phone".
 
 ### 2026-09-13 — Full architecture review (multi-agent, ultracode)
 Ran a 16-agent audit + research + design pass. Canonical output: docs/architecture/stella-architecture-2026-09-13.md (north star, capability stack online+offline, phased rollback-safe roadmap, object-recognition root cause, Hailo unlock, NVIDIA NIM plan). Key finding: object recognition is dead due to 3 stacked blockers (no model file; enable_hailo:false; wrong pip hailort 4.23.0 vs system 5.1.1). Also found a master-auth bypass in keyword handlers and secret-hygiene issues. Roadmap: Phase 0 reliability+security, Phase 1 revive perception+offline voice (CPU), Phase 2 NVIDIA NIM + offline cliff, Phase 3 offline VLM, Phase 4 (optional/late) HailoRT 5.2.0 upgrade, Phase 5 on-NPU perception. NO code changed in this pass.
+
+---
+
+### 2026-09-13 — Build increment: Phase 0/1 quick wins (all tested + pushed)
+Implemented from the architecture roadmap, each a small reversible commit (pushed to origin/jetson_new_v1):
+- **Object recognition REVIVED** (`cf767f8`): exported a stock `yolov8n.onnx` (Ultralytics, opset 12, 640) and dropped it in `data/models/` (gitignored). `HailoDetector` now loads it via OpenCV-DNN (`enable_hailo` stays false). Verified live: raw output (1,84,8400), real detections (class 57 couch x5) on a camera frame; module subscribes to the camera and starts (backend=opencv_dnn). Also deleted the stale never-loaded root `config.yaml` (Gonzo trap). Rollback: delete the .onnx.
+- **NVIDIA NIM VLM** (`8be3d73`): `modules/vision/vlm.py` now falls back to NIM `meta/llama-3.2-11b-vision-instruct` behind Moondream (NVIDIA_API_KEY in .env, chmod 600, gitignored). Verified: NIM vision returns correct answers from the Pi. NOTE: on this key ONLY the 11b-vision model is provisioned — all other NIM models 404 ("not found for account"), so NIM = vision only here, not an LLM/embeddings provider.
+- **Watchdog reliability** (`cf4fc5f`): stamp `_conv_activity` on USER speech (not just Stella's), threshold 60->75s — cuts false mid-conversation restarts while still recovering a real mic-hang fast.
+- **Security: master-auth gate** (`875df0c`): added `_is_master()`/`_deny_master()` and gated `_maybe_ac` + `_maybe_mirror` (were bypassing the master check that `_do_device_control` and the LLM tools already enforce). Respects `require_authentication`.
+
+Deferred (need user or more care): openWakeWord "Hey Stella" (needs Moti's voice recordings + Colab training); faster-whisper offline STT; face-recognition alignment fix; web-pre-injection gate fix; the invasive HailoRT 5.1.1->5.2.0 upgrade (Phase 4). Rollback baseline for the whole session: commit `382fb4c`; full local backup at `C:\Users\Moti\AIRobot_work\_backups\AIRobot_v2.0_backup_2026-09-13.tgz`.
