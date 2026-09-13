@@ -4,17 +4,18 @@ AI Robot Main Entry Point
 Main application that initializes all modules and runs the robot system.
 Handles module coordination, error recovery, and graceful shutdown.
 
+Target platform: Raspberry Pi 5 + Hailo AI Accelerator + Ubuntu Server 24.04
 """
 
 import sys
 import signal
 import time
 import logging
-import asyncio
 import argparse
 from pathlib import Path
 from typing import Dict, Any, Optional
 import json
+import os
 import psutil
 import threading
 
@@ -22,56 +23,86 @@ import threading
 PROJECT_ROOT = Path(__file__).parent.absolute()
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# Check for Hailo availability
-USE_HAILO = False
-try:
-    import hailo
-    USE_HAILO = True
-    print("✓ Hailo detected - using hardware acceleration")
-except ImportError:
-    print("ℹ Hailo not found - using CPU-only mode")
 
-# Import configuration based on Hailo availability
-if USE_HAILO:
-    from config.settings import (
-        config, 
-        system_config, 
-        hardware_config,
-        security_config,
-        behavior_config
-    )
-else:
-    # Use CPU-optimized settings
-    from config.settings import config as original_config
-    from config.settings import (
-        system_config,
-        hardware_config,
-        security_config,
-        behavior_config
-    )
-    
-    # Override some settings for CPU-only mode
-    from config.settings import ModelConfig
-    model_config = ModelConfig()
-    model_config.whisper_model = "tiny"  # Use smaller model
-    model_config.object_model = "mobilenet"  # Use lighter model
-    system_config.frame_skip = 5  # Process less frames
-    hardware_config.camera_resolution = (320, 240)  # Lower resolution
-    hardware_config.camera_fps = 15  # Lower FPS
-    config = original_config
+def _silence_alsa_warnings():
+    """Silence the harmless 'ALSA lib ...' C-library chatter on the Pi.
+
+    ALSA prints warnings to stderr for every PCM it can't open while PyAudio
+    enumerates devices. They're noise, not errors. We install a no-op error
+    handler at the C level. Kept in a module global so it isn't garbage
+    collected."""
+    global _ALSA_ERR_HANDLER
+    try:
+        from ctypes import CDLL, CFUNCTYPE, c_char_p, c_int
+        proto = CFUNCTYPE(None, c_char_p, c_int, c_char_p, c_int, c_char_p)
+        _ALSA_ERR_HANDLER = proto(lambda *a: None)
+        CDLL("libasound.so.2").snd_lib_error_set_handler(_ALSA_ERR_HANDLER)
+    except Exception:
+        pass
+
+
+_ALSA_ERR_HANDLER = None
+_silence_alsa_warnings()
+
+# Load .env file if present (API keys, etc.)
+_env_file = PROJECT_ROOT / '.env'
+if _env_file.exists():
+    with open(_env_file) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith('#') and '=' in _line:
+                _key, _, _val = _line.partition('=')
+                os.environ.setdefault(_key.strip(), _val.strip())
+
+# Import configuration — platform detection and Hailo availability are
+# handled inside config.settings automatically.
+from config.settings import (
+    config,
+    system_config,
+    hardware_config,
+    security_config,
+    behavior_config,
+    ai_config,
+    web_search_config,
+    music_config,
+    hand_config,
+    microcontroller_config,
+    navigation_config,
+)
 
 # Import core modules
 from core.robot_brain import RobotBrain, RobotEvent
 
-# Import vision modules
-from modules.vision.face_recognition import FaceRecognitionModule
+# Shared hardware managers
+from modules.hardware.camera_manager import CameraManager
+from modules.hardware.audio_manager import AudioManager
 
-# Import other modules (these will be created later)
-# from modules.audio.speech_recognition import SpeechRecognitionModule
-# from modules.audio.wake_word import WakeWordModule
-# from modules.audio.text_to_speech import TextToSpeechModule
-# from modules.hardware.esp32_controller import ESP32Controller
-# from modules.communication.web_server import WebServer
+# Vision modules
+from modules.vision.face_recognition import FaceRecognitionModule
+from modules.vision.object_detection import ObjectDetectionModule
+from modules.vision.vlm import VLM  # cloud vision: "what am I holding?"
+
+# Audio modules
+from modules.audio.wake_word import WakeWordModule
+from modules.audio.speech_recognition import SpeechRecognitionModule
+from modules.audio.text_to_speech import TextToSpeechModule
+
+# AI modules
+from modules.ai.ai_engine import AIEngine
+from modules.ai.learning_db import LearningDB
+from modules.ai.reminders import ReminderManager
+
+# Hardware controllers
+from modules.hardware.microcontroller import MicrocontrollerController
+
+# Navigation / environment learning (future wheels + sensors)
+from modules.navigation.navigator import Navigator
+
+# Conversation session manager (wake -> multi-turn dialogue -> farewell)
+from modules.conversation.manager import ConversationManager
+
+# Web dashboard
+from modules.web.dashboard import WebDashboard
 
 
 class AIRobot:
@@ -95,9 +126,19 @@ class AIRobot:
         self.logger.info(f"   {behavior_config.robot_name} AI ROBOT SYSTEM")
         self.logger.info("=" * 60)
         
-        # Load custom configuration if provided
+        # Load custom configuration if provided, else prefer config.yaml
+        # (the editable control panel), falling back to legacy config.json.
+        yaml_config = PROJECT_ROOT / "config" / "config.yaml"
+        json_config = PROJECT_ROOT / "config" / "config.json"
         if config_file:
             config.load_from_file(config_file)
+            self.logger.info(f"Loaded settings from {config_file}")
+        elif yaml_config.exists():
+            config.load_from_file(str(yaml_config))
+            self.logger.info("Loaded settings from config/config.yaml")
+        elif json_config.exists():
+            config.load_from_file(str(json_config))
+            self.logger.info("Loaded settings from config/config.json")
         
         # Validate configuration
         if not config.validate():
@@ -108,6 +149,14 @@ class AIRobot:
         self.running = False
         self.modules: Dict[str, Any] = {}
         self.threads: Dict[str, threading.Thread] = {}
+        
+        # Shared hardware managers
+        self.camera_manager = CameraManager()
+        self.audio_manager = AudioManager()
+        
+        # AI subsystems
+        self.ai_engine = AIEngine()
+        self.learning_db = LearningDB()
         
         # Initialize robot brain
         self.brain = RobotBrain()
@@ -122,6 +171,7 @@ class AIRobot:
         
         # Shutdown event
         self.shutdown_event = threading.Event()
+        self.keyword_listener_paused = False
         
     def _setup_logging(self):
         """Setup logging configuration"""
@@ -147,37 +197,86 @@ class AIRobot:
             console_handler = logging.StreamHandler()
             console_handler.setFormatter(logging.Formatter(log_format))
         
-        # File handler
+        # File handler — FIXED filename so it's always easy to find/tail.
+        # Rotates so it never grows unbounded (keeps a few old runs).
+        from logging.handlers import RotatingFileHandler
         log_dir = PROJECT_ROOT / "data" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        
-        file_handler = logging.FileHandler(
-            log_dir / f"robot_{time.strftime('%Y%m%d_%H%M%S')}.log"
+
+        file_handler = RotatingFileHandler(
+            log_dir / "gonzo.log", maxBytes=2_000_000, backupCount=3,
         )
         file_handler.setFormatter(logging.Formatter(log_format))
-        
-        # Configure root logger
-        logging.basicConfig(
-            level=getattr(logging, system_config.log_level),
-            handlers=[console_handler, file_handler]
-        )
+
+        # Configure root logger (force=True needed because imports may have
+        # already called logging.warning(), which auto-adds a default handler
+        # and makes basicConfig() a no-op without force)
+        root = logging.getLogger()
+        root.setLevel(getattr(logging, system_config.log_level))
+        # Remove any auto-added handlers
+        root.handlers.clear()
+        root.addHandler(console_handler)
+        root.addHandler(file_handler)
+
+        # Silence noisy third-party loggers that flood the log with request
+        # spam (Flask access logs, HTTP client, DuckDuckGo search internals).
+        for noisy in ('werkzeug', 'httpx', 'httpcore', 'ddgs', 'primp',
+                      'urllib3', 'PIL', 'transitions.core'):
+            logging.getLogger(noisy).setLevel(logging.WARNING)
+        # Mark a clear start-of-run boundary in the log.
+        logging.getLogger('AIRobot').info(
+            "===== NEW RUN %s =====", time.strftime('%Y-%m-%d %H:%M:%S'))
     
     def initialize_modules(self):
-        """Initialize all robot modules"""
+        """Initialize all robot modules with shared hardware managers."""
         self.logger.info("Initializing modules...")
         
-        # Initialize Vision Module
+        # --- Wire AI subsystems to brain ---
+        self.brain.ai_engine = self.ai_engine
+        self.brain.learning_db = self.learning_db
+        
+        # Give AI engine access to the learning DB for memory recall
+        self.ai_engine.learning_db = self.learning_db
+        
+        # Start persistent systems first
+        self.learning_db.start()
+        self.ai_engine.start()
+        # Warm up the NPU model in the background so the first question is fast.
+        threading.Thread(target=self.ai_engine.warmup, daemon=True).start()
+        
+        # --- Start shared Camera Manager ---
+        try:
+            self.logger.info("Starting shared Camera Manager...")
+            self.camera_manager.start()
+            self.logger.info("✓ Camera Manager started")
+        except Exception as e:
+            self.logger.error(f"✗ Camera Manager failed: {e}")
+        
+        # --- Vision: Face Recognition (subscribes to shared camera) ---
         try:
             self.logger.info("Initializing Face Recognition...")
-            self.modules['face_recognition'] = FaceRecognitionModule(self.brain)
+            self.modules['face_recognition'] = FaceRecognitionModule(
+                brain=self.brain,
+                camera_manager=self.camera_manager,
+            )
             self.brain.modules['vision'] = self.modules['face_recognition']
             self.logger.info("✓ Face Recognition initialized")
         except Exception as e:
             self.logger.error(f"✗ Failed to initialize Face Recognition: {e}")
         
-        # Initialize Audio Modules
-        # TODO: Uncomment when modules are created
-        """
+        # --- Vision: Object Detection (subscribes to shared camera) ---
+        try:
+            self.logger.info("Initializing Object Detection (Hailo / OpenCV fallback)...")
+            self.modules['object_detection'] = ObjectDetectionModule(
+                camera_manager=self.camera_manager,
+                brain=self.brain,
+            )
+            self.brain.modules['object_detection'] = self.modules['object_detection']
+            self.logger.info("✓ Object Detection initialized")
+        except Exception as e:
+            self.logger.error(f"✗ Failed to initialize Object Detection: {e}")
+        
+        # --- Audio Modules ---
         try:
             self.logger.info("Initializing Wake Word Detection...")
             self.modules['wake_word'] = WakeWordModule(self.brain)
@@ -188,6 +287,7 @@ class AIRobot:
         try:
             self.logger.info("Initializing Speech Recognition...")
             self.modules['speech_recognition'] = SpeechRecognitionModule(self.brain)
+            self.brain.modules['speech'] = self.modules['speech_recognition']
             self.logger.info("✓ Speech Recognition initialized")
         except Exception as e:
             self.logger.error(f"✗ Failed to initialize Speech Recognition: {e}")
@@ -196,37 +296,255 @@ class AIRobot:
             self.logger.info("Initializing Text-to-Speech...")
             self.modules['tts'] = TextToSpeechModule(self.brain)
             self.brain.modules['audio'] = self.modules['tts']
+            self.brain.modules['tts'] = self.modules['tts']
             self.logger.info("✓ Text-to-Speech initialized")
         except Exception as e:
             self.logger.error(f"✗ Failed to initialize TTS: {e}")
-        """
         
-        # Initialize Hardware Controllers
-        # TODO: Uncomment when modules are created
-        """
+        # --- Microcontroller bridge (ESP32 / Pi Zero / Arduino) ---
+        # Always present as brain.modules['hardware'] so real-world commands
+        # ("turn on the light") always have a sink. When
+        # microcontroller.connected is false it runs in log-only mode.
         try:
-            self.logger.info("Initializing ESP32 Controller...")
-            self.modules['esp32'] = ESP32Controller(self.brain)
-            self.brain.modules['hardware'] = self.modules['esp32']
-            self.logger.info("✓ ESP32 Controller initialized")
+            self.logger.info("Initializing Microcontroller bridge...")
+            self.modules['microcontroller'] = MicrocontrollerController(microcontroller_config)
+            self.modules['microcontroller'].connect()
+            self.brain.modules['hardware'] = self.modules['microcontroller']
+            if microcontroller_config.connected:
+                self.logger.info(
+                    "✓ Microcontroller bridge live (%s transport)",
+                    microcontroller_config.transport,
+                )
+            else:
+                self.logger.info("✓ Microcontroller bridge in log-only mode (not connected)")
         except Exception as e:
-            self.logger.error(f"✗ Failed to initialize ESP32: {e}")
-        """
+            self.logger.error(f"✗ Failed to initialize Microcontroller bridge: {e}")
+
+        # --- Navigation / environment learning (future wheels + sensors) ---
+        try:
+            self.modules['navigation'] = Navigator(
+                microcontroller=self.modules.get('microcontroller'),
+                cfg=navigation_config,
+                brain=self.brain,
+            )
+            self.modules['navigation'].start()
+            self.brain.modules['navigation'] = self.modules['navigation']
+            if navigation_config.enabled:
+                self.logger.info("✓ Navigation enabled")
+            else:
+                self.logger.info("✓ Navigation hooks ready (disabled in config)")
+        except Exception as e:
+            self.logger.error(f"✗ Failed to initialize Navigation: {e}")
+
+        # --- Phone notifications (Telegram) ---
+        from modules.hardware.notify import Notifier
+        self.notifier = Notifier()
+        self._last_guard_alert = 0.0
+        self._unknown_streak = 0
+        self._guard_pending = None   # interactive guard: 'recognize' | 'alarm' | None
+        self.logger.info("Notifier: %s",
+                         "ready (Telegram)" if self.notifier.available
+                         else "off (set TELEGRAM_TOKEN + TELEGRAM_CHAT_ID in .env)")
+
+        # --- Motion / presence guard (alerts on movement or a body, NO face
+        #     needed). Face recognition only suppresses alerts when it sees you.
+        self.motion_guard = None
+        try:
+            from modules.vision.motion_guard import MotionGuard
+            self.motion_guard = MotionGuard(
+                self.camera_manager, self.brain, self._on_guard_motion,
+                enabled=getattr(security_config, 'guard_motion_detection', True),
+                sensitivity=getattr(security_config, 'guard_sensitivity', 'medium'),
+                cooldown=getattr(security_config, 'guard_alert_cooldown', 30.0),
+                detect_person=getattr(security_config, 'guard_detect_person', True),
+            )
+            self.motion_guard.start()
+            self.logger.info("✓ Motion guard ready (sensitivity=%s)",
+                             getattr(security_config, 'guard_sensitivity', 'medium'))
+        except Exception as e:
+            self.logger.error("✗ Motion guard init failed: %s", e)
+
+        # --- Reminders / timers ---
+        self.reminders = ReminderManager(
+            speak_cb=self._announce,
+            store_path=str(PROJECT_ROOT / "data" / "reminders.json"))
+
+        # --- Vision-language model (cloud, optional) ---
+        self.vlm = VLM(camera_manager=self.camera_manager)
+        if self.vlm.available:
+            self.logger.info("✓ Vision ready (Moondream) — ask 'what am I holding?'")
+        else:
+            self.logger.info("Vision off (set MOONDREAM_API_KEY in .env to enable)")
+
+        # --- On-demand screen face (additive, isolated: never crashes Stella) ---
+        self.face = None
+        try:
+            from face_bridge import FaceBridge
+            self.face = FaceBridge(host="0.0.0.0", port=8080)
+            self.face.start()
+            self.logger.info("✓ Face bridge ready on :8080 (say 'show your face')")
+            self._start_gaze_feed()
+        except Exception as exc:
+            self.logger.warning("Face bridge not started: %s", exc)
+
+        # --- Music player (YouTube via mpv + yt-dlp), routed to Stella's speaker ---
+        self.music = None
+        try:
+            from modules.hardware.music import MusicPlayer
+            tts_mod = self.modules.get('tts')
+            self.music = MusicPlayer(
+                alsa_device=getattr(tts_mod, 'alsa_device', None),
+                ytdlp_path=str(PROJECT_ROOT / 'venv' / 'bin' / 'yt-dlp'),
+                default_volume=getattr(music_config, 'default_volume', 70),
+                duck_volume=getattr(music_config, 'duck_volume', 25),
+                volume_step=getattr(music_config, 'volume_step', 20))
+            self.logger.info("✓ Music player ready" if self.music.available
+                             else "Music off (needs ffmpeg + aplay + yt-dlp)")
+            # Let the TTS free the speaker from the music while Stella speaks.
+            if tts_mod is not None:
+                tts_mod.music = self.music
+        except Exception as e:
+            self.logger.error("✗ Music player init failed: %s", e)
+
+        # --- Audio arbiter: one owner of the speaker at a time (speech preempts
+        #     music, and future alert chimes go through the same coordinator). ---
+        try:
+            from modules.hardware.audio_arbiter import AudioArbiter
+            self.audio_arbiter = AudioArbiter()
+            if self.music is not None:
+                self.audio_arbiter.add_duckable(self.music)
+            if tts_mod is not None:
+                tts_mod.arbiter = self.audio_arbiter
+            self.logger.info("✓ Audio arbiter ready")
+        except Exception as e:
+            self.logger.error("✗ Audio arbiter init failed: %s", e)
+            self.audio_arbiter = None
+
+        # --- Robotic hand (ESP32 + PCA9685 gestures over serial) ---
+        self.hand = None
+        try:
+            if getattr(hand_config, 'enabled', False):
+                from modules.hardware.hand import Hand
+                import glob as _glob
+                _port = getattr(hand_config, 'serial_port', '/dev/ttyACM0')
+                if not os.path.exists(_port):
+                    _cands = sorted(_glob.glob('/dev/ttyACM*') + _glob.glob('/dev/ttyUSB*'))
+                    if _cands:
+                        self.logger.info("Hand port %s missing; auto-using %s", _port, _cands[0])
+                        _port = _cands[0]
+                self.hand = Hand(
+                    port=_port,
+                    baud=getattr(hand_config, 'baud', 115200),
+                    enabled=True)
+                self.logger.info("✓ Robotic hand ready" if self.hand.available
+                                 else "Hand enabled but serial not connected")
+            else:
+                self.logger.info("Robotic hand disabled (set hand.enabled: true)")
+        except Exception as e:
+            self.logger.error("✗ Hand init failed: %s", e)
+
+        # --- Hand mirror (MediaPipe): Stella copies your hand when asked ---
+        self.hand_mirror = None
+        try:
+            if self.hand is not None:   # watchdog keeps the serial healthy
+                from modules.vision.hand_mirror import HandMirror
+                self.hand_mirror = HandMirror(self.camera_manager, self.hand)
+                self.hand_mirror.start()
+                self.logger.info("✓ Hand mirror ready" if self.hand_mirror.available
+                                 else "Hand mirror off (mediapipe not available)")
+        except Exception as e:
+            self.logger.error("✗ Hand mirror init failed: %s", e)
+
+        # --- MQTT device hub (control switches/lights on RobotNet) ---
+        self.mqtt = None
+        try:
+            import yaml as _yaml
+            _mcfg = ((_yaml.safe_load(open(PROJECT_ROOT / "config" / "config.yaml"))
+                      or {}).get("mqtt") or {})
+            if _mcfg.get("enabled", True):
+                from modules.hardware.mqtt_devices import MqttDevices
+                self.mqtt = MqttDevices(_mcfg.get("broker", "localhost"),
+                                        _mcfg.get("port", 1883),
+                                        _mcfg.get("devices", {}))
+                self.logger.info("\u2713 MQTT device hub ready (%d device(s))",
+                                 len(self.mqtt.devices))
+        except Exception as _e:
+            self.logger.warning("MQTT hub not started: %s", _e)
+
+        # --- Tuya devices (LSPA8 plug etc.) via tinytuya local control ---
+        self.tuya = None
+        try:
+            from modules.hardware.tuya_devices import TuyaDevices
+            self.tuya = TuyaDevices(str(PROJECT_ROOT / "devices.json"))
+            if self.tuya.devices:
+                self.logger.info("\u2713 Tuya devices ready (%d): %s",
+                                 len(self.tuya.devices), self.tuya.list_devices())
+        except Exception as _e:
+            self.logger.warning("Tuya init failed: %s", _e)
+
+        # --- Sensibo AC control (cloud API; needs SENSIBO_API_KEY in .env) ---
+        self.sensibo = None
+        try:
+            from modules.hardware.sensibo import Sensibo
+            self.sensibo = Sensibo()
+            if self.sensibo.enabled and self.sensibo.pods:
+                self.logger.info("\u2713 Sensibo AC ready (%d unit(s)): %s",
+                                 len(self.sensibo.pods), self.sensibo.list_units())
+        except Exception as _e:
+            self.logger.warning("Sensibo init failed: %s", _e)
+
+        # --- Conversation session manager ---
+        self.conversation = ConversationManager(self)
+        self.logger.info("✓ Conversation manager ready")
+
+        # --- Two-way Telegram chat (text Stella from your phone) ---
+        self._remote_master = False
+        try:
+            from modules.comms.telegram_bridge import TelegramBridge
+            self.telegram = TelegramBridge(self)
+            if self.telegram.available:
+                self.logger.info("✓ Telegram two-way chat ready")
+            else:
+                self.telegram = None
+        except Exception as e:
+            self.logger.error(f"Telegram bridge init failed: {e}")
+            self.telegram = None
         
-        # Initialize Communication Modules
-        # TODO: Uncomment when modules are created
-        """
-        try:
-            if system_config.enable_web_interface:
-                self.logger.info("Initializing Web Server...")
-                self.modules['web_server'] = WebServer(self.brain)
-                self.logger.info("✓ Web Server initialized")
-        except Exception as e:
-            self.logger.error(f"✗ Failed to initialize Web Server: {e}")
-        """
+        # --- Web Dashboard (only when remote access is explicitly enabled) ---
+        self.dashboard = None
+        if security_config.remote_access_enabled:
+            try:
+                self.logger.info("Starting Web Dashboard...")
+                self.dashboard = WebDashboard(
+                    camera_manager=self.camera_manager,
+                    brain=self.brain,
+                    learning_db=self.learning_db,
+                    robot_name=behavior_config.robot_name,
+                    ai_engine=self.ai_engine,
+                )
+                self.dashboard.start()
+                self.logger.info("✓ Web Dashboard at http://0.0.0.0:5000")
+            except Exception as e:
+                self.logger.error(f"✗ Failed to start Web Dashboard: {e}")
+                self.dashboard = None
+        else:
+            self.logger.info(
+                "Web Dashboard disabled (set security.remote_access_enabled: true to enable)"
+            )
         
         self.logger.info(f"Initialized {len(self.modules)} modules")
-        
+
+        # --- Hardware watchdog: background self-healing for shifted device
+        #     indices/ports (mics, ESP32 hand serial, HDMI audio card). ---
+        self.watchdog = None
+        try:
+            from modules.hardware.watchdog import HardwareWatchdog
+            self.watchdog = HardwareWatchdog(self, interval=20.0)
+            self.watchdog.start()
+            self.logger.info("✓ Hardware watchdog started")
+        except Exception as e:
+            self.logger.error("✗ Hardware watchdog failed: %s", e)
+
         # Register event handlers
         self._register_event_handlers()
     
@@ -237,6 +555,12 @@ class AIRobot:
         self.brain.register_event_handler(
             'face_detected',
             self._handle_face_detected
+        )
+        
+        # Object detection events
+        self.brain.register_event_handler(
+            'object_detected',
+            self._handle_object_detected
         )
         
         # Wake word events
@@ -251,6 +575,21 @@ class AIRobot:
             self._handle_speech
         )
         
+        self.brain.register_event_handler(
+            'dialogue_idle',
+            self._handle_dialogue_idle
+        )
+        
+        self.brain.register_event_handler(
+            'speech_complete',
+            self._handle_speech_complete
+        )
+        
+        self.brain.register_event_handler(
+            'speech_listen_failed',
+            self._handle_speech_listen_failed
+        )
+        
         # System events
         self.brain.register_event_handler(
             'battery_low',
@@ -261,39 +600,323 @@ class AIRobot:
             'emergency_stop',
             self._handle_emergency_stop
         )
+        
+        # Speak events — route to TTS
+        self.brain.register_event_handler(
+            'speak',
+            self._handle_speak
+        )
     
     def _handle_face_detected(self, event: RobotEvent):
         """Handle face detection event"""
         face_data = event.data
+        face_id = face_data.get('face_id')
         self.logger.debug(f"Face detected: {face_data.get('name', 'Unknown')}")
-        
+
         # Authenticate if master
         if face_data.get('is_master'):
+            self._unknown_streak = 0
+            now = time.time()
+            gap = now - getattr(self, '_last_master_seen', 0.0)
+            self._last_master_seen = now
+            conv = getattr(self, 'conversation', None)
+            busy = (conv is not None and conv.active) or \
+                getattr(self.brain, '_suppress_greetings', False)
+            # Auto-disarm ("welcome home") only when the master RETURNS after
+            # being away (gap since last seen). Arming while standing in front of
+            # the camera (gap small) must NOT instantly disarm.
+            was_armed = getattr(self.brain, 'guard_mode', False)
+            returning = gap > 60
+            if was_armed and returning:
+                self.brain.guard_mode = False
+                self.logger.info("Master returned (gap=%.0fs) while armed — auto-disarming guard", gap)
+                if getattr(self, 'notifier', None) and self.notifier.available:
+                    threading.Thread(
+                        target=self.notifier.send_message,
+                        args=("✅ Welcome home — I recognised you, guard disarmed.",),
+                        daemon=True).start()
+            # Wave + welcome only when you RE-appear (gap since last seen), never
+            # every frame and never mid-conversation. Threaded: it may do a (slow)
+            # cloud emotion read before deciding what to say.
+            since_welcome = now - getattr(self, '_last_welcome', 0.0)
+            if (gap > 90 and since_welcome > 240 and not busy
+                    and not getattr(self, '_greeting_inflight', False)):
+                self._greeting_inflight = True
+                self._last_welcome = now
+                nm = face_data.get('name') or 'Moti'
+                self.logger.info("on-sight welcome for %s (gap=%.0fs)", nm, gap)
+                threading.Thread(target=self._welcome_master,
+                                 kwargs={'name': nm, 'was_armed': was_armed and returning},
+                                 daemon=True).start()
+            elif was_armed and returning:
+                self._announce("Welcome home. Guard mode is now off.")
             self.brain.emit_event(RobotEvent(
                 type='user_authenticated',
                 source='main',
-                data={
-                    'user_id': face_data['face_id'],
-                    'method': 'face'
-                },
+                data={'user_id': face_data['face_id'], 'method': 'face'},
                 priority=2
             ))
+            return
+
+        # Reset the phantom-face streak whenever a real known face appears.
+        if face_id and face_id != 'unknown':
+            self._unknown_streak = 0
+
+        # GUARD MODE: an unrecognized face triggers a silent snapshot + phone
+        # alert. Filter flicker/phantoms (e.g. a face in a painting): require the
+        # unknown to persist a few detections, and skip if the master was just seen.
+        if face_id == 'unknown' and getattr(self.brain, 'guard_mode', False):
+            now = time.time()
+            if now - getattr(self.brain, 'last_master_time', 0) < 20:
+                return  # master is around — not an intruder
+            self._unknown_streak = getattr(self, '_unknown_streak', 0) + 1
+            if self._unknown_streak >= 3 and now - self._last_guard_alert > 30:
+                threading.Thread(target=self._guard_alert,
+                                 kwargs={"reason": "an unrecognized face"},
+                                 daemon=True).start()
+            return
+
+        # Unknown person -> proactively start a conversation so we actually
+        # LISTEN (command mic) to their name and enroll them. A passive spoken
+        # prompt alone has no listener in this architecture.
+        if face_id == 'unknown' and behavior_config.learn_new_faces:
+            conv = getattr(self, 'conversation', None)
+            if conv is not None and not conv.active:
+                now = time.time()
+                if now - getattr(self, '_last_unknown_session', 0) > 60:
+                    self._last_unknown_session = now
+                    # Wave hello to the new person, then greet/enroll them.
+                    if self.hand is not None and getattr(self.hand, 'available', False):
+                        try:
+                            self.hand.wave()
+                        except Exception:
+                            pass
+                    self.logger.info("Unknown face — waving + starting greet/enroll conversation")
+                    conv.start_session()
+
+    def _welcome_master(self, name="Moti", was_armed=False):
+        """Wave + a spoken welcome when the master re-appears. If a cloud emotion
+        read spots a strong mood (happy/sad/crying/tired/...), open a short
+        proactive conversation tailored to it instead of the plain welcome."""
+        try:
+            if self.hand is not None and getattr(self.hand, 'available', False):
+                try:
+                    self.hand.wave()
+                except Exception:
+                    pass
+            opener = self._emotion_opener(name)
+            conv = getattr(self, 'conversation', None)
+            self.brain._last_onsight_greet = time.time()
+            if opener and conv is not None and not conv.active:
+                # She speaks the mood-aware opener AND then listens for a reply.
+                conv.start_session(opener=opener)
+            else:
+                self._announce(("Welcome home, %s — guard is off." % name)
+                               if was_armed else ("Welcome back, %s." % name))
+        finally:
+            self._greeting_inflight = False
+
+    def _emotion_opener(self, name="Moti"):
+        """One quick cloud VLM read of the person's facial expression, mapped to a
+        mood-appropriate conversation opener. Returns None for a neutral face (or
+        if the VLM is unavailable / was read recently) so she just gives the plain
+        welcome. Rate-limited to protect the free VLM tier."""
+        vlm = getattr(self, 'vlm', None)
+        if not (vlm and getattr(vlm, 'available', False)):
+            return None
+        now = time.time()
+        if now - getattr(self, '_last_emotion_read', 0.0) < 600:
+            return None
+        self._last_emotion_read = now
+        try:
+            ans = vlm.look("Look only at the person's face and describe their emotion "
+                           "in ONE word: happy, sad, crying, angry, surprised, tired, "
+                           "or neutral.")
+        except Exception:
+            ans = None
+        if not ans:
+            return None
+        e = ans.strip().lower()
+        self.logger.info("emotion read for %s: %r", name, ans)
+        # (keywords, face emotion, spoken opener)
+        table = [
+            (("cry", "tears", "sob"), 'sad',
+             "Hey %s, are you okay? It looks like you've been crying. "
+             "I'm right here if you want to talk about it."),
+            (("sad", "down", "unhapp", "upset"), 'sad',
+             "You seem a little down, %s. Want to tell me what's going on?"),
+            (("angr", "mad", "frustrat", "annoy"), 'alert',
+             "You look a bit worked up, %s. What happened? Talk to me."),
+            (("tired", "exhaust", "sleep"), 'thinking',
+             "You look tired, %s. Long day? I can play something relaxing if you like."),
+            (("happy", "smil", "joy", "excit", "glad"), 'happy',
+             "You look happy today, %s! What's the good news?"),
+            (("surpris", "shock"), 'curious',
+             "You look surprised, %s! What's up?"),
+        ]
+        for keys, emo, line in table:
+            if any(k in e for k in keys):
+                self.face_emotion(emo)
+                return line % name
+        return None  # neutral / unrecognised -> plain welcome
+
+    def _on_guard_motion(self, reason: str, frame=None):
+        """Motion guard callback — alert about movement/a body (no face needed)."""
+        threading.Thread(target=self._guard_alert,
+                          kwargs={"reason": reason, "frame": frame},
+                          daemon=True).start()
+
+    def _guard_alert(self, reason: str = "an unrecognized person", frame=None):
+        """Capture a snapshot and push a guard alert to the master's phone.
+
+        Shared by the motion guard and the face path; one cooldown throttles
+        both so a person moving in front of the camera can't spam alerts.
+        """
+        import time as _t
+        now = _t.time()
+        if now - self._last_guard_alert < 30:
+            return
+        self._last_guard_alert = now
+        stamp = _t.strftime("%H:%M:%S")
+        self.logger.warning("GUARD: %s detected at %s", reason, stamp)
+        self.face_emotion('alert')
+        if frame is None:
+            cm = getattr(self, 'camera_manager', None)
+            if cm is not None:
+                try:
+                    f = cm.get_latest_frame()
+                    frame = getattr(f, 'image', f)
+                except Exception:
+                    frame = None
+        caption = (f"⚠️ Guard: {reason} detected at {stamp}.\n"
+                   f"Do you recognise this person? Reply YES or NO.")
+        sent = False
+        if getattr(self, 'notifier', None) and self.notifier.available:
+            if frame is not None:
+                sent = self.notifier.send_photo(frame, caption)
+            if not sent:
+                sent = self.notifier.send_message(caption)
+        if sent:
+            self._guard_pending = 'recognize'   # await the master's YES/NO on Telegram
+            self._guard_pending_time = now
+        else:
+            self.logger.warning("GUARD alert not sent (Telegram not configured?)")
+
+    def _guard_scream(self):
+        """Sound a LOUD, aggressive alarm (master authorised it from the phone).
+
+        Uses espeak-ng as a harsh shouting voice (not Stella's calm voice),
+        amplified/distorted via sox and maxed on the output, repeated — meant to
+        scare an intruder, not to sound polite.
+        """
+        import subprocess, tempfile, os
+        self.logger.warning("GUARD: alarm authorised — SCREAMING")
+        # stop music and push output volume to max where a control exists
+        try:
+            if getattr(self, 'music', None):
+                self.music.stop()
+        except Exception:
+            pass
+        for ctrl in ('Master', 'PCM', 'Speaker'):
+            try:
+                subprocess.run(['amixer', 'sset', ctrl, '100%'], capture_output=True, timeout=3)
+            except Exception:
+                pass
+        tts = self.modules.get('tts')
+        dev = getattr(tts, 'alsa_device', None) if tts else None
+        phrases = ["THIEF! GET OUT NOW!",
+                   "INTRUDER! LEAVE IMMEDIATELY!",
+                   "GET AWAY, OR I AM CALLING THE POLICE!",
+                   "GET OUT! GET OUT NOW!"]
+        for i in range(5):
+            text = phrases[i % len(phrases)]
+            wav = loud = None
+            try:
+                wav = tempfile.NamedTemporaryFile(suffix='.wav', delete=False).name
+                # -a 200 max amplitude, fast, low/angry pitch
+                subprocess.run(['espeak-ng', '-a', '200', '-s', '175', '-p', '15',
+                                '-w', wav, text], capture_output=True, timeout=10)
+                loud = wav + '.loud.wav'
+                r = subprocess.run(['sox', wav, loud, 'gain', '-n', '-0.1', 'vol', '4.0'],
+                                   capture_output=True, timeout=10)  # normalize + overdrive
+                play = loud if (r.returncode == 0 and os.path.exists(loud)) else wav
+                # Try the pinned device, then ALSA default, then plain — HDMI can
+                # report a spurious "busy", so fall through until one plays.
+                for d in (dev, 'default', None):
+                    c = ['aplay', '-q'] + (['-D', d] if d else []) + [play]
+                    if subprocess.run(c, capture_output=True, timeout=12).returncode == 0:
+                        break
+            except Exception as exc:
+                self.logger.warning("scream failed: %s", exc)
+                break
+            finally:
+                for f in (wav, loud):
+                    if f:
+                        try:
+                            os.unlink(f)
+                        except Exception:
+                            pass
+    
+    def _handle_speak(self, event: RobotEvent):
+        """Route speak events to the TTS module."""
+        text = event.data.get('text', '') if event.data else ''
+        if not text:
+            return
+        # Print the conversation to the console so it's visible even without a
+        # speaker (e.g. on the monitor's text console or over SSH).
+        print(f"\n{behavior_config.robot_name}: {text}\n", flush=True)
+        tts = self.modules.get('tts')
+        if tts and tts.running:
+            tts.speak(text)
+        else:
+            self.logger.info(f"[SPEAK] {text}")
+    
+    def _handle_object_detected(self, event: RobotEvent):
+        """Handle object detection event — log to learning DB."""
+        data = event.data or {}
+        objs = data.get('objects') or []
+        if objs:
+            self.logger.debug("Objects seen: %s",
+                              data.get('summary') or [o.get('label') for o in objs])
+        
+        # No per-event DB writes (detection runs continuously); deliberate
+        # object learning happens via the brain's explicit learning path.
     
     def _handle_wake_word(self, event: RobotEvent):
-        """Handle wake word detection"""
-        self.logger.info("Wake word detected!")
-        
-        # Trigger listening state in brain
-        self.brain.wake_word_heard()
+        """Handle wake word detection — start a multi-turn conversation session."""
+        if getattr(self, 'conversation', None) and self.conversation.active:
+            return  # already conversing
+        self.logger.info("Wake word detected — starting conversation session")
+        # The ConversationManager pauses the wake mic, greets, and runs the
+        # command-mic dialogue loop until the conversation ends.
+        self.conversation.start_session()
     
     def _handle_speech(self, event: RobotEvent):
         """Handle recognized speech"""
         text = event.data.get('text', '')
         self.logger.info(f"Speech recognized: {text}")
-        
+        print(f"\nYou: {text}", flush=True)
+
         # Process in brain
         self.brain.speech_received(text)
-    
+        
+    def _handle_dialogue_idle(self, event: RobotEvent):
+        """Resume wake-word listening once the brain returns to IDLE."""
+        self.logger.debug("Dialogue cycle finished; resuming wake-word listener")
+        self._resume_wake_word_listener()
+
+    def _handle_speech_complete(self, event: RobotEvent):
+        """Log text-to-speech completions for easier debugging."""
+        utterance = event.data.get('text') if event.data else None
+        self.logger.debug(f"Text-to-speech finished: {utterance}")
+        self._resume_wake_word_listener()
+
+    def _handle_speech_listen_failed(self, event: RobotEvent):
+        """Recover keyword listening when a speech capture session fails."""
+        reason = event.data.get('reason', 'unknown') if event.data else 'unknown'
+        self.logger.warning(f"Speech capture failed ({reason}); resuming wake-word listener")
+        self._resume_wake_word_listener()
+
     def _handle_battery_low(self, event: RobotEvent):
         """Handle low battery warning"""
         self.logger.warning("Low battery warning received")
@@ -306,12 +929,66 @@ class AIRobot:
         
         # Stop all modules immediately
         self.emergency_shutdown()
+
+    def _pause_wake_word_listener(self, reason: str = "manual"):
+        """Pause the wake-word listener to avoid crosstalk with active dialogue."""
+        if self.keyword_listener_paused:
+            return
+        wake_module = self.modules.get('wake_word')
+        if not wake_module:
+            return
+        try:
+            wake_module.pause_listening(reason=reason)
+            self.keyword_listener_paused = True
+        except Exception as exc:
+            self.logger.error(f"Failed to pause wake-word listener: {exc}")
     
+    def _resume_wake_word_listener(self):
+        """Resume passive wake-word listening once dialogue concludes."""
+        # While a conversation is active, ONLY the ConversationManager may
+        # resume the wake mic (at the very end). Stray resumes from TTS
+        # 'speech_complete' events during the session would reopen the wake mic
+        # and fight the command mic.
+        if getattr(self, 'conversation', None) and self.conversation.active:
+            return
+        if not self.keyword_listener_paused:
+            return
+        wake_module = self.modules.get('wake_word')
+        if not wake_module:
+            self.keyword_listener_paused = False
+            return
+        try:
+            wake_module.resume_listening()
+            self.keyword_listener_paused = False
+        except Exception as exc:
+            self.logger.error(f"Failed to resume wake-word listener: {exc}")
+    
+    def _boost_input_gains(self):
+        """Raise USB microphone capture gain to a usable level.
+
+        USB mics often power up at 0% capture, which makes speech recognition
+        return empty transcripts. We set the capture controls to max on the USB
+        input cards (best-effort — ignored if the control doesn't exist). Runs
+        every startup so it survives reboots without needing 'alsactl store'.
+        """
+        import subprocess
+        for card in (0, 1):
+            for ctrl in ("Mic", "Capture"):
+                try:
+                    subprocess.run(["amixer", "-c", str(card), "sset", ctrl, "100%", "cap"],
+                                   capture_output=True, timeout=5)
+                except Exception:
+                    pass
+        self.logger.info("Microphone capture gains set to max")
+
     def start_modules(self):
         """Start all initialized modules"""
         self.logger.info("Starting modules...")
-        
-        # Start face recognition
+
+        # Ensure USB mics are at usable capture gain (fixes empty transcripts).
+        self._boost_input_gains()
+
+        # Start vision modules (they subscribe to shared camera)
         if 'face_recognition' in self.modules:
             try:
                 self.modules['face_recognition'].start()
@@ -319,14 +996,151 @@ class AIRobot:
             except Exception as e:
                 self.logger.error(f"✗ Failed to start Face Recognition: {e}")
         
-        # Start other modules
-        # TODO: Start other modules as they are created
+        if 'object_detection' in self.modules:
+            try:
+                self.modules['object_detection'].start()
+                self.logger.info("✓ Object Detection started")
+            except Exception as e:
+                self.logger.error(f"✗ Failed to start Object Detection: {e}")
         
+        if 'wake_word' in self.modules:
+            try:
+                self.modules['wake_word'].start()
+                self.logger.info("✓ Wake Word Detection started")
+            except Exception as e:
+                self.logger.error(f"✗ Failed to start Wake Word Detection: {e}")
+        
+        if 'speech_recognition' in self.modules:
+            try:
+                self.modules['speech_recognition'].start()
+                self.logger.info("✓ Speech Recognition service started")
+            except Exception as e:
+                self.logger.error(f"✗ Failed to start Speech Recognition: {e}")
+        
+        if 'tts' in self.modules:
+            try:
+                self.modules['tts'].start()
+                self.logger.info("✓ Text-to-Speech engine started")
+            except Exception as e:
+                self.logger.error(f"✗ Failed to start Text-to-Speech: {e}")
+        
+        # Microcontroller bridge is already connected in initialize_modules().
+
         # Start robot brain
         self.brain.start()
         self.logger.info("✓ Robot Brain started")
-        
+
+        # Reminders announcer + internet watchdog + Telegram chat.
+        try:
+            self.reminders.start()
+        except Exception as e:
+            self.logger.error(f"reminders start failed: {e}")
+        if getattr(self, 'telegram', None):
+            try:
+                self.telegram.start()
+            except Exception as e:
+                self.logger.error(f"telegram start failed: {e}")
+        threading.Thread(target=self._network_monitor_loop, daemon=True).start()
+
         self.logger.info("All modules started")
+
+    # ---- screen-face helpers (safe no-ops if no face is connected) --------
+    def face_emotion(self, value, intensity=1.0):
+        f = getattr(self, 'face', None)
+        if f:
+            try:
+                f.set_emotion(value, intensity)
+            except Exception:
+                pass
+
+    def face_speak(self, on):
+        f = getattr(self, 'face', None)
+        if f:
+            try:
+                f.speak_start() if on else f.speak_end()
+            except Exception:
+                pass
+
+    def _announce(self, msg: str):
+        """Speak a proactive message (reminders, alerts) out loud + to console."""
+        print(f"\n{behavior_config.robot_name}: {msg}\n", flush=True)
+        tts = self.modules.get('tts')
+        if tts and getattr(tts, 'running', False):
+            try:
+                # move the mouth for ~the spoken duration (tts.speak is async, so
+                # estimate from word count and close the mouth on a timer).
+                self.face_speak(True)
+                dur = max(1.0, len(str(msg).split()) * 0.38)
+                threading.Timer(dur, lambda: self.face_speak(False)).start()
+                tts.speak(msg)
+            except Exception:
+                self.face_speak(False)
+
+    def _start_gaze_feed(self):
+        """Stream the primary detected face's centre to the screen face so her eyes
+        follow you. Reads the face module's locations (frame pixels) ~7x/sec, only
+        while the face is on screen. Fully guarded — never fatal."""
+        import threading as _th
+        import time as _t
+        MIRROR_X = True  # tablet acts like a mirror; set False if gaze feels reversed
+
+        def loop():
+            fm = self.modules.get('face_recognition')
+            missing = 0
+            while getattr(self, 'running', True):
+                try:
+                    f = getattr(self, 'face', None)
+                    if f is not None and getattr(f, 'showing', False) and fm is not None:
+                        locs = list(getattr(fm, 'face_locations', []) or [])
+                        if locs:
+                            missing = 0
+                            x, y, w, h = max(locs, key=lambda b: b[2] * b[3])
+                            fr = self.camera_manager.get_latest_frame()
+                            img = getattr(fr, 'image', fr)
+                            fh, fw = img.shape[:2]
+                            nx = (x + w / 2.0) / max(1, fw)
+                            ny = (y + h / 2.0) / max(1, fh)
+                            gx = ((1.0 - nx) if MIRROR_X else nx) * 2.0 - 1.0
+                            gy = (ny * 2.0 - 1.0) * 0.7
+                            f.look_at(max(-1, min(1, gx)), max(-1, min(1, gy)))
+                        else:
+                            missing += 1
+                            if missing == 3:
+                                f.gaze_mode('idle')   # no one there -> gentle idle drift
+                except Exception:
+                    pass
+                _t.sleep(0.15)
+
+        _th.Thread(target=loop, name="gaze_feed", daemon=True).start()
+        self.logger.info("✓ Gaze feed started (eyes follow you when the face is shown)")
+
+    def _network_monitor_loop(self):
+        """Announce (once) when the internet connection is lost, and point the
+        user at the dashboard WiFi panel to reconnect."""
+        try:
+            from modules.hardware import wifi
+        except Exception:
+            return
+        was_online = True
+        misses = 0
+        while self.running:
+            online = wifi.is_online()
+            misses = 0 if online else (misses + 1)
+            conv = getattr(self, 'conversation', None)
+            busy = bool(conv and conv.active)
+            # Debounce: ~2 consecutive misses => really offline (avoids a blip).
+            if was_online and misses >= 2:
+                was_online = False
+                self.logger.warning("Internet connection LOST")
+                if not busy:
+                    self._announce("I've lost my internet connection. You can "
+                                   "reconnect me from the dashboard WiFi panel.")
+            elif (not was_online) and online:
+                was_online = True
+                self.logger.info("Internet connection RESTORED")
+                if not busy:
+                    self._announce("My internet connection is back.")
+            time.sleep(8)
     
     def start_performance_monitor(self):
         """Start performance monitoring thread"""
@@ -363,7 +1177,7 @@ class AIRobot:
                             temp = int(temp_file.read_text()) / 1000
                             self.brain.health_status['temperature'] = temp
                             
-                            if temp > 70:
+                            if temp > 85:
                                 self.logger.warning(f"High temperature: {temp}°C")
                     except:
                         pass
@@ -438,6 +1252,35 @@ class AIRobot:
                     self.logger.info(f"✓ {name} stopped")
             except Exception as e:
                 self.logger.error(f"✗ Error stopping {name}: {e}")
+        
+        # Stop web dashboard
+        if getattr(self, 'dashboard', None):
+            try:
+                self.dashboard.stop()
+                self.logger.info("✓ Web Dashboard stopped")
+            except Exception as e:
+                self.logger.error(f"✗ Error stopping Dashboard: {e}")
+        
+        # Stop shared hardware managers
+        try:
+            self.camera_manager.stop()
+            self.logger.info("✓ Camera Manager stopped")
+        except Exception as e:
+            self.logger.error(f"✗ Error stopping Camera Manager: {e}")
+        
+        try:
+            for role in list(self.audio_manager._leases.keys()):
+                self.audio_manager.release(role)
+            self.logger.info("✓ Audio Manager released")
+        except Exception as e:
+            self.logger.error(f"✗ Error releasing Audio Manager: {e}")
+        
+        # Close learning DB
+        try:
+            self.learning_db.close()
+            self.logger.info("✓ Learning DB closed")
+        except Exception as e:
+            self.logger.error(f"✗ Error closing Learning DB: {e}")
         
         # Save final state
         self._save_state()
@@ -696,8 +1539,8 @@ def run_system_tests(robot: AIRobot):
     else:
         print(f"   ✗ ESP32 port not found: {esp32_port}")
     
-    # Check for GSM
-    gsm_port = Path(hardware_config.gsm_port)
+    # Check for GSM / 4G modem (SIM7600X)
+    gsm_port = Path(hardware_config.sim7600x_port)
     if gsm_port.exists():
         print(f"   ✓ GSM port found: {gsm_port}")
     else:
@@ -721,17 +1564,22 @@ def create_systemd_service():
     Create systemd service file for auto-start on boot
     This should be run with sudo
     """
+    import getpass
+    user = getpass.getuser()
+    python_bin = sys.executable  # the venv interpreter running this process
     service_content = f"""[Unit]
-Description=AI Robot Service
-After=multi-user.target
+Description=Gonzo AI Robot
+After=network-online.target hailo-ollama.service
+Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 {PROJECT_ROOT}/main.py
-Restart=always
-User=pi
+ExecStart={python_bin} {PROJECT_ROOT}/main.py
+Restart=on-failure
+RestartSec=5
+User={user}
 WorkingDirectory={PROJECT_ROOT}
-Environment=DISPLAY=:0
+Environment=PYTHONUNBUFFERED=1
 StandardOutput=journal
 StandardError=journal
 

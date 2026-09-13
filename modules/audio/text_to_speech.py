@@ -49,7 +49,7 @@ except ImportError:
 # Import configuration
 import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
-from config.settings import config, model_config
+from config.settings import config, model_config, hardware_config, behavior_config
 
 
 class TextToSpeechModule:
@@ -75,8 +75,19 @@ class TextToSpeechModule:
         
         # Configuration
         self.tts_model = model_config.tts_model if hasattr(model_config, 'tts_model') else None
-        self.language = model_config.tts_language if hasattr(model_config, 'tts_language') else 'en'
+        # Language comes from the single behavior.language switch (en | he).
+        self.language = (getattr(behavior_config, 'language', None)
+                         or getattr(model_config, 'tts_language', 'en') or 'en').lower()
         self.speed = model_config.tts_speed if hasattr(model_config, 'tts_speed') else 1.0
+        # Hebrew (and other non-English) can't use the English Piper voice; route
+        # it to a language-aware path (gTTS -> espeak-ng fallback).
+        self._nonlatin = self.language.startswith('he')
+
+        # Audio OUTPUT routing — pin playback to the configured device (e.g. the
+        # HDMI monitor now, a USB speaker later) so replies are actually heard.
+        self.alsa_device = self._resolve_output_device()
+        if self.alsa_device:
+            self.logger.info("TTS audio output pinned to ALSA device '%s'", self.alsa_device)
         
         # State
         self.running = False
@@ -122,10 +133,18 @@ class TextToSpeechModule:
         self._initialize_audio()
     
     def _initialize_engine(self):
-        """Initialize TTS engine based on availability"""
-        
-        # Try Coqui TTS first
-        if COQUI_AVAILABLE:
+        """Initialize TTS engine based on config + availability"""
+
+        preferred = getattr(model_config, 'tts_engine', 'piper').lower()
+
+        # Piper — neural, offline, natural voice (recommended default).
+        if preferred == 'piper' and self._init_piper():
+            self.engine_type = 'piper'
+            self.logger.info("Using Piper TTS engine (%s)", Path(self.piper_voice).name)
+            return
+
+        # Coqui TTS (heavy; only if explicitly available/requested)
+        if COQUI_AVAILABLE and preferred == 'coqui':
             try:
                 self._init_coqui_tts()
                 self.engine_type = 'coqui'
@@ -133,7 +152,7 @@ class TextToSpeechModule:
                 return
             except Exception as e:
                 self.logger.warning(f"Failed to initialize Coqui TTS: {e}")
-        
+
         # Fallback to pyttsx3
         if PYTTSX3_AVAILABLE:
             try:
@@ -149,6 +168,30 @@ class TextToSpeechModule:
         self.engine_type = 'espeak'
         self.logger.info("Using espeak TTS engine")
     
+    def _init_piper(self) -> bool:
+        """Locate the Piper binary + voice model. Returns True if usable."""
+        root = Path(config.PROJECT_ROOT)
+
+        def _resolve(p):
+            p = Path(p)
+            return p if p.is_absolute() else (root / p)
+
+        self.piper_binary = str(_resolve(getattr(model_config, 'piper_binary',
+                                'data/models/piper/piper/piper')))
+        self.piper_voice = str(_resolve(getattr(model_config, 'piper_voice',
+                               'data/models/piper/en_US-amy-medium.onnx')))
+        self.piper_length_scale = float(getattr(model_config, 'piper_length_scale', 1.0))
+        self.piper_pitch = float(getattr(model_config, 'piper_pitch', 0.0))
+        self.piper_noise_scale = float(getattr(model_config, 'piper_noise_scale', 0.667))
+
+        if not Path(self.piper_binary).exists():
+            self.logger.warning("Piper binary not found at %s", self.piper_binary)
+            return False
+        if not Path(self.piper_voice).exists():
+            self.logger.warning("Piper voice not found at %s", self.piper_voice)
+            return False
+        return True
+
     def _init_coqui_tts(self):
         """Initialize Coqui TTS"""
         
@@ -230,7 +273,16 @@ class TextToSpeechModule:
     
     def _initialize_audio(self):
         """Initialize audio playback system"""
-        
+
+        # If we have an explicit ALSA output device (e.g. the HDMI monitor),
+        # play via `aplay -D` and do NOT initialise pygame — pygame/SDL would
+        # open and HOLD the default audio device, causing 'Device or resource
+        # busy' when aplay tries to use the same hardware.
+        if self.alsa_device:
+            self.audio_player = 'system'
+            self.logger.info("Using aplay -D %s for audio playback", self.alsa_device)
+            return
+
         if PYGAME_AVAILABLE:
             try:
                 pygame.mixer.init(
@@ -243,11 +295,11 @@ class TextToSpeechModule:
                 self.logger.info("Using pygame for audio playback")
             except:
                 pass
-        
+
         if not self.audio_player and PYAUDIO_AVAILABLE:
             self.audio_player = 'pyaudio'
             self.logger.info("Using pyaudio for audio playback")
-        
+
         if not self.audio_player:
             self.audio_player = 'system'
             self.logger.info("Using system command for audio playback")
@@ -314,6 +366,35 @@ class TextToSpeechModule:
         if wait:
             while self.speaking or not self.speech_queue.empty():
                 time.sleep(0.1)
+
+    def speak_blocking(self, text: str) -> bool:
+        """Synthesize and play inline, returning only when playback is done.
+
+        Reliable for the conversation loop — no queue/worker-thread race, and
+        the caller is guaranteed audio has finished before it listens again.
+        Returns True if audio actually played.
+        """
+        if not text:
+            return False
+        text = text.strip()
+        self.speaking = True
+        try:
+            audio_file = self._get_cached_audio(text)
+            if audio_file and Path(audio_file).exists():
+                self._play_audio(audio_file)
+                return True
+            audio_file = self._generate_audio(text)
+            if audio_file and Path(audio_file).exists():
+                self._play_audio(audio_file)   # play FIRST, then cache (rename)
+                self._cache_audio(text, audio_file)
+                return True
+            self.logger.warning("TTS produced no audio for: %r", text[:60])
+            return False
+        except Exception as e:
+            self.logger.error("speak_blocking failed: %s", e)
+            return False
+        finally:
+            self.speaking = False
     
     def _speech_loop(self):
         """Main speech processing loop"""
@@ -350,39 +431,41 @@ class TextToSpeechModule:
         self.speaking = True
         self.total_characters += len(text)
         
+        played = False
         try:
             # Check cache first
             audio_file = self._get_cached_audio(text)
-            
-            if audio_file:
-                self.cache_hits += 1
-                self.logger.debug(f"Using cached audio for: '{text[:30]}...'")
-            else:
-                # Generate new audio
-                audio_file = self._generate_audio(text)
-                
-                if audio_file:
-                    # Cache it
-                    self._cache_audio(text, audio_file)
-            
-            # Play audio
+
             if audio_file and Path(audio_file).exists():
+                self.cache_hits += 1
                 self._play_audio(audio_file)
-                
-                # Emit event
-                if self.brain:
-                    from core.robot_brain import RobotEvent
-                    self.brain.emit_event(RobotEvent(
-                        type='speech_complete',
-                        source='tts',
-                        data={'text': text}
-                    ))
-            
+                played = True
+            else:
+                # Generate new audio, PLAY it, THEN cache it. (Caching renames
+                # the temp file, so caching before playing would leave nothing
+                # to play — the cause of intermittent 'no voice'.)
+                audio_file = self._generate_audio(text)
+                if audio_file and Path(audio_file).exists():
+                    self._play_audio(audio_file)
+                    played = True
+                    self._cache_audio(text, audio_file)
+                else:
+                    self.logger.warning("TTS produced no audio for: %r", text[:60])
+
+            # Emit event
+            if played and self.brain:
+                from core.robot_brain import RobotEvent
+                self.brain.emit_event(RobotEvent(
+                    type='speech_complete',
+                    source='tts',
+                    data={'text': text}
+                ))
+
             self.speech_count += 1
-            
+
         except Exception as e:
             self.logger.error(f"Speech processing error: {e}")
-        
+
         finally:
             self.speaking = False
     
@@ -404,7 +487,43 @@ class TextToSpeechModule:
         ).name
         
         try:
-            if self.engine_type == 'coqui':
+            # Hebrew / non-Latin: the English Piper voice can't pronounce it, so
+            # use a language-aware synth regardless of the configured engine.
+            if self._nonlatin:
+                if self._generate_nonlatin(text, output_file):
+                    return output_file
+                return None
+
+            if self.engine_type == 'piper':
+                # Neural offline voice: pipe text -> piper -> wav
+                import subprocess
+                proc = subprocess.run(
+                    [self.piper_binary,
+                     '--model', self.piper_voice,
+                     '--length_scale', str(self.piper_length_scale),
+                     '--noise_scale', str(self.piper_noise_scale),
+                     '--output_file', output_file],
+                    input=text.encode('utf-8'),
+                    capture_output=True, timeout=30,
+                )
+                if proc.returncode != 0 or not Path(output_file).exists():
+                    self.logger.error("Piper synth failed: %s",
+                                      proc.stderr.decode('utf-8', 'ignore')[:200])
+                    return None
+                # Optional pitch shift via sox (semitones -> cents).
+                if abs(self.piper_pitch) > 0.01:
+                    try:
+                        shifted = output_file + '.pitch.wav'
+                        r = subprocess.run(
+                            ['sox', output_file, shifted, 'pitch',
+                             str(int(self.piper_pitch * 100))],
+                            capture_output=True, timeout=15)
+                        if r.returncode == 0 and Path(shifted).exists():
+                            Path(shifted).replace(output_file)
+                    except Exception as exc:
+                        self.logger.debug("sox pitch shift skipped: %s", exc)
+
+            elif self.engine_type == 'coqui':
                 # Use Coqui TTS
                 if self.current_speaker:
                     self.tts_engine.tts_to_file(
@@ -445,15 +564,179 @@ class TextToSpeechModule:
                 os.unlink(output_file)
             return None
     
+    def _generate_nonlatin(self, text: str, output_file: str) -> bool:
+        """Synthesize non-Latin speech (e.g. Hebrew) to a WAV at output_file.
+
+        Prefers gTTS (Google, natural voice, needs internet) and converts the
+        mp3 to wav with ffmpeg; falls back to espeak-ng's offline voice so she
+        can still speak with no internet. Returns True on success.
+        """
+        import subprocess
+        lang = 'iw' if self.language.startswith('he') else self.language  # gTTS uses 'iw' for Hebrew
+
+        # 1) gTTS -> mp3 -> ffmpeg -> wav (best quality)
+        try:
+            from gtts import gTTS
+            mp3 = output_file + '.mp3'
+            gTTS(text=text, lang=lang).save(mp3)
+            r = subprocess.run(['ffmpeg', '-y', '-i', mp3, '-ar', '22050', '-ac', '1', output_file],
+                               capture_output=True, timeout=30)
+            try:
+                os.unlink(mp3)
+            except Exception:
+                pass
+            if r.returncode == 0 and Path(output_file).exists():
+                return True
+            self.logger.warning("ffmpeg mp3->wav failed: %s",
+                                r.stderr.decode('utf-8', 'ignore')[:160])
+        except Exception as exc:
+            self.logger.info("gTTS unavailable/failed (%s) — using espeak-ng", str(exc)[:120])
+
+        # 2) espeak-ng offline fallback (robotic but always works)
+        try:
+            voice = 'he' if self.language.startswith('he') else self.language
+            r = subprocess.run(['espeak-ng', '-v', voice, '-s', '150', '-w', output_file, text],
+                               capture_output=True, timeout=20)
+            if r.returncode == 0 and Path(output_file).exists():
+                return True
+            self.logger.error("espeak-ng failed: %s", r.stderr.decode('utf-8', 'ignore')[:160])
+        except Exception as exc:
+            self.logger.error("espeak-ng synth error: %s", exc)
+        return False
+
+    def _device_opens(self, dev: str) -> bool:
+        """True if an ALSA device can actually be opened for playback. Plays 50ms
+        of silence (inaudible) — used to pick the live HDMI port."""
+        import subprocess, wave, tempfile, os
+        path = None
+        try:
+            path = tempfile.NamedTemporaryFile(suffix='.wav', delete=False).name
+            with wave.open(path, 'wb') as wf:
+                wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(22050)
+                wf.writeframes(b'\x00' * (int(22050 * 0.05) * 2))
+            r = subprocess.run(['aplay', '-q', '-D', dev, path],
+                               capture_output=True, timeout=5)
+            return r.returncode == 0
+        except Exception:
+            return False
+        finally:
+            if path:
+                try:
+                    os.unlink(path)
+                except Exception:
+                    pass
+
+    def _resolve_output_device(self):
+        """Work out an ALSA device string for playback, based on
+        config/config.yaml -> hardware.audio_output_*.
+
+        HDMI outputs need the 'sysdefault:CARD=' route (they only accept
+        IEC958 framing, which raw 'plughw' can't provide); other cards use
+        'plughw:<idx>,0'. Returns None to use the ALSA default."""
+        card = getattr(hardware_config, 'audio_output_card', None)
+        name = getattr(hardware_config, 'audio_output_name', None)
+        device = (getattr(hardware_config, 'audio_output_device', 'default') or 'default').lower()
+
+        if device == 'default' and card is None and not name:
+            return None
+
+        # Parse `aplay -l` -> list of (idx, card_id, description_lower)
+        cards = []
+        try:
+            import subprocess, re
+            out = subprocess.run(['aplay', '-l'], capture_output=True, text=True).stdout
+            for line in out.splitlines():
+                m = re.match(r'card (\d+): (\S+) \[(.+?)\]', line)
+                if m:
+                    cards.append((int(m.group(1)), m.group(2),
+                                  (m.group(2) + ' ' + m.group(3)).lower()))
+        except Exception:
+            cards = []
+
+        def dev_string(idx, card_id, desc):
+            if 'hdmi' in card_id.lower() or 'hdmi' in desc:
+                return f"sysdefault:CARD={card_id}"
+            return f"plughw:{idx},0"
+
+        # 1) Explicit card index.
+        if card is not None:
+            for idx, cid, desc in cards:
+                if idx == int(card):
+                    return dev_string(idx, cid, desc)
+            return f"plughw:{int(card)},0"
+
+        # 2) HDMI: ALSA card numbers shuffle across reboots, and only the port
+        # the monitor is actually plugged into accepts audio — so PROBE each HDMI
+        # sink and use the first that truly opens. Reboot-proof, no fixed index.
+        hdmi_cards = [(i, c, d) for i, c, d in cards if 'hdmi' in d]
+        want_hdmi = device == 'hdmi' or (name and 'hdmi' in str(name).lower())
+        if want_hdmi and hdmi_cards:
+            if name:  # prefer the named port first, then fall back to any HDMI
+                hdmi_cards.sort(key=lambda cc: 0 if str(name).lower() in cc[1].lower() else 1)
+            for i, c, d in hdmi_cards:
+                dev = dev_string(i, c, d)
+                if self._device_opens(dev):
+                    self.logger.info("HDMI audio auto-selected: %s", dev)
+                    return dev
+            self.logger.warning("No HDMI sink accepted audio; using %s anyway",
+                                dev_string(*hdmi_cards[0]))
+            return dev_string(*hdmi_cards[0])
+
+        # 3) Match by keyword / name (non-HDMI).
+        def find(keywords):
+            for idx, cid, desc in cards:
+                if any(k in desc for k in keywords):
+                    return (idx, cid, desc)
+            return None
+
+        hit = None
+        if name:
+            hit = find([name.lower()])
+        elif device == 'usb':
+            hit = find(['usb'])
+        elif device == 'analog':
+            hit = find(['headphone', 'bcm2835', 'analog'])
+        elif device == 'auto':
+            for idx, cid, desc in cards:
+                if 'hdmi' not in desc:
+                    hit = (idx, cid, desc)
+                    break
+            if hit is None and cards:
+                hit = cards[0]
+
+        return dev_string(*hit) if hit else None
+
     def _play_audio(self, audio_file: str):
         """
         Play audio file
-        
+
         Args:
             audio_file: Path to audio file
         """
-        
+        # HDMI/USB allows one stream at a time, so free the speaker from any
+        # playing music for the moment Stella speaks, then hand it back. (Direct,
+        # lock-free — a held lock across playback risked a deadlock/freeze.)
+        mp = getattr(self, 'music', None)
+        _freed = bool(mp is not None and mp.is_playing())
+        if _freed:
+            try:
+                mp.pause_output()
+                time.sleep(0.15)  # let ALSA release the device
+            except Exception:
+                _freed = False
+
         try:
+            # If an explicit output device is configured, aplay -D is the most
+            # reliable way to route sound to it (pygame/SDL uses ALSA default).
+            if self.alsa_device:
+                import subprocess
+                r = subprocess.run(['aplay', '-q', '-D', self.alsa_device, audio_file],
+                                   capture_output=True)
+                if r.returncode != 0:
+                    self.logger.warning("aplay failed (%s): %s", self.alsa_device,
+                                        r.stderr.decode('utf-8', 'ignore')[:160])
+                return
+
             if self.audio_player == 'pygame':
                 # Use pygame
                 pygame.mixer.music.load(audio_file)
@@ -481,10 +764,16 @@ class TextToSpeechModule:
                     winsound.PlaySound(audio_file, winsound.SND_FILENAME)
                 else:
                     subprocess.run(['aplay', audio_file])
-                    
+
         except Exception as e:
             self.logger.error(f"Audio playback failed: {e}")
-    
+        finally:
+            if _freed and mp is not None:
+                try:
+                    mp.resume_output()
+                except Exception:
+                    pass
+
     def _play_with_pyaudio(self, audio_file: str):
         """Play audio using pyaudio"""
         
@@ -511,6 +800,19 @@ class TextToSpeechModule:
         p.terminate()
         wf.close()
     
+    def _cache_key(self, text: str) -> str:
+        """Cache key includes engine + voice + speed/pitch/expressiveness so any
+        of those changes invalidates old cached audio (no stale voice)."""
+        if self.engine_type == 'piper':
+            params = (f"{getattr(self,'piper_voice','')}|"
+                      f"{getattr(self,'piper_length_scale',1.0)}|"
+                      f"{getattr(self,'piper_pitch',0.0)}|"
+                      f"{getattr(self,'piper_noise_scale',0.667)}")
+        else:
+            params = ''
+        raw = f"{self.engine_type}|{self.language}|{params}|{text}"
+        return hashlib.md5(raw.encode()).hexdigest()
+
     def _get_cached_audio(self, text: str) -> Optional[str]:
         """
         Get cached audio file for text
@@ -523,7 +825,7 @@ class TextToSpeechModule:
         """
         
         # Generate cache key
-        cache_key = hashlib.md5(text.encode()).hexdigest()
+        cache_key = self._cache_key(text)
         
         if cache_key in self.cache_index:
             cache_file = self.cache_dir / f"{cache_key}.wav"
@@ -543,7 +845,7 @@ class TextToSpeechModule:
         
         try:
             # Generate cache key
-            cache_key = hashlib.md5(text.encode()).hexdigest()
+            cache_key = self._cache_key(text)
             cache_file = self.cache_dir / f"{cache_key}.wav"
             
             # Move file to cache
