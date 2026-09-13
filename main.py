@@ -1121,10 +1121,21 @@ class AIRobot:
             from modules.hardware import wifi
         except Exception:
             return
-        was_online = True
+        # Start from REALITY: booting offline is a state, not a 'loss' to announce.
+        was_online = wifi.is_online()
+        if not was_online:
+            self.logger.info("Network monitor: starting OFFLINE — will only announce a change")
+        last_said = 0.0
         misses = 0
         while self.running:
             online = wifi.is_online()
+            # Tell the AI engine so it skips cloud providers while offline.
+            eng = getattr(self, 'ai_engine', None)
+            if eng is not None:
+                try:
+                    eng.online = bool(online)
+                except Exception:
+                    pass
             misses = 0 if online else (misses + 1)
             conv = getattr(self, 'conversation', None)
             busy = bool(conv and conv.active)
@@ -1132,13 +1143,15 @@ class AIRobot:
             if was_online and misses >= 2:
                 was_online = False
                 self.logger.warning("Internet connection LOST")
-                if not busy:
+                if not busy and time.time() - last_said > 1800:
+                    last_said = time.time()
                     self._announce("I've lost my internet connection. You can "
                                    "reconnect me from the dashboard WiFi panel.")
             elif (not was_online) and online:
                 was_online = True
                 self.logger.info("Internet connection RESTORED")
-                if not busy:
+                if not busy and time.time() - last_said > 1800:
+                    last_said = time.time()
                     self._announce("My internet connection is back.")
             time.sleep(8)
     

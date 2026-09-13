@@ -77,6 +77,10 @@ class ObjectDetectionModule:
     # Lifecycle
     # ------------------------------------------------------------------
     def start(self) -> bool:
+        # No camera -> don't load a 12MB ONNX model that will never see a frame.
+        if self.camera_manager is not None and not getattr(self.camera_manager, 'is_running', False):
+            self.logger.info("No camera running — object detector not loaded (passive)")
+            return False
         if not self.detector.start():
             self.logger.warning("Object detector unavailable — module will be passive")
             return False
@@ -97,10 +101,18 @@ class ObjectDetectionModule:
     # ------------------------------------------------------------------
     # Frame callback
     # ------------------------------------------------------------------
+    # Minimum seconds between YOLO runs: CPU inference is ~150-300ms at 640x640
+    # on a Pi 5; running on every delivered frame starves voice/LLM.
+    MIN_DETECT_INTERVAL = 1.0
+
     def _on_frame(self, frame: Frame) -> None:
         """Called by camera_manager for each distributed frame."""
         if not self._running:
             return
+        now = time.time()
+        if now - getattr(self, "_last_detect_t", 0.0) < self.MIN_DETECT_INTERVAL:
+            return
+        self._last_detect_t = now
 
         detections = self.detector.detect(frame.image)
         self.frames_processed += 1

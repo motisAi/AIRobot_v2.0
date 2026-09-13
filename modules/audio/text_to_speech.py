@@ -678,7 +678,15 @@ class TextToSpeechModule:
                 if self._device_opens(dev):
                     self.logger.info("HDMI audio auto-selected: %s", dev)
                     return dev
-            self.logger.warning("No HDMI sink accepted audio; using %s anyway",
+            self.logger.warning("No HDMI sink accepted audio — looking for a non-HDMI output")
+            for idx, cid, desc in cards:
+                if 'hdmi' not in desc and self._device_opens(dev_string(idx, cid, desc)):
+                    self.logger.info("Audio output fell back to %s", dev_string(idx, cid, desc))
+                    return dev_string(idx, cid, desc)
+            # Nothing usable: STILL return a device string so playback goes through
+            # fast-failing `aplay -D`. Returning None would route TTS to pygame/SDL,
+            # whose mixer.init() HANGS when no sound device exists (startup stall).
+            self.logger.warning("No non-HDMI output either; using %s anyway",
                                 dev_string(*hdmi_cards[0]))
             return dev_string(*hdmi_cards[0])
 
@@ -730,8 +738,12 @@ class TextToSpeechModule:
             # reliable way to route sound to it (pygame/SDL uses ALSA default).
             if self.alsa_device:
                 import subprocess
-                r = subprocess.run(['aplay', '-q', '-D', self.alsa_device, audio_file],
-                                   capture_output=True)
+                try:
+                    r = subprocess.run(['aplay', '-q', '-D', self.alsa_device, audio_file],
+                                       capture_output=True, timeout=60)
+                except subprocess.TimeoutExpired:
+                    self.logger.warning("aplay timed out on %s", self.alsa_device)
+                    return
                 if r.returncode != 0:
                     self.logger.warning("aplay failed (%s): %s", self.alsa_device,
                                         r.stderr.decode('utf-8', 'ignore')[:160])

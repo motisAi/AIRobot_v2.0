@@ -62,7 +62,7 @@ class ConversationManager:
     def _speak(self, text: str):
         """Speak and wait, so we never record our own voice."""
         try:
-            self.robot._conv_activity = time.time()
+            self.robot._conv_activity = time.monotonic()
         except Exception:
             pass
         if not text:
@@ -123,6 +123,12 @@ class ConversationManager:
         if speech is None:
             self._active = False
             return
+        # No command mic -> do NOT run a spoken session: she would monologue the
+        # greeting -> "anything else?" -> farewell to nobody. End quietly.
+        if hasattr(speech, 'mic_available') and not speech.mic_available():
+            self.logger.warning("No command mic available — not starting a spoken session")
+            self._active = False
+            return
 
         # Fresh short-term memory per conversation, so a previous chat's topic
         # ("going out", "Tokyo") can't bleed into this one and confuse replies.
@@ -147,7 +153,7 @@ class ConversationManager:
         brain._suppress_greetings = True
         try:
             self.robot._conv_active = True
-            self.robot._conv_activity = time.time()
+            self.robot._conv_activity = time.monotonic()
         except Exception:
             pass
         try:
@@ -184,6 +190,9 @@ class ConversationManager:
             while self.robot.running and not self._stop.is_set():
                 text = speech.capture_utterance(cfg.idle_timeout, cfg.end_silence, cfg.max_utterance)
 
+                if not text and hasattr(speech, 'mic_available') and not speech.mic_available():
+                    self.logger.error("Command mic lost mid-conversation — ending quietly")
+                    break
                 if not text:
                     # Silence. First time -> wrap-up prompt; second time -> leave.
                     if not wrapped:
@@ -196,7 +205,7 @@ class ConversationManager:
                 print(f"\nYou: {text}", flush=True)
                 self.logger.info("HEARD: %s", text)   # goes to gonzo.log
                 try:
-                    self.robot._conv_activity = time.time()
+                    self.robot._conv_activity = time.monotonic()
                 except Exception:
                     pass
                 self._dashboard_log(f"You: {text}")
@@ -325,7 +334,17 @@ class ConversationManager:
                     who = getattr(brain, 'current_user_name', None) or getattr(brain, 'current_user', None)
                     if who:
                         ctx['user'] = who
-                reply = engine.think(text, context=ctx)
+                # Let the watchdog know the LLM is working (a slow offline think()
+                # is NOT a stuck conversation) and stamp activity when it returns.
+                self.robot._thinking = True
+                try:
+                    reply = engine.think(text, context=ctx)
+                finally:
+                    self.robot._thinking = False
+                    try:
+                        self.robot._conv_activity = time.monotonic()
+                    except Exception:
+                        pass
             except Exception as exc:
                 self.logger.error("think failed: %s", exc)
                 reply = "Sorry, I had trouble thinking about that."
@@ -1191,6 +1210,12 @@ class ConversationManager:
         name = name.strip('.,!? ').title()
         # Reject garbage transcriptions (a name is 1-3 alphabetic words).
         words = name.split()
+        # Whisper no-speech artefacts must never become a user's name.
+        _junk = {"foreign", "hey", "stella", "thank you", "thanks", "you", "so", "oh", "um", "uh"}
+        if name.lower() in _junk or any(len(w) < 2 for w in words):
+            self.logger.info("Rejected junk name: %r", name)
+            self._speak("Sorry, I didn't catch your name clearly. We can try again another time.")
+            return
         if not name or len(words) > 3 or not all(w.replace("'", "").isalpha() for w in words):
             self.logger.info("Rejected implausible name: %r", name)
             self._speak("Sorry, I didn't catch your name clearly. "

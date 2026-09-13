@@ -59,10 +59,14 @@ class HardwareWatchdog:
         r = self.robot
         if not getattr(r, "_conv_active", False):
             return
+        if getattr(r, "_thinking", False):
+            return  # the LLM is working (slow offline think) — not stuck
+        # monotonic: the offline Pi clock jumps hours when NTP syncs; wall-clock
+        # deltas would then fire a false 'stuck' restart mid-conversation.
         last = float(getattr(r, "_conv_activity", 0.0) or 0.0)
-        if last and (time.time() - last) > 75.0:
+        if last and (time.monotonic() - last) > 75.0:
             logger.error("Conversation stuck (no speech %.0fs) — restarting to recover",
-                         time.time() - last)
+                         time.monotonic() - last)
             import subprocess
             try:
                 subprocess.Popen(["sudo", "-n", "systemctl", "restart", "airobot"])
@@ -104,8 +108,12 @@ class HardwareWatchdog:
         dev = getattr(tts, "alsa_device", None)
         if not (dev and hasattr(tts, "_device_opens")):
             return
+        # Back off when no output exists (no HDMI at work): don't re-probe every 20s.
+        if time.time() < getattr(self, "_audio_next_check", 0.0):
+            return
         if tts._device_opens(dev):
             self._audio_fails = 0
+            self._audio_backoff = 20.0
             return
         self._audio_fails += 1
         if self._audio_fails < 2:
@@ -117,4 +125,9 @@ class HardwareWatchdog:
         if newdev and newdev != dev:
             tts.alsa_device = newdev
             self._audio_fails = 0
+            self._audio_backoff = 20.0
             logger.warning("audio output re-detected: %s -> %s", dev, newdev)
+        else:
+            b = getattr(self, "_audio_backoff", 20.0)
+            self._audio_next_check = time.time() + b
+            self._audio_backoff = min(b * 2, 300.0)

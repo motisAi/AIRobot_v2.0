@@ -428,3 +428,26 @@ Implemented from the architecture roadmap, each a small reversible commit (pushe
 - **Security: master-auth gate** (`875df0c`): added `_is_master()`/`_deny_master()` and gated `_maybe_ac` + `_maybe_mirror` (were bypassing the master check that `_do_device_control` and the LLM tools already enforce). Respects `require_authentication`.
 
 Deferred (need user or more care): openWakeWord "Hey Stella" (needs Moti's voice recordings + Colab training); faster-whisper offline STT; face-recognition alignment fix; web-pre-injection gate fix; the invasive HailoRT 5.1.1->5.2.0 upgrade (Phase 4). Rollback baseline for the whole session: commit `382fb4c`; full local backup at `C:\Users\Moti\AIRobot_work\_backups\AIRobot_v2.0_backup_2026-09-13.tgz`.
+
+---
+
+### 2026-09-16 — "Slow + talks unprompted" (work, direct cable, no mic/cam/HDMI): diagnosis + fixes
+Ran a 3-agent diagnosis (slowness / unprompted speech / missing-hardware) over 3 boots of logs + code.
+
+**Root causes found**
+1. **Offline brain DEAD (biggest cause of slow + dumb offline):** kernel auto-upgraded to `6.8.0-1064-raspi`; the Hailo DKMS driver (`hailo1x_pci/5.1.1`) was only built for 1060 -> no `/dev/hailo0` -> hailo-ollama "HAILO_OUT_OF_PHYSICAL_DEVICES". `linux-headers-raspi` metapackage was never installed, so DKMS can't auto-rebuild on kernel upgrades. **Needs Moti (sudo + internet):** `sudo apt install -y linux-headers-raspi linux-headers-$(uname -r) && sudo dkms autoinstall && sudo modprobe hailo1x_pci && sudo systemctl restart hailo-ollama`. The metapackage makes future upgrades self-heal.
+2. **Offline cliff in the LLM chain:** every think() tried groq -> groq_fast -> gemini (30s timeout x SDK 2 retries each) before hailo; connection errors were never cooled. Offline think() measured ~90s+.
+3. **Unprompted speech:** (a) network monitor hard-coded `was_online=True`, so an offline boot "lost" internet ~16s after every start and announced it; (b) with NO mic, `capture_utterance` returned None instantly and `_run` treated it as silence -> greeting -> "anything else?" -> farewell monologue; (c) Whisper no-speech hallucinations ("Foreign", "Thank you.", "so", "oh", "Hey") were answered and even ENROLLED AS NAMES ("Nice to meet you, Foreign").
+4. **Missing-hardware waste:** wake mic retried at 1 Hz forever with an ERROR each time (381/6min); TTS pinned to a dead HDMI sink + watchdog re-probed every 20s; YOLO ran on every delivered frame (~3-4 CPU inferences/s) and loaded even with no camera; conversation/watchdog timers used wall-clock (offline clock steps hours on NTP sync -> false "stuck" restart).
+
+**Fixes deployed (8 files, all edits anchored/asserted locally first, syntax-checked on Pi)**
+- ai_engine.py: `online` flag (set by network monitor) -> `_skip()` skips cloud providers offline; `max_retries=0`; `httpx.Timeout(20, connect=3)`; agent/web-search gated on online; reasoning-model `max_tokens>=1024` + empty-content warning. **Offline think() now 0.2s (was ~90s).**
+- main.py: network monitor starts from real state (no announce for a booted-into offline), 30-min announce rate-limit, pushes `online` to the engine.
+- manager.py: no spoken session without a mic (`mic_available()`), quiet break if mic lost mid-chat, `_thinking` flag + monotonic activity stamps, junk-name rejection in `_enroll_name`.
+- speech_recognition.py: `mic_available()` (checks real capture PCMs `/dev/snd/pcmC*D*c` so PortAudio name flip-flop doesn't mute her at home), no fall-through to PortAudio 'default' for an absent named mic, native-rate-first (44.1k) to kill paInvalidSampleRate spam, Whisper hallucination stoplist treated as silence.
+- wake_word.py: log-once + exponential backoff (1s->60s) when no mic; set `_stream_closed_event` in paused branch (no 2s stall).
+- watchdog.py: skip while `_thinking`; monotonic clock; audio re-probe backoff (20s->300s).
+- text_to_speech.py: fall back to a non-HDMI output when HDMI has no sink; aplay 60s timeout. **Regression caught & fixed:** first version returned None -> TTS took the pygame path -> `pygame.mixer.init()` HANGS with no sound device -> startup stalled at "Using Piper TTS engine". Now always returns a device string (fast-failing aplay), as the original did.
+- object_detection.py: don't load the detector without a camera; `MIN_DETECT_INTERVAL=1.0s` throttle.
+
+**Status:** all 8 deployed; TTS regression fix deployed + Pi-syntax-checked and restart issued — the Ethernet link dropped during verification, so **startup-complete verification and git commit/push are PENDING** until she's reachable again. Rollback: `git checkout -- <file>` per file (repo clean at `62fec28`), or `git reset --hard 62fec28`.

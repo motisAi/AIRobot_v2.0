@@ -60,6 +60,14 @@ except ImportError:
 import urllib.request
 import urllib.error
 
+# Cloud call timeout: fail an unreachable host in ~3s (connect) instead of the
+# SDK default (30s x 3 retries) — this is what made her crawl when offline.
+try:
+    import httpx
+    _CLOUD_TIMEOUT = httpx.Timeout(20.0, connect=3.0)
+except Exception:  # pragma: no cover
+    _CLOUD_TIMEOUT = 20
+
 PROJECT_ROOT = Path(__file__).parent.parent.parent.absolute()
 MODELS_DIR = PROJECT_ROOT / "data" / "models"
 
@@ -234,6 +242,9 @@ class AIEngine:
         self._max_history = self.cfg.max_history  # Keep last N turns
         # provider name -> epoch until which to skip it (after a 429 rate-limit)
         self._cooldown: Dict[str, float] = {}
+        # Set by main._network_monitor_loop. False => skip cloud providers and go
+        # straight to the local NPU (no 3-provider timeout cascade offline).
+        self.online = True
 
         # Reference to learning DB — set by main.py for memory recall
         self.learning_db = None
@@ -262,7 +273,8 @@ class AIEngine:
         if OPENAI_AVAILABLE and self.cfg.groq_api_key:
             try:
                 gclient = openai.OpenAI(
-                    api_key=self.cfg.groq_api_key, base_url=self.cfg.groq_base_url)
+                    api_key=self.cfg.groq_api_key, base_url=self.cfg.groq_base_url,
+                    max_retries=0)
                 self._clients["groq"] = ("openai", gclient, self.cfg.groq_model)
                 # Same key, smaller/faster model with much higher rate limits —
                 # used as a cushion when the big model is throttled (HTTP 429).
@@ -275,7 +287,8 @@ class AIEngine:
         if OPENAI_AVAILABLE and self.cfg.gemini_api_key:
             try:
                 self._clients["gemini"] = ("openai", openai.OpenAI(
-                    api_key=self.cfg.gemini_api_key, base_url=self.cfg.gemini_base_url),
+                    api_key=self.cfg.gemini_api_key, base_url=self.cfg.gemini_base_url,
+                    max_retries=0),
                     self.cfg.gemini_model)
             except Exception as exc:
                 self.logger.info("Gemini client init failed: %s", exc)
@@ -426,7 +439,7 @@ class AIEngine:
 
         # When the agent is active it fetches web/weather itself via tools, so
         # skip the automatic pre-injection to avoid doing it twice.
-        agent_active = bool(getattr(self.cfg, "agent_enabled", True)
+        agent_active = bool(self.online and getattr(self.cfg, "agent_enabled", True)
                             and self._agent_tools
                             and self._first_openai_client()[1] is not None)
         web_str = "" if agent_active else self._maybe_web_search(user_input)
@@ -456,8 +469,8 @@ class AIEngine:
         chain = getattr(self, "_chain", [])
         if not reply:
             for i, name in enumerate(chain):
-                if self._cooled(name):
-                    continue  # recently rate-limited — skip for now
+                if self._skip(name):
+                    continue  # rate-limited, or cloud while offline — skip
                 try:
                     reply = self._query_backend(name, messages)
                     if reply and reply.strip():
@@ -492,9 +505,16 @@ class AIEngine:
         if kind == "openai":   # groq / gemini / openai are all OpenAI-compatible
             resp = client.chat.completions.create(
                 model=model, messages=messages,
-                max_tokens=self.cfg.max_tokens, temperature=self.cfg.temperature,
-                timeout=30)
-            return (resp.choices[0].message.content or "").strip()
+                # reasoning models (gpt-oss) spend tokens on hidden reasoning;
+                # a small budget yields EMPTY content and a wasted round-trip.
+                max_tokens=max(int(self.cfg.max_tokens), 1024),
+                temperature=self.cfg.temperature,
+                timeout=_CLOUD_TIMEOUT)
+            content = (resp.choices[0].message.content or "").strip()
+            if not content:
+                self.logger.warning("Provider '%s' returned empty content (finish_reason=%s)",
+                                    name, getattr(resp.choices[0], "finish_reason", "?"))
+            return content
         if kind == "anthropic":
             msgs = [m for m in messages if m.get("role") != "system"]
             resp = client.messages.create(
@@ -548,12 +568,18 @@ class AIEngine:
     def _cooled(self, name: str) -> bool:
         return self._cooldown.get(name, 0) > time.time()
 
+    def _skip(self, name: str) -> bool:
+        """Skip a provider if rate-limited, or if it's a cloud provider and we
+        are offline (avoids paying a connection timeout per provider per turn)."""
+        kind = self._clients.get(name, (None,))[0]
+        return self._cooled(name) or (not self.online and kind in ("openai", "anthropic"))
+
     def _openai_clients(self):
         """Tool-capable (OpenAI-compatible) providers in chain order, skipping
         any currently on a rate-limit cooldown."""
         out = []
         for name in getattr(self, "_chain", []):
-            if self._cooled(name):
+            if self._skip(name):
                 continue
             kind, client, model = self._clients.get(name, (None, None, None))
             if kind == "openai" and client is not None:
@@ -578,8 +604,8 @@ class AIEngine:
             try:
                 resp = client.chat.completions.create(
                     model=model, messages=msgs, tools=self._agent_tools,
-                    tool_choice="auto", max_tokens=self.cfg.max_tokens,
-                    temperature=self.cfg.temperature, timeout=30)
+                    tool_choice="auto", max_tokens=max(int(self.cfg.max_tokens), 1024),
+                    temperature=self.cfg.temperature, timeout=_CLOUD_TIMEOUT)
             except Exception as exc:
                 self.logger.warning("agent(%s) call failed: %s", name, str(exc)[:140])
                 if self._is_rate_limit(exc):
@@ -679,6 +705,8 @@ class AIEngine:
         return False
 
     def _maybe_web_search(self, user_input: str) -> str:
+        if not getattr(self, "online", True):
+            return ""   # no internet -> no web/weather lookups (8s timeouts each)
         if not (self.cfg.web_search_enabled and self.cfg.web_search_auto):
             return ""
         # Weather questions -> live data from wttr.in (search engines only return

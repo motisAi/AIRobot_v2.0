@@ -232,7 +232,7 @@ class WakeWordModule:
                 except Exception:
                     continue
             audio = None  # shared instance — do not terminate
-            self.logger.error("Could not open wake mic for Vosk")
+            self.logger.debug("Could not open wake mic for Vosk")  # loop logs once at ERROR
             return False
 
         def _close():
@@ -259,12 +259,25 @@ class WakeWordModule:
                 if not self.listen_event.is_set():
                     if stream is not None:
                         _close()
+                    else:
+                        self._stream_closed_event.set()  # nothing to close — don't stall pause_listening()
                     time.sleep(0.05)
                     continue
                 if stream is None:
                     if not _open():
-                        time.sleep(1.0)
+                        # No mic: log ONCE, then retry with exponential backoff
+                        # (1s -> 60s) instead of hammering PortAudio every second.
+                        if not getattr(self, "_mic_missing_logged", False):
+                            self.logger.error("Wake mic not available — retrying with backoff (up to 60s)")
+                            self._mic_missing_logged = True
+                        delay = getattr(self, "_retry_delay", 1.0)
+                        self.shutdown_event.wait(delay)
+                        self._retry_delay = min(delay * 2, 60.0)
                         continue
+                    self._retry_delay = 1.0
+                    if getattr(self, "_mic_missing_logged", False):
+                        self.logger.info("Wake mic recovered")
+                        self._mic_missing_logged = False
                     rec = KaldiRecognizer(self._vosk_model, TARGET_RATE)
 
                 try:

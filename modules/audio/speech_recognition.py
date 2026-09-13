@@ -151,7 +151,13 @@ class SpeechRecognitionModule:
         # Open the command mic; prefer 16k, else 44.1k and resample per-frame.
         stream = None
         rate = TARGET
-        for r in (16000, 44100, 48000):
+        # A NAMED mic that is absent must not fall through to PortAudio 'default'
+        # (that would silently capture the wrong device / a loopback).
+        if self.device_name and self.device_index is None and not self.mic_available():
+            self.logger.error("Command mic '%s' not available — skipping capture", self.device_name)
+            return None
+        # Native rate first (USB PnP mic is 44.1k) to avoid paInvalidSampleRate spam.
+        for r in (44100, 48000, 16000):
             try:
                 stream = audio.open(format=pyaudio.paInt16, channels=1, rate=r,
                                     input=True, frames_per_buffer=int(r * frame_ms / 1000),
@@ -266,7 +272,45 @@ class SpeechRecognitionModule:
             self.logger.info("Groq STT unavailable: %s", exc)
             return None
 
+    # Whisper's classic no-speech outputs ("Foreign", "Thank you.", "so", "oh",
+    # "Hey"). Treated as silence so they are never answered or enrolled as names.
+    _HALLUCINATIONS = {"foreign", "thank you", "thanks", "thanks for watching",
+                       "thank you for watching", "you", "so", "oh", "hey", "uh",
+                       "um", "hmm", "mm", ".", "...", "subtitles by the amara.org community"}
+
+    def mic_available(self) -> bool:
+        """True if the configured command mic is currently present (fresh by-name
+        resolution each call, so an unplugged mic is noticed)."""
+        if pyaudio is None:
+            return False
+        import glob
+        # No ALSA capture PCM at all => genuinely no microphone (e.g. at work).
+        if not glob.glob('/dev/snd/pcmC*D*c'):
+            return False
+        if self.device_name:
+            saved = self.device_index
+            self.device_index = None
+            idx = self._resolve_microphone_index()
+            if idx is not None:
+                self.device_index = idx
+            else:
+                # Hardware exists but PortAudio isn't listing it by name (the
+                # known enumeration flip-flop) — keep the old index / default.
+                self.device_index = saved
+        return True
+
     def _transcribe_pcm16k(self, pcm: bytes) -> Optional[str]:
+        """Transcribe, then drop known STT hallucinations (treated as silence)."""
+        txt = self._transcribe_pcm16k_raw(pcm)
+        if not txt:
+            return None
+        norm = txt.lower().strip().strip('.,!?…"\' ')
+        if norm in self._HALLUCINATIONS or (len(norm) <= 2 and not norm.isdigit()):
+            self.logger.info("Ignoring likely STT hallucination: %r", txt)
+            return None
+        return txt
+
+    def _transcribe_pcm16k_raw(self, pcm: bytes) -> Optional[str]:
         """Transcribe raw 16k mono PCM using the configured STT mode."""
         mode = self.stt_mode
         # Groq Whisper first — fast, accurate, free.
