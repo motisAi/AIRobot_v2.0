@@ -44,12 +44,30 @@ class HardwareWatchdog:
     def _loop(self):
         self._stop.wait(self.interval)   # let startup settle
         while not self._stop.is_set():
-            for check in (self._check_camera, self._check_hand, self._check_audio_out):
+            for check in (self._check_camera, self._check_hand, self._check_audio_out, self._check_stuck_conversation):
                 try:
                     check()
                 except Exception as exc:
                     logger.debug("%s error: %s", check.__name__, exc)
             self._stop.wait(self.interval)
+
+    # -- stuck conversation (mic hang) ------------------------------------
+    def _check_stuck_conversation(self):
+        """If a conversation is active but Stella has not spoken for 120s, the
+        mic capture has hung (PortAudio blocking read on a stalled USB mic).
+        Restart the service to recover — safe, no cross-thread audio ops."""
+        r = self.robot
+        if not getattr(r, "_conv_active", False):
+            return
+        last = float(getattr(r, "_conv_activity", 0.0) or 0.0)
+        if last and (time.time() - last) > 60.0:
+            logger.error("Conversation stuck (no speech %.0fs) — restarting to recover",
+                         time.time() - last)
+            import subprocess
+            try:
+                subprocess.Popen(["sudo", "-n", "systemctl", "restart", "airobot"])
+            except Exception as exc:
+                logger.error("watchdog restart failed: %s", exc)
 
     # -- camera -----------------------------------------------------------
     def _check_camera(self):

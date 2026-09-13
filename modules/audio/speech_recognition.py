@@ -198,7 +198,18 @@ class SpeechRecognitionModule:
 
         if not voiced:
             return None
-        return self._transcribe_pcm16k(b''.join(voiced))
+        pcm = b''.join(voiced)
+        # Reject near-silence: Whisper/Vosk invent phrases ("Thank you.", ".")
+        # from ambient noise, which spawned endless phantom replies. Require real
+        # speech-level energy + a minimum spoken duration before transcribing.
+        samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+        rms = float(np.sqrt((samples ** 2).mean())) if samples.size else 0.0
+        voiced_secs = len(voiced) * frame_ms / 1000.0
+        if rms < 220.0 or voiced_secs < 0.35:
+            self.logger.info("Ignoring low-energy capture (rms=%.0f, %.2fs) — likely silence",
+                             rms, voiced_secs)
+            return None
+        return self._transcribe_pcm16k(pcm)
 
     def _is_speech(self, frame16k: bytes) -> bool:
         """VAD on a 30ms/16k frame; if VAD unavailable, use an energy gate."""

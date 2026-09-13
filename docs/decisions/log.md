@@ -299,3 +299,116 @@ not a crash loop).
 entirely (by /sys name); candidate order is USB webcams first, CSI never opened.
 Verified: candidates = [8,9,10,...], 0 new kernel messages across a restart.
 Lines already on the console are static — `clear` or a reboot wipes them.
+
+---
+
+### 2026-09-13 — Voice dead + phantom replies: Vosk can't hear "Stella"
+**Symptom:** after reboot + CSI-unplug, no voice response; guard uncontrollable
+(guard is armed/disarmed by voice); "replies to nothing".
+**Root cause (voice):** the small Vosk EN wake model renders "stella" as
+settler / taylor / stellar / sella / "that last" / live — never "stella". The
+matcher only accepted "stella"/"hey stella" or tokens starting "stel", so the
+wake word NEVER matched -> she never woke. (It worked before only by luck.)
+**Fix (wake_word._matches_wake):** accept a measured alias set (settler, taylor,
+stellar, steller, sella, estella, sailor, ...) + a Levenshtein<=2 fallback to the
+keyword. Verified live: "Hey Stella" -> wake detected (conf 0.90) -> she greeted
+and answered normally.
+**Root cause (phantom replies):** Whisper/Vosk hallucinate short phrases
+("Thank you.", ".") from ambient noise, which kept conversations alive forever.
+**Fix (speech_recognition.capture_utterance):** discard captures below rms 220 or
+under 0.35s before transcribing. No more phantom loop.
+**Notes:** PyAudio device enumeration is flaky (sometimes shows only pulse/default,
+sometimes the hw cards) — a clean service restart re-resolves it. Vosk is a weak
+wake engine for a name like "Stella"; if it stays flaky, move to Porcupine (needs
+access key) or a trained openWakeWord model. Face-recognition sim is low (~0.45-0.49)
+— re-enroll under the current USB-cam lighting is still pending.
+
+---
+
+### 2026-09-13 — "Stuck / not responding": blocking mic read hung conversations
+**Symptom:** intermittently she stops responding to voice. Log shows a
+conversation started (wake fired, "Pausing wake-word listener — releasing mic"),
+she asked "Can I do anything else?", then SILENCE for 10 min — no farewell, no
+"listener resumed". The wake mic stays paused, so she is fully deaf.
+**Root cause:** PortAudio `stream.read()` blocks forever when the flaky USB mic
+stops delivering frames mid-capture. `capture_utterance` hangs -> conversation
+never ends -> wake-word listener never resumes.
+**Fix (speech_recognition.capture_utterance):** read the mic on a daemon thread
+feeding a queue; the main loop consumes with a 1s queue timeout and bails out if
+no audio arrives for start_timeout+max_seconds+3s. A stalled mic now ends the
+capture (None -> farewell -> wake resumes) instead of hanging. `get_read_available()`
+is unreliable here (always returns 0), hence the reader-thread approach.
+**Also this session:** face kiosk fixed by rewriting the Windows controller
+(face_client.ps1) as a stateless bridge-tracker with a log file
+(%TEMP%\stella-face.log); the old bug was multiple wedged instances fighting the
+single-instance mutex. Wake word + phantom-reply fixes from earlier confirmed
+working (wake fired conf 0.90, lights/AC via voice).
+
+---
+
+### 2026-09-13 — "Offline from time to time": self-inflicted crash, reverted
+**Symptom:** Stella went offline intermittently; guard unreliable.
+**Root cause:** the capture-hang fix earlier this session (reader thread + queue)
+closed the PortAudio stream from the main thread while the reader thread was still
+reading it -> heap corruption (`malloc_consolidate(): unaligned fastbin chunk`)
+-> SIGABRT core-dump every ~1.5-3.5 min. systemd restarted each time = "offline
+from time to time". Guard was unreliable mainly because every crash reset
+`guard_mode` to off.
+**Fix:** REVERTED the reader-thread capture patch (restored blocking read). No more
+cross-thread audio ops -> no more crashes (verified: 0 core-dumps, stable uptime).
+**Replacement hang recovery (safe):** conversation stamps `_conv_activity` on every
+spoken line; the hardware watchdog restarts the service if a conversation is active
+but silent for 120s (only happens on a true mic-read hang — normal silence still
+emits wrap-up/farewell every ~12-24s). No cross-thread stream manipulation.
+**Lesson:** never close/stop a PortAudio stream from a different thread than the one
+reading it. If the blocking-read hang must be fixed at the source later, reopen the
+whole PyAudio instance or use a process-level restart, not cross-thread close.
+**Still open:** underlying USB audio is flaky (paInvalidSampleRate / xrun spam);
+face-recognition sim low (~0.45-0.58) - re-enroll pending. Guard state not persisted
+across restarts (re-arm needed after a restart).
+
+---
+
+### 2026-09-13 — Guard on/off/status parsing + log-spam
+**Guard bugs (motion detection itself was fine):**
+ - "guard mode off" ARMED instead of disarming — it contains "guard mode" (an
+   arm phrase) but not the exact "guard off", so on-keyword matched first.
+ - status questions ("is guard on or off?") armed it.
+ - no way to report guard status.
+**Fix (_maybe_guard):** STATUS queries handled first (report, never change); OFF
+intent = explicit off phrase OR (guard/security topic + an off/disable word), so
+"guard mode off" disarms; ON only when no "off" present. Verified on 7 phrases.
+**Log spam:** the Windows face controller polls /display_state ~twice/1.5s, which
+flooded the journal (aiohttp.access). Silenced via `web.AppRunner(app,
+access_log=None)`. Note: no disk-overflow risk anyway (90G free, journald caps at
+~10% and auto-rotates). Full journal vacuum needs sudo (system journal) — skipped.
+**Still open:** guard_mode not persisted across restarts; USB audio flaky; face
+sim low (~0.45-0.58, re-enroll pending). Blocking-mic-read hang now covered by the
+safe watchdog (restart after 120s of stuck conversation) instead of the reverted
+cross-thread patch.
+
+---
+
+### 2026-09-13 — Phone face + nicer face
+**Phone face:** added a separate "phone" display target so "show your face on
+phone" lights up the phone without touching the PC kiosk.
+ - bridge.py: `_show_phone` state, `show_phone_face()/hide_phone_face()`,
+   `/show_phone` `/hide_phone` endpoints, `/display_state` now returns
+   `{show, show_phone}`, and `/phone` serves the face page.
+ - The phone page self-gates: it polls `/display_state` and only wakes the face
+   when `show_phone` is true; otherwise a resting screen with a hint. Add-to-Home-
+   Screen makes it act like an app (PWA meta tags added).
+ - manager `_maybe_face`: "on phone/mobile/cell" -> phone target + a Telegram
+   tap-to-open link (`_send_phone_face_link`, best-effort LAN IP). Plain
+   "show/hide your face" still = the PC kiosk.
+ - Requires the phone on the same network as Stella (home WiFi or RobotNet).
+**Nicer face (index.html rewrite):** warmer multi-stop skin shading with
+cheekbones/temples/forehead highlight, fuller layered hair (back + fringe +
+strand highlights), almond eyes with lids/lash line/outer lashes/limbal ring/
+catchlights/gaze-follow pupil, softer brows, shaded nose with nostrils/tip
+highlight, fuller lips with philtrum + teeth/tongue when talking, subtle
+breathing bob. Same WebSocket protocol (emotion/look_at/gaze/speak/viseme), so
+lip-sync, gaze and emotions still drive it. JS syntax-checked with deno; verified
+it loads in the PC kiosk and phone endpoints work.
+**Verify pending (needs Moti):** visual judgement of the new face; open
+http://<pi>:8080/phone on the phone and say "show your face on phone".

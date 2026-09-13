@@ -61,6 +61,10 @@ class ConversationManager:
     # ------------------------------------------------------------------
     def _speak(self, text: str):
         """Speak and wait, so we never record our own voice."""
+        try:
+            self.robot._conv_activity = time.time()
+        except Exception:
+            pass
         if not text:
             return
         print(f"\n{behavior_config.robot_name}: {text}\n", flush=True)
@@ -142,6 +146,11 @@ class ConversationManager:
         # face-detection greeting from talking over us.
         brain._suppress_greetings = True
         try:
+            self.robot._conv_active = True
+            self.robot._conv_activity = time.time()
+        except Exception:
+            pass
+        try:
             self.robot._pause_wake_word_listener(reason="conversation")
         except Exception:
             pass
@@ -203,6 +212,10 @@ class ConversationManager:
             self.logger.error("Conversation error: %s", exc)
         finally:
             brain._suppress_greetings = False
+            try:
+                self.robot._conv_active = False
+            except Exception:
+                pass
             self._face_emotion("neutral")   # relax the face when the chat ends
             # Clean page when the conversation ends: wipe the short-term chat so
             # the next one starts fresh (the transcript is already saved to the DB).
@@ -577,11 +590,22 @@ class ConversationManager:
                   "i am home", "im home", "we're home", "i'm back", "i am back",
                   "im back")
         brain = self.robot.brain
-        # ARMING by voice is open (harmless). DISARMING is master-only: a random
-        # person shouldn't be able to say "guard off". Because face recognition
-        # is unreliable, the reliable master path is a spoken pass-phrase; a
-        # recently-seen master face also works, and Telegram (token) always does.
-        if any(k in t for k in off_kw):
+        is_guard_topic = ("guard" in t or "security" in t)
+        # STATUS query -> report the current state, never change it.
+        if is_guard_topic and any(q in t for q in (
+                "status", "on or off", "off or on", "is it on", "is it off",
+                "is guard", "is the guard", "is guard mode", "what is the guard",
+                "check the guard", "check if the guard", "currently on", "currently off")):
+            on = bool(getattr(brain, "guard_mode", False))
+            self._speak("Guard mode is currently " + ("on." if on else "off."))
+            return True
+        # OFF intent: an explicit off phrase, OR a guard/security topic together
+        # with an off/disable word (so "guard mode off" disarms, not arms).
+        wants_off = any(k in t for k in off_kw) or (
+            is_guard_topic and any(p in t for p in (
+                " off", "turn off", "shut off", "disable", "stand down")))
+        # DISARMING is master-only: a random person shouldn't be able to say "guard off".
+        if wants_off:
             if not self._can_disarm(t):
                 if (getattr(security_config, 'guard_disarm_phrase', '') or '').strip():
                     self._speak("Please say your disarm phrase, or turn guard off from your phone.")
@@ -591,7 +615,8 @@ class ConversationManager:
             brain.guard_mode = False
             self._speak("Guard mode off. Welcome home.")
             return True
-        if any(k in t for k in on_kw):
+        # ON intent: an arm phrase, and NOT an "off" request.
+        if any(k in t for k in on_kw) and " off" not in t:
             brain.guard_mode = True
             notifier = getattr(self.robot, 'notifier', None)
             if notifier and notifier.available:
@@ -879,15 +904,45 @@ class ConversationManager:
         subj = any(w in low for w in ("face", "base", "screen", "display", "space"))
         if not subj:
             return False
+        on_phone = any(w in low for w in ("phone", "mobile", "cell"))
         if any(w in low for w in ("hide", "close", "turn off", "put away", "go away", " off")):
-            face.hide_face()
-            self._speak("Okay, hiding my face.")
+            if on_phone and hasattr(face, "hide_phone_face"):
+                face.hide_phone_face()
+                self._speak("Okay, hiding my face from your phone.")
+            else:
+                face.hide_face()
+                self._speak("Okay, hiding my face.")
             return True
         if any(w in low for w in ("show", "open", "wake", "turn on", "bring up", "come up")):
-            face.show_face()
-            self._speak("Here's my face. Give the screen a moment to come up.")
+            if on_phone and hasattr(face, "show_phone_face"):
+                face.show_phone_face()
+                self._speak("Okay, I'm putting my face on your phone.")
+                self._send_phone_face_link()
+            else:
+                face.show_face()
+                self._speak("Here's my face. Give the screen a moment to come up.")
             return True
         return False
+
+    def _send_phone_face_link(self):
+        """Text the master a tap-to-open link to Stella's phone face page."""
+        notifier = getattr(self.robot, "notifier", None)
+        if not (notifier and getattr(notifier, "available", False)):
+            return
+        ip = None
+        try:
+            import socket
+            sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sk.connect(("8.8.8.8", 80)); ip = sk.getsockname()[0]; sk.close()
+        except Exception:
+            ip = None
+        primary = f"http://{ip}:8080/phone" if ip else "http://motiAi.local:8080/phone"
+        try:
+            notifier.send_message(
+                "\U0001F4F1 Tap to see my face: " + primary +
+                "  (or http://motiAi.local:8080/phone)")
+        except Exception:
+            pass
 
     def _maybe_music(self, text: str) -> bool:
         """Play/find YouTube music and control it live. Returns True if handled."""

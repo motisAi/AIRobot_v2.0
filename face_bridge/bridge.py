@@ -35,7 +35,8 @@ class FaceBridge:
         self._loop = None
         self._thread = None
         self._faces = set()      # connected browser faces (ws)
-        self._show = False       # desired display state (polled by the Surface)
+        self._show = False       # PC kiosk display state (polled by the Surface)
+        self._show_phone = False # phone display state (polled by the phone page)
         self._started = False
 
     # ---- public, thread-safe API (called from Stella's threads) ------------
@@ -59,6 +60,16 @@ class FaceBridge:
         self._show = False
         logger.info("face -> HIDE")
         self._broadcast({"type": "display", "mode": "hide"})
+
+    def show_phone_face(self):
+        self._show_phone = True
+        logger.info("phone face -> SHOW")
+        self._broadcast({"type": "display", "target": "phone", "mode": "show"})
+
+    def hide_phone_face(self):
+        self._show_phone = False
+        logger.info("phone face -> HIDE")
+        self._broadcast({"type": "display", "target": "phone", "mode": "hide"})
 
     # M1+ hooks (safe to call now; no face connected = no-op)
     def set_emotion(self, value: str, intensity: float = 1.0):
@@ -110,10 +121,13 @@ class FaceBridge:
             app.router.add_get("/display_state", self._state)
             app.router.add_get("/show", self._show_ep)
             app.router.add_get("/hide", self._hide_ep)
+            app.router.add_get("/phone", self._index)          # phone opens this
+            app.router.add_get("/show_phone", self._show_phone_ep)
+            app.router.add_get("/hide_phone", self._hide_phone_ep)
             app.router.add_get("/test", self._test_ep)
             app.router.add_get("/face.png", self._asset)
             app.router.add_get("/face_meta.json", self._asset)
-            runner = web.AppRunner(app)
+            runner = web.AppRunner(app, access_log=None)  # no /display_state spam
             self._loop.run_until_complete(runner.setup())
             site = web.TCPSite(runner, self.host, self.port)
             self._loop.run_until_complete(site.start())
@@ -136,7 +150,7 @@ class FaceBridge:
         return web.Response(status=404)
 
     async def _state(self, request):
-        return web.json_response({"show": self._show})
+        return web.json_response({"show": self._show, "show_phone": self._show_phone})
 
     async def _show_ep(self, request):
         self.show_face()
@@ -145,6 +159,14 @@ class FaceBridge:
     async def _hide_ep(self, request):
         self.hide_face()
         return web.json_response({"show": False})
+
+    async def _show_phone_ep(self, request):
+        self.show_phone_face()
+        return web.json_response({"show_phone": True})
+
+    async def _hide_phone_ep(self, request):
+        self.hide_phone_face()
+        return web.json_response({"show_phone": False})
 
     async def _test_ep(self, request):
         """Visual self-test: go happy + talk for 3s, then relax to neutral."""

@@ -288,14 +288,47 @@ class WakeWordModule:
         finally:
             _close()
 
+    # Vosk's small EN model mis-renders "stella" wildly. These are the tokens it
+    # actually produces for it (measured), plus near-spellings. Kept off the most
+    # common English words to limit false wakes.
+    _WAKE_ALIASES = {
+        "stella", "stellar", "steller", "settler", "settlers", "sella",
+        "estella", "stellah", "stela", "taylor", "sailor", "stallion",
+    }
+
+    @staticmethod
+    def _lev(a: str, b: str) -> int:
+        """Small Levenshtein distance (for close spellings of the keyword)."""
+        if a == b:
+            return 0
+        m, n = len(a), len(b)
+        if not m:
+            return n
+        if not n:
+            return m
+        prev = list(range(n + 1))
+        for i, ca in enumerate(a, 1):
+            cur = [i]
+            for j, cb in enumerate(b, 1):
+                cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+            prev = cur
+        return prev[n]
+
     def _matches_wake(self, text: str) -> bool:
-        """True if recognised text contains a wake phrase or a 'gonz*' token."""
+        """True if recognised text looks like the wake word. Tolerant of Vosk
+        mishearing "stella" (settler/taylor/stellar/...)."""
         t = text.lower().strip()
         if not t:
             return False
         if any(p in t for p in self.wake_phrases):
             return True
-        return any(tok.startswith(self._wake_prefix) for tok in t.split())
+        toks = t.split()
+        if any(tok in self._WAKE_ALIASES for tok in toks):
+            return True
+        if any(tok.startswith(self._wake_prefix) for tok in toks):
+            return True
+        # close spelling to the actual keyword (e.g. "stellaa", "stela")
+        return any(len(tok) >= 4 and self._lev(tok, self.keyword) <= 2 for tok in toks)
 
     @staticmethod
     def _resample_to_16k(frame: bytes, src_rate: int) -> bytes:
