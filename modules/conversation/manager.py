@@ -195,6 +195,10 @@ class ConversationManager:
 
                 print(f"\nYou: {text}", flush=True)
                 self.logger.info("HEARD: %s", text)   # goes to gonzo.log
+                try:
+                    self.robot._conv_activity = time.time()
+                except Exception:
+                    pass
                 self._dashboard_log(f"You: {text}")
                 self._log_db('user', text)
 

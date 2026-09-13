@@ -60,7 +60,7 @@ class HardwareWatchdog:
         if not getattr(r, "_conv_active", False):
             return
         last = float(getattr(r, "_conv_activity", 0.0) or 0.0)
-        if last and (time.time() - last) > 60.0:
+        if last and (time.time() - last) > 75.0:
             logger.error("Conversation stuck (no speech %.0fs) — restarting to recover",
                          time.time() - last)
             import subprocess
