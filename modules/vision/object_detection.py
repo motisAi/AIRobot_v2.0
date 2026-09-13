@@ -171,6 +171,16 @@ class ObjectDetectionModule:
         summary: Dict[str, int] = defaultdict(int)
         for det in detections:
             summary[det.label] += 1
+        summary = dict(summary)
+
+        # Throttle: only emit when the scene (labels+counts) changes, or every
+        # ~5s. Otherwise we flood the brain with ~1 event per processed frame.
+        now = time.time()
+        if summary == getattr(self, "_last_emit_summary", None) and \
+                (now - getattr(self, "_last_emit_time", 0.0)) < 5.0:
+            return
+        self._last_emit_summary = summary
+        self._last_emit_time = now
 
         event = RobotEvent(
             type="object_detected",
@@ -180,7 +190,7 @@ class ObjectDetectionModule:
                     {"label": d.label, "confidence": d.confidence, "bbox": d.bbox}
                     for d in detections
                 ],
-                "summary": dict(summary),
+                "summary": summary,
             },
             priority=6,
         )

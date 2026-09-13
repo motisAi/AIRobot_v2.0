@@ -873,13 +873,14 @@ class AIRobot:
     
     def _handle_object_detected(self, event: RobotEvent):
         """Handle object detection event — log to learning DB."""
-        obj_data = event.data
-        label = obj_data.get('label', 'unknown')
-        confidence = obj_data.get('confidence', 0)
-        self.logger.debug(f"Object detected: {label} ({confidence:.0%})")
+        data = event.data or {}
+        objs = data.get('objects') or []
+        if objs:
+            self.logger.debug("Objects seen: %s",
+                              data.get('summary') or [o.get('label') for o in objs])
         
-        if self.learning_db:
-            self.learning_db.save_object(label, confidence=confidence)
+        # No per-event DB writes (detection runs continuously); deliberate
+        # object learning happens via the brain's explicit learning path.
     
     def _handle_wake_word(self, event: RobotEvent):
         """Handle wake word detection — start a multi-turn conversation session."""

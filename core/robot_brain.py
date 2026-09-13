@@ -1174,7 +1174,7 @@ class RobotBrain:
         
         for obj in objects:
             # Add to working memory
-            self.working_memory[f"object_{obj['class']}"] = {
+            self.working_memory[f"object_{obj.get('label') or obj.get('class') or 'object'}"] = {
                 'location': obj.get('location'),
                 'confidence': obj.get('confidence'),
                 'time': time.time()
@@ -1183,7 +1183,7 @@ class RobotBrain:
             # Check if this is what we're looking for
             if self.current_task and self.current_task.get('type') == 'find_object':
                 target = self.current_task.get('target')
-                if target and target.lower() in obj['class'].lower():
+                if target and target.lower() in (obj.get('label') or obj.get('class') or '').lower():
                     # Found the object!
                     self.emit_event(RobotEvent(
                         type='object_found',
