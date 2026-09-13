@@ -52,3 +52,6 @@ snapshot.json
 tinytuya.json
 
 tuya-raw.json
+
+# object-detection model (binary, not in git)
+data/models/*.onnx
