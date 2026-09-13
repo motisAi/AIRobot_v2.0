@@ -412,3 +412,8 @@ lip-sync, gaze and emotions still drive it. JS syntax-checked with deno; verifie
 it loads in the PC kiosk and phone endpoints work.
 **Verify pending (needs Moti):** visual judgement of the new face; open
 http://<pi>:8080/phone on the phone and say "show your face on phone".
+
+---
+
+### 2026-09-13 — Full architecture review (multi-agent, ultracode)
+Ran a 16-agent audit + research + design pass. Canonical output: docs/architecture/stella-architecture-2026-09-13.md (north star, capability stack online+offline, phased rollback-safe roadmap, object-recognition root cause, Hailo unlock, NVIDIA NIM plan). Key finding: object recognition is dead due to 3 stacked blockers (no model file; enable_hailo:false; wrong pip hailort 4.23.0 vs system 5.1.1). Also found a master-auth bypass in keyword handlers and secret-hygiene issues. Roadmap: Phase 0 reliability+security, Phase 1 revive perception+offline voice (CPU), Phase 2 NVIDIA NIM + offline cliff, Phase 3 offline VLM, Phase 4 (optional/late) HailoRT 5.2.0 upgrade, Phase 5 on-NPU perception. NO code changed in this pass.
