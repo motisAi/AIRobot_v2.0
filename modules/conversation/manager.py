@@ -836,6 +836,17 @@ class ConversationManager:
             self._gesture('wave')
         self._speak(self.cfg.farewell.format(name=self._name_suffix()))
 
+    def _is_master(self) -> bool:
+        """True if the present speaker may run privileged/physical controls."""
+        if not getattr(security_config, "require_authentication", True):
+            return True
+        return bool(getattr(self.robot.brain, "master_mode", False)
+                    or getattr(self.robot, "_remote_master", False))
+
+    def _deny_master(self) -> bool:
+        self._speak("Sorry, only Moti can do that.")
+        return True
+
     def _maybe_mirror(self, text: str) -> bool:
         """Toggle 'copy my hand' mirror mode. Returns True if handled."""
         t = text.lower()
@@ -845,6 +856,8 @@ class ConversationManager:
         if any(k in t for k in ("stop copying", "stop mirroring", "stop imitating",
                                 "stop the mirror", "stop following", "stop copy",
                                 "you can stop", "stop doing that")):
+            if not self._is_master():
+                return self._deny_master()
             hm.set_active(False)
             self._speak("Okay, I'll stop copying your hand.")
             return True
@@ -854,6 +867,8 @@ class ConversationManager:
         obj = any(o in t for o in ("hand", "gesture", "finger", "what i do",
                                    "movement", " me", "my move"))
         if verb and obj:
+            if not self._is_master():
+                return self._deny_master()
             hm.set_active(True)
             self._speak("Okay, show me your hand and I'll copy it. Say 'stop copying' "
                         "when you're done.")
@@ -869,6 +884,8 @@ class ConversationManager:
         if not any(w in low for w in (" ac", "a/c", "air condition", "aircon",
                                       "air-con", "conditioner", "climate")):
             return False
+        if not self._is_master():
+            return self._deny_master()
         import re
         room = None
         if any(w in low for w in ("living", "salon", "lounge")):
