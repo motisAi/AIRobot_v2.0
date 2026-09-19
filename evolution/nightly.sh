@@ -9,7 +9,8 @@ mkdir -p evolution/reports
 log() { echo "$(date '+%F %T') $*" | tee -a "$LOG"; }
 
 # --- pause conditions -------------------------------------------------------
-if [ -n "$(who 2>/dev/null)" ]; then log "skip: SSH session open (operator active)"; exit 0; fi
+# any established SSH connection counts as the operator working (incl. non-interactive scp/ssh from Claude)
+if ss -Htn state established "( sport = :22 )" 2>/dev/null | grep -q .; then log "skip: SSH connection open (operator active)"; exit 0; fi
 if [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then log "skip: git tree dirty (work in progress)"; exit 0; fi
 FREE_GB=$(df -BG --output=avail . | tail -1 | tr -dc 0-9)
 [ "${FREE_GB:-0}" -ge 2 ] || { log "skip: disk ${FREE_GB}GB free"; exit 0; }

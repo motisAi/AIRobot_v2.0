@@ -5,7 +5,7 @@ identity:
   language: en
   os: Ubuntu 24.04.4 LTS
   python: Python 3.12.3
-  git_commit: a606f9f
+  git_commit: 3cbc6c9
 hardware:
   platform: Raspberry Pi 5 Model B Rev 1.1
   kernel: 6.8.0-1064-raspi
@@ -42,7 +42,7 @@ hardware:
   network_interfaces:
   - eth0
   - wlan0
-  temperature: 63.7'C
+  temperature: 61.5'C
   throttled: '0x80000'
 parts_used:
 - file: parts_used/audio_arbiter.py
@@ -201,4 +201,4 @@ known_weaknesses:
 - 'no active cooling: reaches 80C soft limit under load'
 - object detection runs on CPU; Hailo path needs HailoRT >= 5.2
 evolution_log:
-  last_manifest: '2026-09-19 11:36:18'
+  last_manifest: '2026-09-19 12:06:12'

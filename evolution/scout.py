@@ -106,7 +106,8 @@ def score_candidates(db: EvolutionDB, manifest_text: str, limit: int = 12) -> in
             f"{manifest_text[:2200]}\n\n"
             f"Candidate upgrade: {row['name']} {row['current_version'] or ''} -> {row['new_version']} "
             f"({row['source']}, {row['category']}). Notes: {row['notes'] or '-'}\n"
-            "Score how relevant/valuable this is for Stella from 1 (irrelevant) to 10 (must have), "
+            "Score how relevant/valuable this is for Stella from 1 (irrelevant) to 10 (must have). "
+            "Trust the manifest: never claim she lacks something it lists (e.g. Piper TTS, Vosk wake word are installed). "
             "considering her known weaknesses. JSON with an integer score 1-10 and a one-sentence reason, e.g. {\"score\": 7, \"reason\": \"...\"}"
         )
         try:
