@@ -26,7 +26,7 @@ import cv2
 import numpy as np
 
 # Ensure project root is importable
-PROJECT_ROOT = Path(__file__).parent.absolute()
+PROJECT_ROOT = Path(__file__).resolve().parent.parent  # repo root (this file lives in tools/)
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # Try to import face_recognition for embeddings (optional on Windows)

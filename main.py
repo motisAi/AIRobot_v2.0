@@ -74,8 +74,8 @@ from config.settings import (
 from core.robot_brain import RobotBrain, RobotEvent
 
 # Shared hardware managers
-from modules.hardware.camera_manager import CameraManager
-from modules.hardware.audio_manager import AudioManager
+from parts_used.camera_usb import CameraManager
+from parts_used.audio_devices import AudioManager
 
 # Vision modules
 from modules.vision.face_recognition import FaceRecognitionModule
@@ -93,7 +93,7 @@ from modules.ai.learning_db import LearningDB
 from modules.ai.reminders import ReminderManager
 
 # Hardware controllers
-from modules.hardware.microcontroller import MicrocontrollerController
+from parts_used.microcontroller_bridge import MicrocontrollerController
 
 # Navigation / environment learning (future wheels + sensors)
 from modules.navigation.navigator import Navigator
@@ -337,7 +337,7 @@ class AIRobot:
             self.logger.error(f"✗ Failed to initialize Navigation: {e}")
 
         # --- Phone notifications (Telegram) ---
-        from modules.hardware.notify import Notifier
+        from modules.comms.notify import Notifier
         self.notifier = Notifier()
         self._last_guard_alert = 0.0
         self._unknown_streak = 0
@@ -390,7 +390,7 @@ class AIRobot:
         # --- Music player (YouTube via mpv + yt-dlp), routed to Stella's speaker ---
         self.music = None
         try:
-            from modules.hardware.music import MusicPlayer
+            from modules.media.music import MusicPlayer
             tts_mod = self.modules.get('tts')
             self.music = MusicPlayer(
                 alsa_device=getattr(tts_mod, 'alsa_device', None),
@@ -409,7 +409,7 @@ class AIRobot:
         # --- Audio arbiter: one owner of the speaker at a time (speech preempts
         #     music, and future alert chimes go through the same coordinator). ---
         try:
-            from modules.hardware.audio_arbiter import AudioArbiter
+            from parts_used.audio_arbiter import AudioArbiter
             self.audio_arbiter = AudioArbiter()
             if self.music is not None:
                 self.audio_arbiter.add_duckable(self.music)
@@ -424,7 +424,7 @@ class AIRobot:
         self.hand = None
         try:
             if getattr(hand_config, 'enabled', False):
-                from modules.hardware.hand import Hand
+                from parts_used.esp32_hand import Hand
                 import glob as _glob
                 _port = getattr(hand_config, 'serial_port', '/dev/ttyACM0')
                 if not os.path.exists(_port):
@@ -462,7 +462,7 @@ class AIRobot:
             _mcfg = ((_yaml.safe_load(open(PROJECT_ROOT / "config" / "config.yaml"))
                       or {}).get("mqtt") or {})
             if _mcfg.get("enabled", True):
-                from modules.hardware.mqtt_devices import MqttDevices
+                from modules.smart_home.mqtt_devices import MqttDevices
                 self.mqtt = MqttDevices(_mcfg.get("broker", "localhost"),
                                         _mcfg.get("port", 1883),
                                         _mcfg.get("devices", {}))
@@ -474,7 +474,7 @@ class AIRobot:
         # --- Tuya devices (LSPA8 plug etc.) via tinytuya local control ---
         self.tuya = None
         try:
-            from modules.hardware.tuya_devices import TuyaDevices
+            from modules.smart_home.tuya_devices import TuyaDevices
             self.tuya = TuyaDevices(str(PROJECT_ROOT / "devices.json"))
             if self.tuya.devices:
                 self.logger.info("\u2713 Tuya devices ready (%d): %s",
@@ -485,7 +485,7 @@ class AIRobot:
         # --- Sensibo AC control (cloud API; needs SENSIBO_API_KEY in .env) ---
         self.sensibo = None
         try:
-            from modules.hardware.sensibo import Sensibo
+            from modules.smart_home.sensibo import Sensibo
             self.sensibo = Sensibo()
             if self.sensibo.enabled and self.sensibo.pods:
                 self.logger.info("\u2713 Sensibo AC ready (%d unit(s)): %s",
@@ -538,7 +538,7 @@ class AIRobot:
         #     indices/ports (mics, ESP32 hand serial, HDMI audio card). ---
         self.watchdog = None
         try:
-            from modules.hardware.watchdog import HardwareWatchdog
+            from core.watchdog import HardwareWatchdog
             self.watchdog = HardwareWatchdog(self, interval=20.0)
             self.watchdog.start()
             self.logger.info("✓ Hardware watchdog started")
@@ -1118,7 +1118,7 @@ class AIRobot:
         """Announce (once) when the internet connection is lost, and point the
         user at the dashboard WiFi panel to reconnect."""
         try:
-            from modules.hardware import wifi
+            from parts_used import wifi_adapter as wifi
         except Exception:
             return
         # Start from REALITY: booting offline is a state, not a 'loss' to announce.

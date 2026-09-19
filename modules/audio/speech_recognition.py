@@ -141,7 +141,7 @@ class SpeechRecognitionModule:
         """
         if pyaudio is None:
             return None
-        from modules.hardware.audio_pa import get_pa
+        from parts_used.audio_portaudio import get_pa
         audio = get_pa()
         if audio is None:
             return None
@@ -419,7 +419,7 @@ class SpeechRecognitionModule:
             return None
 
         device_index = self._resolve_microphone_index()
-        from modules.hardware.audio_pa import get_pa
+        from parts_used.audio_portaudio import get_pa
         audio = get_pa()          # shared instance — do NOT terminate it
         if audio is None:
             self.logger.error("PyAudio missing; cannot capture audio")
@@ -520,7 +520,7 @@ class SpeechRecognitionModule:
         if not self.device_name:
             return None
 
-        from modules.hardware.audio_pa import get_pa
+        from parts_used.audio_portaudio import get_pa
         audio = get_pa()          # shared instance — do NOT terminate it
         if audio is None:
             return None

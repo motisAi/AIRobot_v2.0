@@ -25,7 +25,7 @@ import cv2
 import numpy as np
 
 if TYPE_CHECKING:
-    from modules.hardware.camera_manager import CameraManager, Frame
+    from parts_used.camera_usb import CameraManager, Frame
     from core.robot_brain import RobotBrain
     from modules.ai.learning_db import LearningDB
 
@@ -323,7 +323,7 @@ class WebDashboard:
         @app.route("/api/wifi/scan")
         def api_wifi_scan():
             try:
-                from modules.hardware import wifi
+                from parts_used import wifi_adapter as wifi
                 return jsonify({"online": wifi.is_online(),
                                 "helper": wifi.helper_installed(),
                                 "ssids": wifi.scan()})
@@ -339,7 +339,7 @@ class WebDashboard:
             if not ssid:
                 return jsonify({"error": "no ssid"}), 400
             try:
-                from modules.hardware import wifi
+                from parts_used import wifi_adapter as wifi
                 ok = wifi.connect(ssid, password)
                 self.add_log(f"wifi: connect '{ssid}' -> {'ok' if ok else 'failed'}")
                 return jsonify({"ok": ok})

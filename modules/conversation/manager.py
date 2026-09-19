@@ -713,7 +713,7 @@ class ConversationManager:
         if not any(k in t for k in conn_words):
             return False
         try:
-            from modules.hardware import wifi
+            from parts_used import wifi_adapter as wifi
         except Exception:
             return False
 
@@ -1058,7 +1058,7 @@ class ConversationManager:
     def _wifi_connect_flow(self):
         """Guided Wi-Fi onboarding: QR via camera (reliable, works offline) or
         voice spelling. No screen/keyboard needed."""
-        from modules.hardware import wifi
+        from parts_used import wifi_adapter as wifi
         from modules.audio.spell_parser import spell_out
         speech = self.robot.modules.get('speech_recognition')
         cfg = self.cfg

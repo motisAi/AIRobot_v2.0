@@ -205,7 +205,7 @@ class WakeWordModule:
 
         def _open():
             nonlocal audio, stream, actual_rate
-            from modules.hardware.audio_pa import get_pa
+            from parts_used.audio_portaudio import get_pa
             audio = get_pa()          # shared instance — do NOT terminate it
             if audio is None:
                 return False
@@ -402,7 +402,7 @@ class WakeWordModule:
 
         def _open_stream():
             nonlocal audio, stream, mic_rate
-            from modules.hardware.audio_pa import get_pa
+            from parts_used.audio_portaudio import get_pa
             audio = get_pa()          # shared instance — do NOT terminate it
             if audio is None:
                 return False
@@ -534,7 +534,7 @@ class WakeWordModule:
         if not name_hint:
             return None
 
-        from modules.hardware.audio_pa import get_pa
+        from parts_used.audio_portaudio import get_pa
         audio = get_pa()          # shared instance — do NOT terminate it
         if audio is None:
             return None

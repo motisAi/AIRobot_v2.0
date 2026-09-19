@@ -20,8 +20,8 @@ import numpy as np
 
 from config.settings import system_config
 from core.robot_brain import RobotEvent
-from modules.hardware.camera_manager import Frame
-from modules.vision.hailo_detector import Detection, HailoDetector
+from parts_used.camera_usb import Frame
+from parts_used.hailo_10h import Detection, HailoDetector
 
 
 class TrackedObject:

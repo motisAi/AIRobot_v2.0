@@ -11,7 +11,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modules.hardware.sim7600x_controller import SIM7600XController
+from parts_used.sim7600x_modem import SIM7600XController
 import logging
 import time
 
