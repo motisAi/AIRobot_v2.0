@@ -291,6 +291,9 @@ class WakeWordModule:
                 text = ""
                 if rec.AcceptWaveform(frame):
                     text = _json.loads(rec.Result()).get("text", "")
+                    if text:
+                        # visibility: what the wake mic actually hears (finals only, no spam)
+                        self.logger.info("wake heard: %r", text[:80])
                 else:
                     text = _json.loads(rec.PartialResult()).get("partial", "")
 
