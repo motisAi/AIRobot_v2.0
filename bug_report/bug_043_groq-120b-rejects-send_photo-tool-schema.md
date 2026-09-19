@@ -1,7 +1,7 @@
 # Bug #043 — Groq gpt-oss-120b rejects the send_photo tool call (400), falls back each time
 
 - **Date found:** 2026-09-19
-- **Status:** open
+- **Status:** fixed (2026-09-19, commit 3210df1: required:[]+additionalProperties:false)
 - **Area:** ai
 - **Files touched:** `modules/conversation/manager.py` (tool schema), `modules/ai/ai_engine.py`
 - **Commit(s):** n/a
