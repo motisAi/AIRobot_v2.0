@@ -451,3 +451,21 @@ Ran a 3-agent diagnosis (slowness / unprompted speech / missing-hardware) over 3
 - object_detection.py: don't load the detector without a camera; `MIN_DETECT_INTERVAL=1.0s` throttle.
 
 **Status:** all 8 deployed; TTS regression fix deployed + Pi-syntax-checked and restart issued — the Ethernet link dropped during verification, so **startup-complete verification and git commit/push are PENDING** until she's reachable again. Rollback: `git checkout -- <file>` per file (repo clean at `62fec28`), or `git reset --hard 62fec28`.
+
+
+---
+
+### 2026-09-19 — Architecture v2: layout, safety net, self-evolution, bug history
+**Decision:** (1) `parts_used/` = one file per physical part (camera, audio, Hailo, hand, MCU bridge, modem, WiFi, RC toy);
+`modules/` grouped by capability (`smart_home/`, `media/`, `comms/`); `core/watchdog.py`; operator scripts in `tools/`.
+Pure `git mv` + import rewrite (no dynamic imports existed); stale root duplicates and `modules/vision/wake_word.py` removed.
+(2) **Guardian** (`evolution/guardian.py`, deterministic, no LLM) + `deploy/deploy.sh` (restart → Guardian → `git reset --hard`
+rollback) is now the only way we deploy. (3) `bug_report/` seeded with 40 historical bugs; every future fix gets a file.
+(4) From the phone "self-evolution blueprint" we built the safe parts — manifest, evolution.db, free-only LLM client,
+report-only Scout, morning Telegram report, 03:00 cron — and **deferred Lab/Builder (auto-merge) and the hardware inbox**:
+a 1.5B model must not install packages into a running robot unsupervised; they return behind `require_operator_approval`.
+(5) RC toy contract: `rc_toy.connected` flag, `RCToy.drive/halt/is_available`, dead-man stop, master-gated `drive_toy` tool.
+**Findings while building:** Groq's API 403s Python's default User-Agent (browser UA needed); gpt-oss/gemini-flash need
+`max_tokens ≥ 2048` + `reasoning_effort: low` or content comes back empty/truncated; the Pi hit the 80 °C soft limit (no fan);
+no undervoltage recorded on the readable boots — the power-offs cut the log mid-line (hard cut), PSU still to be checked.
+**Rejected:** import shims for old paths (would double the file count and defeat the point); autonomous package installs.

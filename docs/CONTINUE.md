@@ -1,37 +1,27 @@
-# Continue Point — resume here next session
+# Continue point — 2026-09-19
 
-_Last updated: 2026-09-12 (evening, IDT)_
+## Where we are
+- **Layout reorganised** (commit `e6a5b2e`): `parts_used/` one file per physical part, `modules/` by capability
+  (`smart_home/`, `media/`, `comms/`), `core/watchdog.py`, `tools/`. Stale root duplicates deleted. Guardian green.
+- **Safety net live**: `evolution/guardian.py` + `deploy/deploy.sh` (restart → Guardian → auto-rollback). Use it for EVERY deploy.
+- **bug_report/**: 40 bugs from history. Rule: no fix without a bug file.
+- **evolution/**: manifest (`stella_manifest.yaml`), `evolution.db`, free-only LLM client (Groq needs a browser User-Agent),
+  Scout (report-only), morning report + Telegram. Nightly at 03:00 via the user crontab (`crontab -l`);
+  systemd units in `deploy/stella-evolution.*` are the sudo alternative.
+- **RC toy**: `parts_used/rc_toy.py`, `rc_toy.connected: false`, tool `drive_toy` appears only when connected (master-only).
+- **Hailo**: driver rebuilt 2026-09-19 with `linux-headers-raspi` installed → survives kernel upgrades. Offline brain 0.7 s.
+- **Slow/unprompted fixes** (`231740d`) verified live: 0 errors, no self-talk.
 
-Pick up from here. Full rationale for every change is in `docs/decisions/log.md`.
+## Open (needs Moti)
+1. `git push` — the GitHub token on the Pi and on the PC is dead. Sign in once via VS Code Source Control
+   (Remote SSH → /home/moti_ai/AIRobot_v2.0 → Sync).
+2. Power-offs when the Ethernet cable is plugged in: no undervoltage flag on the boots we could read; the logs just stop
+   (hard power cut). Need the PSU label rating; use the official 27 W supply. Guardian now reports undervoltage bits loudly.
+3. No fan: hits the 80 °C soft limit under load (`throttled=0x80000`). A fan or a case with airflow is the fix.
+4. Office WiFi netplan (SSID Politech-Internal-2.4GHz, fixed 192.168.0.240/24) — needs sudo.
+5. Face re-enrol under current lighting (`tools/reenroll.py`); guard_mode not persisted across restarts.
 
-## Environment quick-reference
-- **Pi:** `ssh rpi5` (192.168.11.204 on home WiFi "Arik -2.4G-ext"). Repo: `~/AIRobot_v2.0`, branch `jetson_new_v1`, remote `motisAi/AIRobot_v2.0` (push as motisAi).
-- **Service:** `airobot`. Only `sudo -n systemctl restart/stop airobot` is passwordless. Read logs with `journalctl -u airobot`. Rule: **read the log first** when something "doesn't work".
-- **Local mirror (Windows):** `C:\Users\Moti\AIRobot_work` (kept in sync via scp; not the git repo).
-- **Secrets (gitignored, never commit):** `.env`, `devices.json`, `snapshot.json`, `tinytuya.json`, `tuya-raw.json`.
-- **Camera now:** USB "Auto Focus Camera" (auto-detected). Pi CSI camera is UNPLUGGED. Code skips CSI nodes.
-- **Windows face kiosk:** `face_client.ps1` runs at login via Startup shortcut `StellaFace.lnk`; Pi IP cached in `%LOCALAPPDATA%\stella-face-pi.txt`.
-
-## What works (verified 2026-09-12)
-- STT = Groq Whisper (whisper-large-v3-turbo) primary → Google → Vosk offline.
-- Voice + natural-language commands: lights (Tuya plug), AC (Sensibo), show/hide face, wave, vision Q&A ("what am I holding?").
-- Music: correct song + actually plays (yt-dlp android client → ffmpeg pipe; smart search filters tutorials/covers).
-- Single welcome greeting (no double / no spam). Guard arms and stays armed when you leave.
-- Face kiosk opens/closes on voice. Camera auto-detects USB, survives reboots. No more CSI console spam.
-- RobotNet (dongle AP), MQTT broker, Tuya plug, Sensibo AC.
-
-## TODO next session (in priority order)
-1. **Boot WiFi auto-reconnect** — after a reboot the Pi's onboard WiFi uplink sometimes doesn't reconnect ("no internet" until `sudo netplan apply`). Set up a tiny boot/periodic reconnect (systemd unit or networkd-dispatcher hook). NEEDS Moti's sudo password once (run on the Pi keyboard or paste when prompted).
-2. **"Stop replying to silence"** — Whisper hallucinates short phrases ("Thank you.", ".") from ambient noise, so she answers nobody. Add a min-voiced-duration gate (require ~0.5s of voiced frames) and/or a hallucination-phrase blocklist in `speech_recognition.capture_utterance`.
-3. **Face recognition dips** — sim fell to ~0.47–0.58 (was 0.65–0.72); she occasionally asks "who's speaking?". Consider re-enroll (`python tools/reenroll.py` with service stopped) under current USB-cam lighting, or nudge threshold.
-
-## Nice-to-have / later
-- Wire the Pi CSI camera properly via libcamera/picamera2 if we want to switch off the USB cam.
-- DHCP-reserve the Tuya plug IP; move plug to RobotNet if portability wanted.
-- Boss has NOT authorized Claude API — do not wire it.
-
-## How to restart / check her
-```
-ssh rpi5 'sudo -n systemctl restart airobot'
-ssh rpi5 'journalctl -u airobot -n 80 --no-pager'
-```
+## Next build steps (from the architecture)
+- Scout's top ideas: faster-whisper offline STT, openWakeWord "Hey Stella" (needs Moti's voice clips),
+  Hailo model zoo after HailoRT 5.2.
+- Evolution v3: Lab (sandbox) + Builder behind `require_operator_approval`.
