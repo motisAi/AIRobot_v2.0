@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Stella's nightly self-check at 03:00
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

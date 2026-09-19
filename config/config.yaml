@@ -132,6 +132,18 @@ microcontroller:
     fan: "relay2"
     door: "servo1"
 
+# ------------------------------------------------------------------ RC toy
+# A cheap RC car/tank Stella drives herself (parts_used/rc_toy.py). Until a toy is
+# chosen this stays false: the class exists, the LLM tool is hidden, nothing moves.
+rc_toy:
+  connected: false               # <-- set true when the toy is wired
+  transport: "null"              # null | esp32_serial | wifi_http | ble
+  port: "/dev/ttyUSB1"           # esp32_serial: the toy's ESP32/Arduino
+  baud: 115200
+  address: ""                    # wifi_http: "http://10.0.0.60"  | ble: MAC
+  max_speed: 0.5                 # 0..1 safety cap
+  deadman_seconds: 2.0           # auto-stop if no command for this long
+
 # ------------------------------------------------------------------ navigation
 # Future "learn my house" / autonomous driving. All off until hardware exists.
 navigation:

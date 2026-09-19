@@ -67,6 +67,7 @@ from config.settings import (
     music_config,
     hand_config,
     microcontroller_config,
+    rc_toy_config,
     navigation_config,
 )
 
@@ -454,6 +455,15 @@ class AIRobot:
                                  else "Hand mirror off (mediapipe not available)")
         except Exception as e:
             self.logger.error("✗ Hand mirror init failed: %s", e)
+
+        # --- RC toy chassis (parts_used/rc_toy.py) — no-op until rc_toy.connected ---
+        self.rc_toy = None
+        try:
+            from parts_used.rc_toy import RCToy
+            self.rc_toy = RCToy(rc_toy_config)
+            self.rc_toy.start()
+        except Exception as e:
+            self.logger.error("✗ RC toy init failed: %s", e)
 
         # --- MQTT device hub (control switches/lights on RobotNet) ---
         self.mqtt = None

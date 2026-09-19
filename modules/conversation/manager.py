@@ -422,6 +422,14 @@ class ConversationManager:
                     "number": {"type": "integer", "description": "for count: how many fingers to hold up (0-5)"}},
                     "required": ["name"]}}},
         ]
+        _toy = getattr(self.robot, "rc_toy", None)
+        if _toy is not None and _toy.is_available():
+            tools.append({"type": "function", "function": {
+                "name": "drive_toy", "description": "Drive the RC toy: forward/back speed -1..1 and turn -1 (left)..1 (right); action 'stop' halts. Master only.",
+                "parameters": {"type": "object", "properties": {
+                    "action": {"type": "string", "enum": ["drive", "stop"]},
+                    "forward": {"type": "number"}, "turn": {"type": "number"}},
+                    "required": ["action"]}}})
         engine.register_tools(tools, self._agent_dispatch)
 
     def _agent_dispatch(self, name: str, args: dict):
@@ -537,6 +545,17 @@ class ConversationManager:
                     n = int(args.get("number", 0) or 0)
                     return f"counted {n}" if hand.count(n) else "couldn't count"
                 return f"did {g}" if hand.gesture(g) else f"unknown gesture: {g}"
+            if name == "drive_toy":
+                toy = getattr(self.robot, "rc_toy", None)
+                if not (toy and toy.is_available()):
+                    return "the toy isn't connected"
+                if not self._is_master():
+                    return "denied: only the master can drive the toy"
+                if str(args.get("action", "drive")) == "stop":
+                    toy.halt()
+                    return "stopped"
+                ok = toy.drive(float(args.get("forward", 0) or 0), float(args.get("turn", 0) or 0))
+                return "driving" if ok else "couldn't drive"
             if name == "set_guard_mode":
                 on = bool(args.get("on", True))
                 # Disarming is master-only (arming is open). Telegram sets

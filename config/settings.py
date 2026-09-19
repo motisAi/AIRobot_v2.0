@@ -465,6 +465,18 @@ class HandConfig:
 
 
 @dataclass
+class RCToyConfig:
+    """RC toy chassis Stella can drive (parts_used/rc_toy.py). Safe no-op until connected."""
+    connected: bool = False          # flip to true when a toy is wired
+    transport: str = "null"          # null | esp32_serial | wifi_http | ble
+    port: str = "/dev/ttyUSB1"       # esp32_serial
+    baud: int = 115200
+    address: str = ""                # wifi_http base URL (http://10.0.0.x) or BLE MAC
+    max_speed: float = 0.5           # 0..1 safety cap on forward/back speed
+    deadman_seconds: float = 2.0     # stop if no command arrives for this long
+
+
+@dataclass
 class MusicConfig:
     """YouTube music playback (via mpv + yt-dlp)."""
     default_volume: int = 70    # 0-100 (mpv allows up to 130)
@@ -585,6 +597,7 @@ class RobotConfig:
         self.music = MusicConfig()
         self.hand = HandConfig()
         self.microcontroller = MicrocontrollerConfig()
+        self.rc_toy = RCToyConfig()
         self.navigation = NavigationConfig()
         self.conversation = ConversationConfig()
         self.platform_id = detect_platform()
@@ -788,6 +801,7 @@ web_search_config = config.web_search
 music_config = config.music
 hand_config = config.hand
 microcontroller_config = config.microcontroller
+rc_toy_config = config.rc_toy
 navigation_config = config.navigation
 conversation_config = config.conversation
 
