@@ -1,7 +1,7 @@
 # Firmware — ESP32-S3 Robotic Hand
 
 Firmware source: `firmware/hand/hand.ino`. Host-side helper: `firmware/handctl.py`.
-Pi-side driver: `modules/hardware/hand.py`.
+Pi-side driver: `parts_used/esp32_hand.py`.
 
 ## Target / toolchain
 
@@ -49,7 +49,7 @@ One command per line, lowercase ASCII + `\n`.
 
 Bit order for `set` matches the channel map above (pinky … thumb).
 
-## Pi-side driver notes (`modules/hardware/hand.py`)
+## Pi-side driver notes (`parts_used/esp32_hand.py`)
 
 - Holds **one persistent serial link** (the ESP32 keeps its pose between commands; it only
   resets on (re)connect).

@@ -60,7 +60,7 @@
 | `modules/ai` | AI engine (online/offline LLM) + SQLite learning database. |
 | `modules/audio` | Wake word, STT, and TTS with hardware-aware config. |
 | `modules/vision` | Face recognition (DeepFace) + Hailo/OpenCV object detection. |
-| `modules/hardware` | CameraManager, AudioManager, ESP32, SIM7600X controllers. |
+| `parts_used/` | One file per physical part: camera, audio devices, Hailo-10H, ESP32 hand, microcontroller bridge, SIM7600X, WiFi, RC toy (moved from modules/hardware on 2026-09-19). |
 | `modules/connectivity` | Cloud/server bridge (disabled by default). |
 
 ## Event Types

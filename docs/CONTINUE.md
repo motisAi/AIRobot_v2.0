@@ -23,7 +23,7 @@ Pick up from here. Full rationale for every change is in `docs/decisions/log.md`
 ## TODO next session (in priority order)
 1. **Boot WiFi auto-reconnect** — after a reboot the Pi's onboard WiFi uplink sometimes doesn't reconnect ("no internet" until `sudo netplan apply`). Set up a tiny boot/periodic reconnect (systemd unit or networkd-dispatcher hook). NEEDS Moti's sudo password once (run on the Pi keyboard or paste when prompted).
 2. **"Stop replying to silence"** — Whisper hallucinates short phrases ("Thank you.", ".") from ambient noise, so she answers nobody. Add a min-voiced-duration gate (require ~0.5s of voiced frames) and/or a hallucination-phrase blocklist in `speech_recognition.capture_utterance`.
-3. **Face recognition dips** — sim fell to ~0.47–0.58 (was 0.65–0.72); she occasionally asks "who's speaking?". Consider re-enroll (`python reenroll.py` with service stopped) under current USB-cam lighting, or nudge threshold.
+3. **Face recognition dips** — sim fell to ~0.47–0.58 (was 0.65–0.72); she occasionally asks "who's speaking?". Consider re-enroll (`python tools/reenroll.py` with service stopped) under current USB-cam lighting, or nudge threshold.
 
 ## Nice-to-have / later
 - Wire the Pi CSI camera properly via libcamera/picamera2 if we want to switch off the USB cam.

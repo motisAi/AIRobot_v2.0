@@ -15,8 +15,14 @@ in the future even if a PC is wiped.
 | `schematics/` | Diagrams — system overview, wiring schematics, data-flow. Mermaid (renders on GitHub) + ASCII. |
 | `decisions/` | Dated design-decision log: what we chose, why, and what we rejected. |
 
-Pre-existing docs kept in place: `architecture.md`, `GONZO_GUIDE.md`, `rpi5_setup.md`,
+| `architecture/` | Dated architecture documents. **Current:** [stella-architecture-2026-09-19.md](architecture/stella-architecture-2026-09-19.md) (layout, Guardian, self-evolution) on top of [stella-architecture-2026-09-13.md](architecture/stella-architecture-2026-09-13.md) (capability stack, Hailo/NVIDIA plan, roadmap). |
+
+Pre-existing docs kept in place: `architecture.md` (older overview), `GONZO_GUIDE.md`, `rpi5_setup.md`,
 `service_accounts.txt`.
+
+Related folders outside `docs/`: the code map is the root [README.md](../README.md); every bug ever
+fixed is in [`bug_report/`](../bug_report/README.md); the safety net and nightly self-check are in
+[`evolution/`](../evolution/README.md).
 
 ## Workflow for adding files
 
@@ -66,5 +72,9 @@ follows.)*
   - [ESP32-S3 robotic hand](firmware/hand-esp32.md) — serial protocol, I2C, servo/finger map.
 - **Schematics**
   - [System overview](schematics/system-overview.md)
+- **Architecture**
+  - [2026-09-19 — layout, Guardian, self-evolution](architecture/stella-architecture-2026-09-19.md) (current)
+  - [2026-09-13 — capability stack, Hailo + NVIDIA plan, roadmap](architecture/stella-architecture-2026-09-13.md)
 - **Decisions**
   - [Decision log](decisions/log.md)
+- **Bugs** — [bug_report/](../bug_report/README.md) (one file per fixed bug)
