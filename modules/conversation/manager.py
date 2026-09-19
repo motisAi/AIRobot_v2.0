@@ -255,7 +255,14 @@ class ConversationManager:
 
     # ------------------------------------------------------------------
     def _is_end_phrase(self, text: str) -> bool:
-        low = text.lower().strip().rstrip('.!?')
+        import re as _re
+        low = text.lower().strip()
+        # "No, thank you, Stella." -> "no thank you": drop punctuation and her name so a
+        # polite goodbye ends the chat locally instead of costing an LLM round trip.
+        low = _re.sub(r"[^a-z0-9\s']", " ", low)
+        name = str(getattr(self.robot.brain, "robot_name", "") or "stella").lower()
+        low = _re.sub(rf"(hey\s+)?{_re.escape(name)}", " ", low)
+        low = _re.sub(r"\s+", " ", low).strip()
         words = low.split()
         if len(words) > 5:
             return False

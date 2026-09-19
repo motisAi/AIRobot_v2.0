@@ -470,13 +470,18 @@ class AIEngine:
         if not reply:
             for i, name in enumerate(chain):
                 if self._skip(name):
+                    self.logger.info("Provider '%s' skipped (%s)", name,
+                                     "rate-limit cooldown" if self._cooled(name) else "offline")
                     continue  # rate-limited, or cloud while offline — skip
                 try:
+                    _t0 = time.monotonic()
                     reply = self._query_backend(name, messages)
                     if reply and reply.strip():
                         if i > 0:
                             self.logger.info("Answered via fallback provider: %s", name)
                         break
+                    self.logger.warning("Provider '%s' returned EMPTY content in %.1fs — trying next",
+                                        name, time.monotonic() - _t0)
                     reply = None
                 except Exception as exc:
                     self.logger.warning("Provider '%s' failed (%s) — trying next",

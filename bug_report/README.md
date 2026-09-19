@@ -57,6 +57,11 @@ Status key: **fixed** = verified; **fixed-needs-verify** = deployed but not yet 
 
 ## How to add a bug
 Copy `_TEMPLATE.md` to `bug_NNN_<short-kebab-slug>.md` using the next free number (chronological by date found), fill every field (write "unclear from history" rather than guessing), keep it under ~60 lines, and add a row to the table above. Only bugs that were actually hit and fixed belong here; design decisions go in `docs/decisions/log.md`.
+| [041](bug_041_reorg-broke-model-path-object-detection.md) | 2026-09-19 | Reorg moved hailo_10h.py; object detection lost data/models | vision | fixed | moving files with parent.parent root hacks |
+| [042](bug_042_polite-goodbye-not-recognised-slow-llm-roundtrip.md) | 2026-09-19 | "No, thank you, Stella." not a goodbye → 5 s LLM round trip | conversation | fixed | — |
+| [043](bug_043_groq-120b-rejects-send_photo-tool-schema.md) | 2026-09-19 | Groq 120b rejects send_photo tool schema (400), falls back | ai | **open** | every photo request |
+| [044](bug_044_robotnet-dongle-driver-not-loaded-after-kernel-upgrade.md) | 2026-09-19 | RobotNet dead: 8821au DKMS module missing after kernel upgrade | network | **recurring** | kernel upgrade without headers; run dkms autoinstall + modprobe |
+
 
 ## Verification notes
 - 2026-09-19: bugs 034–040 verified live after the reorganization deploy (Guardian: 0 errors, offline brain 0.7 s, no unprompted speech in a 2-hour idle run). Bug 011 recurred on kernel 1064 and was fixed the same day with the permanent `linux-headers-raspi` install, so future kernel upgrades rebuild the driver automatically.
