@@ -1062,10 +1062,23 @@ class RobotBrain:
         suppress = getattr(self, '_suppress_greetings', False)
 
         if face_id == 'unknown':
-            # A stranger is in frame — drop any master privileges so the robot
-            # doesn't keep treating a new person as the master.
+            # A stranger is in frame — drop any master privileges. But ONE bad
+            # recognition frame must not wipe identity: within the configured
+            # identity grace, treat an 'unknown' as a mis-read; otherwise require
+            # a few consecutive unknowns before actually clearing (main.py uses
+            # the same >=3 pattern for guard alerts).
             if self.master_mode or self.current_user is not None:
-                self.logger.info("Unknown face — clearing previous identity/master")
+                grace = getattr(security_config, 'identity_memory_seconds', 60.0)
+                if now - self.last_master_time < grace:
+                    self._face_greet_times['unknown'] = now
+                    return  # recent master — almost certainly a mis-recognition
+                self._brain_unknown_streak = getattr(self, '_brain_unknown_streak', 0) + 1
+                if self._brain_unknown_streak < 3:
+                    self._face_greet_times['unknown'] = now
+                    return
+                self.logger.info("Unknown face x%d — clearing previous identity/master",
+                                 self._brain_unknown_streak)
+                self._brain_unknown_streak = 0
                 self.master_mode = False
                 self.authenticated = False
                 self.current_user = None
@@ -1081,6 +1094,7 @@ class RobotBrain:
             # Master detected
             self.master_mode = True
             self.authenticated = True
+            self._brain_unknown_streak = 0
             self.last_master_time = now
             self.current_user = face_id
             self.current_user_name = name if name and name != 'unknown' else None
@@ -1096,6 +1110,7 @@ class RobotBrain:
         
         else:
             # Known person (not the master) — ensure master privileges are off.
+            self._brain_unknown_streak = 0
             self.master_mode = False
             self.authenticated = True
             self.current_user = face_id

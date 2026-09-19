@@ -508,8 +508,15 @@ class FaceRecognitionModule:
                 if full_frame is not None and face_area is not None:
                     # Use full frame + face location (required by dlib backend)
                     x, y, w, h = face_area
+                    # Expand the (tight) detector box toward the looser geometry
+                    # dlib/HOG enrolls with, so YuNet crops encode consistently
+                    # with the enrolled embeddings (else distance drifts to ~0.6).
+                    fh, fw = full_frame.shape[:2]
+                    px = int(w * 0.20)
+                    top = max(0, y - int(h * 0.35)); bot = min(fh, y + h + int(h * 0.15))
+                    left = max(0, x - px); right = min(fw, x + w + px)
                     # face_recognition uses (top, right, bottom, left) format
-                    face_locations = [(y, x + w, y + h, x)]
+                    face_locations = [(top, right, bot, left)]
                     rgb_frame = cv2.cvtColor(full_frame, cv2.COLOR_BGR2RGB)
                     face_encoding = face_recognition_lib.face_encodings(
                         rgb_frame, face_locations
@@ -613,9 +620,13 @@ class FaceRecognitionModule:
                 if not FACE_RECOGNITION_AVAILABLE:
                     break
                 frame_img, (x, y, w, h) = sample
+                fh, fw = frame_img.shape[:2]
+                px = int(w * 0.20)
+                top = max(0, y - int(h * 0.35)); bot = min(fh, y + h + int(h * 0.15))
+                left = max(0, x - px); right = min(fw, x + w + px)
                 rgb = cv2.cvtColor(frame_img, cv2.COLOR_BGR2RGB)
                 # face_recognition location format: (top, right, bottom, left)
-                enc = face_recognition_lib.face_encodings(rgb, [(y, x + w, y + h, x)])
+                enc = face_recognition_lib.face_encodings(rgb, [(top, right, bot, left)])
                 if enc:
                     embeddings.append(enc[0])
             except Exception as e:

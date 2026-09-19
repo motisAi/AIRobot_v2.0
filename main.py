@@ -23,6 +23,14 @@ import threading
 PROJECT_ROOT = Path(__file__).parent.absolute()
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# Cap OpenCV DNN threads (YOLO + YuNet) so vision cannot grab all 4 cores on the
+# fanless Pi5 (audit fix 3: top thermal win). Must run before any cv2 model loads.
+try:
+    import cv2 as _cv2
+    _cv2.setNumThreads(2)
+except Exception:
+    pass
+
 
 def _silence_alsa_warnings():
     """Silence the harmless 'ALSA lib ...' C-library chatter on the Pi.

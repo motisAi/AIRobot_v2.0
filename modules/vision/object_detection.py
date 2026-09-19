@@ -103,7 +103,7 @@ class ObjectDetectionModule:
     # ------------------------------------------------------------------
     # Minimum seconds between YOLO runs: CPU inference is ~150-300ms at 640x640
     # on a Pi 5; running on every delivered frame starves voice/LLM.
-    MIN_DETECT_INTERVAL = 1.0
+    MIN_DETECT_INTERVAL = 4.0   # idle cadence; low value only needed during guard/find (thermal: audit fix 3)
 
     def _on_frame(self, frame: Frame) -> None:
         """Called by camera_manager for each distributed frame."""
