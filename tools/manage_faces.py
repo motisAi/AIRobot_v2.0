@@ -17,7 +17,7 @@ import pickle
 import sys
 from pathlib import Path
 
-DB = Path(__file__).parent / "data" / "faces" / "face_db.pkl"
+DB = Path(__file__).resolve().parent.parent / "data" / "faces" / "face_db.pkl"  # repo root (tool lives in tools/)
 
 
 def _name(v):
