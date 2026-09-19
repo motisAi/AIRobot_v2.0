@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -46,8 +47,16 @@ class Sensibo:
             url, data=json.dumps(body).encode(),
             headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
             method="POST")
-        with urllib.request.urlopen(req, timeout=self.timeout) as r:
-            return json.loads(r.read().decode())
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                return json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode()[:300]
+            except Exception:
+                pass
+            raise RuntimeError(f"Sensibo HTTP {e.code}: {body}") from e
 
     # -- pods --------------------------------------------------------------
     def _load_pods(self, default_room):
@@ -82,12 +91,15 @@ class Sensibo:
         return dict(res[0]["acState"]) if res else {}
 
     def _apply(self, pod: str, changes: dict) -> bool:
-        # Use the cached state if we have it (1 API call); otherwise fetch once.
-        cur = self._cache.get(pod)
-        if cur is None:
-            cur = {k: v for k, v in self._state(pod).items() if k in _SETTABLE}
-        cur = dict(cur)
+        # Fetch the AC's REAL current state (filtered to settable fields) so we never
+        # echo a stale value the unit rejects (Sensibo 422 on a mode change). Cache is
+        # only used for state() reads, not as the POST base — it can drift if the AC
+        # was touched by its own remote.
+        cur = {k: v for k, v in self._state(pod).items() if k in _SETTABLE}
         cur.update(changes)
+        # targetTemperature is invalid in fan/dry mode — drop it there.
+        if cur.get("mode") in ("fan", "dry"):
+            cur.pop("targetTemperature", None)
         r = self._post(f"/pods/{pod}/acStates", {"acState": cur})
         ok = r.get("status") == "success"
         if ok:

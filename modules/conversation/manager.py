@@ -409,7 +409,7 @@ class ConversationManager:
             {"type": "function", "function": {
                 "name": "send_photo", "description": "Capture a REAL photo from the camera and send the actual image to the master's phone (use when asked to send/take a picture or photo).",
                 "parameters": {"type": "object", "properties": {
-                    "caption": {"type": "string"}}}}},
+                    "caption": {"type": "string"}}, "required": [], "additionalProperties": False}}},
             {"type": "function", "function": {
                 "name": "set_guard_mode", "description": "Arm or disarm home guard/security mode. When ON, an unrecognized person triggers a photo alert to the master's phone. Master only.",
                 "parameters": {"type": "object", "properties": {

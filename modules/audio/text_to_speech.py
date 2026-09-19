@@ -551,7 +551,7 @@ class TextToSpeechModule:
                     '-w', output_file,
                     '-s', str(int(self.voice_settings['rate'])),
                     text
-                ], check=True)
+                ], check=True, timeout=20)
             
             else:
                 return None
@@ -770,12 +770,12 @@ class TextToSpeechModule:
                 # Use system command
                 import subprocess
                 if sys.platform == 'darwin':
-                    subprocess.run(['afplay', audio_file])
+                    subprocess.run(['afplay', audio_file], timeout=30)
                 elif sys.platform == 'win32':
                     import winsound
                     winsound.PlaySound(audio_file, winsound.SND_FILENAME)
                 else:
-                    subprocess.run(['aplay', audio_file])
+                    subprocess.run(['aplay', audio_file], timeout=30)
 
         except Exception as e:
             self.logger.error(f"Audio playback failed: {e}")
