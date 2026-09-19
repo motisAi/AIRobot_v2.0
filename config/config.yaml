@@ -200,7 +200,7 @@ hardware:
 # ------------------------------------------------------------------ model tuning
 model:
   # Face recognition (runs on CPU via OpenCV + dlib; no cloud, no key)
-  face_backend: "opencv"                 # opencv (Haar) detector
+  face_backend: "yunet"                 # yunet (DNN, accurate) | opencv (Haar, fallback)
   # dlib embeddings need EUCLIDEAN distance (~0.6), NOT cosine. Cosine made a
   # stranger look identical to the master. Lower threshold = stricter.
   face_distance_metric: "euclidean"

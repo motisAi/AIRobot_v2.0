@@ -379,6 +379,9 @@ class FaceRecognitionModule:
         faces = []
         
         try:
+            if self.backend == 'yunet':
+                return self._detect_yunet(frame)
+
             if self.backend == 'opencv':
                 # Use OpenCV Haar Cascades (faster but less accurate)
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -441,6 +444,46 @@ class FaceRecognitionModule:
         
         return faces
     
+    _YUNET_MODEL = Path(__file__).resolve().parent.parent.parent / "data" / "models" / "face_detection_yunet_2023mar.onnx"
+
+    def _detect_yunet(self, frame: np.ndarray) -> List[Dict]:
+        """DNN face detector (opencv FaceDetectorYN). Far fewer wall/painting
+        false-positives than Haar; returns a per-face confidence. Falls back to
+        Haar if the model is absent or the API errors, so detection never dies."""
+        faces = []
+        h, w = frame.shape[:2]
+        if getattr(self, '_yunet', None) is None:
+            if not self._YUNET_MODEL.exists():
+                self.logger.warning("YuNet model missing (%s) — falling back to Haar", self._YUNET_MODEL)
+                self.backend = 'opencv'
+                return self._detect_faces(frame)
+            self._yunet = cv2.FaceDetectorYN.create(
+                str(self._YUNET_MODEL), "", (w, h), 0.7, 0.3, 5000)
+            self._yunet_size = (w, h)
+            self.logger.info("YuNet DNN face detector active (%s)", self._YUNET_MODEL.name)
+        if self._yunet_size != (w, h):
+            self._yunet.setInputSize((w, h))
+            self._yunet_size = (w, h)
+        try:
+            _, dets = self._yunet.detect(frame)
+        except cv2.error as e:
+            self.logger.error("YuNet detect error (%s) — falling back to Haar", e)
+            self.backend = 'opencv'
+            return self._detect_faces(frame)
+        if dets is not None:
+            for d in dets:
+                x, y, bw, bh = (int(v) for v in d[:4])
+                x, y = max(0, x), max(0, y)
+                bw, bh = min(bw, w - x), min(bh, h - y)
+                if bw <= 0 or bh <= 0:
+                    continue
+                faces.append({
+                    'face': frame[y:y + bh, x:x + bw],
+                    'area': (x, y, bw, bh),
+                    'confidence': round(float(d[-1]), 3),
+                })
+        return faces
+
     def _recognize_face(self, face_image: np.ndarray,
                         full_frame: np.ndarray = None,
                         face_area: tuple = None) -> Tuple[str, float]:
