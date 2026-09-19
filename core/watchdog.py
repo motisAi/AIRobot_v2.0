@@ -64,14 +64,33 @@ class HardwareWatchdog:
         # monotonic: the offline Pi clock jumps hours when NTP syncs; wall-clock
         # deltas would then fire a false 'stuck' restart mid-conversation.
         last = float(getattr(r, "_conv_activity", 0.0) or 0.0)
-        if last and (time.monotonic() - last) > 75.0:
-            logger.error("Conversation stuck (no speech %.0fs) — restarting to recover",
-                         time.monotonic() - last)
-            import subprocess
+        if not (last and (time.monotonic() - last) > 75.0):
+            self._soft_recover_at = 0.0   # not stuck (or recovered) — reset escalation
+            return
+        conv = getattr(r, "conversation", None)
+        soft_at = getattr(self, "_soft_recover_at", 0.0)
+        # Stage 1: end the conversation session (thread-safe) and reopen the mic,
+        # instead of a ~30s full service restart that kills vision/guard/Telegram too.
+        if not soft_at:
+            logger.warning("Conversation stuck (no speech %.0fs) — soft-stopping the session",
+                           time.monotonic() - last)
+            self._soft_recover_at = time.monotonic()
             try:
-                subprocess.Popen(["sudo", "-n", "systemctl", "restart", "airobot"])
+                if conv is not None:
+                    conv.stop()
             except Exception as exc:
-                logger.error("watchdog restart failed: %s", exc)
+                logger.error("watchdog soft stop failed: %s", exc)
+            return
+        # Stage 2: only if it is STILL stuck ~25s after the soft stop, restart.
+        if time.monotonic() - soft_at > 25.0:
+            self._soft_recover_at = 0.0
+            if getattr(r, "_conv_active", False):
+                logger.error("Conversation still stuck after soft stop — restarting service")
+                import subprocess
+                try:
+                    subprocess.Popen(["sudo", "-n", "systemctl", "restart", "airobot"])
+                except Exception as exc:
+                    logger.error("watchdog restart failed: %s", exc)
 
     # -- camera -----------------------------------------------------------
     def _check_camera(self):
