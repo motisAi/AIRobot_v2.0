@@ -63,7 +63,7 @@ COCO_CLASSES = [
     "scissors", "teddy bear", "hair drier", "toothbrush",
 ]
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent.absolute()
+PROJECT_ROOT = Path(__file__).resolve().parent.parent  # repo root (file lives in parts_used/)
 MODELS_DIR = PROJECT_ROOT / "data" / "models"
 
 

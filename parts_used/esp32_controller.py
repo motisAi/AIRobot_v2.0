@@ -30,7 +30,7 @@ from pathlib import Path
 
 # Import configuration
 import sys
-sys.path.append(str(Path(__file__).parent.parent.parent))
+sys.path.append(str(Path(__file__).resolve().parent.parent))  # repo root (parts_used/)
 from config.settings import config, hardware_config
 
 
