@@ -473,7 +473,7 @@ no undervoltage recorded on the readable boots — the power-offs cut the log mi
 
 ### 2026-09-19 — Telegram voice commands
 **Decision:** a voice note sent to the bot is downloaded, decoded with ffmpeg to 16 kHz PCM, transcribed through the SAME
-STT chain as her ears (: Groq Whisper → Google → Vosk, hallucination filter),
+STT chain as her ears (SpeechRecognitionModule._transcribe_pcm16k: Groq Whisper → Google → Vosk, hallucination filter),
 echoed back as "🎤 heard: …", then handled exactly like a typed message (guard, face, tools, LLM). Every reply to a voice
-command is also sent as a voice note (Piper → ffmpeg libopus → ). Notes over 60 s are refused. Master chat only.
+command is also sent as a voice note (Piper → ffmpeg libopus → Telegram sendVoice). Notes over 60 s are refused. Master chat only.
 **Why:** hands-free control from anywhere; reuses existing pieces, no new dependency (ffmpeg has libopus).
