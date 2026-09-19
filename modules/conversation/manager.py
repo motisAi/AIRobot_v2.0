@@ -429,6 +429,11 @@ class ConversationManager:
                     "number": {"type": "integer", "description": "for count: how many fingers to hold up (0-5)"}},
                     "required": ["name"]}}},
         ]
+        tools.append({"type": "function", "function": {
+            "name": "speak_aloud", "description": "Speak a specific phrase OUT LOUD on Stella\'s physical speaker (not just reply as text). Use when asked to say/announce/broadcast/read something out loud, especially from Telegram, e.g. \'say dinner is ready on the speaker\', \'announce that I am home\'. Pass the exact words to speak.",
+            "parameters": {"type": "object", "properties": {
+                "text": {"type": "string", "description": "the exact words to say out loud"}},
+                "required": ["text"]}}})
         _toy = getattr(self.robot, "rc_toy", None)
         if _toy is not None and _toy.is_available():
             tools.append({"type": "function", "function": {
@@ -552,6 +557,15 @@ class ConversationManager:
                     n = int(args.get("number", 0) or 0)
                     return f"counted {n}" if hand.count(n) else "couldn't count"
                 return f"did {g}" if hand.gesture(g) else f"unknown gesture: {g}"
+            if name == "speak_aloud":
+                tts = self.robot.modules.get("tts") if hasattr(self.robot, "modules") else None
+                phrase = str(args.get("text", "")).strip()
+                if not phrase:
+                    return "nothing to say"
+                if tts is None or not hasattr(tts, "speak"):
+                    return "my speaker isn't available"
+                tts.speak(phrase)
+                return f"said aloud: {phrase}"
             if name == "drive_toy":
                 toy = getattr(self.robot, "rc_toy", None)
                 if not (toy and toy.is_available()):

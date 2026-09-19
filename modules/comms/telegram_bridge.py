@@ -183,6 +183,37 @@ class TelegramBridge:
                 except OSError:
                     pass
 
+    # -- speak-aloud intent --------------------------------------------------
+    _OUTLOUD = r"(?:out ?loud|aloud|on (?:the |your )?speakers?|over (?:the )?speakers?|through (?:the )?speakers?|loudly)"
+
+    def _extract_speak_aloud(self, text: str):
+        """Return the phrase to speak if this is a 'say ... out loud' command, else None.
+
+        Returns "" if the intent is clear but no phrase was given (ask back).
+        """
+        import re as _re
+        raw = (text or "").strip()
+        low = raw.lower()
+        prefix = (r"(?:stella[,\s]+|hey stella[,\s]+|ok(?:ay)?[,\s]+|please[,\s]+|"
+                  r"can you[,\s]+|could you[,\s]+|would you[,\s]+|i want you to[,\s]+|i need you to[,\s]+)*")
+        m = None
+        # (a) say/speak/read + an explicit out-loud / speaker cue (cue may be after the verb OR trailing)
+        if _re.search(self._OUTLOUD, low) and _re.search(r"\b(say|speak|read)\b", low):
+            m = _re.match(prefix + r"(?:say|speak|read(?:\s+this|\s+it)?)"
+                          r"(?:\s+" + self._OUTLOUD + r")?[\s:,\-]+(.*)$",
+                          raw, _re.IGNORECASE | _re.DOTALL)
+        # (b) announce/broadcast — always a speak-aloud, no cue needed
+        if m is None and _re.match(prefix + r"(?:announce|broadcast)\b", low):
+            m = _re.match(prefix + r"(?:announce|broadcast)(?:\s+that)?[\s:,\-]+(.*)$",
+                          raw, _re.IGNORECASE | _re.DOTALL)
+        if not m:
+            return None
+        phrase = m.group(1).strip()
+        # drop a trailing "... out loud / on the speaker", then any wrapping quotes/punct
+        phrase = _re.sub(r"[\s,]*" + self._OUTLOUD + r"\s*[.!]?$", "", phrase, flags=_re.IGNORECASE).strip()
+        phrase = phrase.strip('"“”\' :,').strip()
+        return phrase
+
     # -- command handling --------------------------------------------------
     def _process(self, text: str):
         low = text.lower().strip()
@@ -227,6 +258,23 @@ class TelegramBridge:
                 self._send("Okay, I stopped copying your hand.")
                 return
 
+        # --- speak a phrase OUT LOUD on the physical speaker (from the phone) ---
+        # Triggers on "say/speak/read ... out loud|on the speaker" or "announce/broadcast ...".
+        # Handled directly so it works even when the cloud brain is rate-limited, and so
+        # she SPEAKS instead of just typing the words back to the chat.
+        phrase = self._extract_speak_aloud(text)
+        if phrase is not None:
+            if not phrase:
+                self._send("What would you like me to say out loud?")
+                return
+            tts = self.robot.modules.get("tts") if hasattr(self.robot, "modules") else None
+            if tts is not None and hasattr(tts, "speak"):
+                tts.speak(phrase)
+                self._send(f'🔊 Saying it out loud: "{phrase}"')
+            else:
+                self._send("My speaker isn't available right now.")
+            return
+
         # --- interactive guard flow: recognise? -> alarm? -> scream ---
         pending = getattr(self.robot, "_guard_pending", None)
         if pending and (_t.time() - getattr(self.robot, "_guard_pending_time", 0)) > 300:
@@ -262,6 +310,7 @@ class TelegramBridge:
                        "• \"turn on the light\"\n"
                        "• \"remind me in 10 minutes to…\"\n"
                        "• \"guard on\" / \"guard off\" / \"status\"\n"
+                       "• \"say <something> out loud\" — I speak it on my own speaker\n"
                        "• or just send me a 🎤 voice message — I'll answer in my voice too")
             return
         if low in ("/guard_on", "/guardon", "guard on", "arm", "arm guard"):

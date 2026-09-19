@@ -95,7 +95,8 @@ devices are controlled by voice or Telegram (master‑only).
 - "Remind me in 15 minutes to take out the laundry."
 - "Copy my hand" → mirror → "stop copying" · "Give me a thumbs up" · "count to three"
 - "Guard on" (goes quiet, armed) / "I'm home" / "Guard off" · "Turn on the AC, make it cold"
-- "Show your face" / "show your face on phone" · Telegram: "status", "send me a picture", or **send a 🎤 voice note** — she transcribes it (Groq Whisper), runs it like a typed command, and answers in text **and** in her own voice
+- "Show your face" / "show your face on phone" · "say <something> out loud" (she speaks it on her speaker)
+- Telegram: "status", "send me a picture", "say ... out loud", or a 🎤 voice note, or **send a 🎤 voice note** — she transcribes it (Groq Whisper), runs it like a typed command, and answers in text **and** in her own voice
 
 ## The robotic hand
 **Channels (PCA9685):** `0=pinky 1=ring 2=middle 3=index 4=thumb`. Open `{1500,1500,1500,1500,2000}`,

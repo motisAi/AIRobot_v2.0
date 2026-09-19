@@ -477,3 +477,9 @@ STT chain as her ears (SpeechRecognitionModule._transcribe_pcm16k: Groq Whisper 
 echoed back as "🎤 heard: …", then handled exactly like a typed message (guard, face, tools, LLM). Every reply to a voice
 command is also sent as a voice note (Piper → ffmpeg libopus → Telegram sendVoice). Notes over 60 s are refused. Master chat only.
 **Why:** hands-free control from anywhere; reuses existing pieces, no new dependency (ffmpeg has libopus).
+
+
+### 2026-09-19 — Speak-aloud on the physical speaker (Telegram)
+**Decision:** "say/speak/read ... out loud|on the speaker" and "announce/broadcast ..." now make Stella SPEAK the phrase on her own speaker instead of typing it back to the chat. Two paths: a direct handler in `telegram_bridge._process` (regex `_extract_speak_aloud`, reliable, needs no LLM) and a `speak_aloud` LLM tool (registered in the conversation manager) for natural phrasing and voice chats. Both call `tts.speak()`.
+**Why:** Moti asked her to say something on the speaker and she wrote it back to the bot — she had no way to vocalise a given phrase remotely. The direct handler keeps it working when the cloud brain is rate-limited.
+**Guard:** the say/speak/read verbs require an explicit out-loud/speaker cue so normal requests ("say what you see") are not hijacked; announce/broadcast trigger on their own. Verified with 10 phrasings (7 trigger, 3 must not).
