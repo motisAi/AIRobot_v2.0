@@ -282,8 +282,31 @@ class WakeWordModule:
 
                 try:
                     frame = stream.read(4096, exception_on_overflow=False)
+                    self._read_errs = 0
                 except Exception:
+                    # Repeated read failures = the stream is wedged; reopen it.
+                    self._read_errs = getattr(self, "_read_errs", 0) + 1
+                    if self._read_errs >= 30:
+                        self.logger.warning("Wake mic reads failing — reopening the stream")
+                        _close(); stream = None; self._read_errs = 0
+                    self.shutdown_event.wait(0.05)
                     continue
+
+                # Dead-stream detector: a live mic never returns perfectly digital
+                # silence. Long runs of exact-zero frames mean the USB audio stream
+                # died while still 'open' (no error) — reopen so wake keeps working.
+                try:
+                    _pk = int(np.abs(np.frombuffer(frame, dtype=np.int16)).max()) if frame else 0
+                except Exception:
+                    _pk = 1
+                if _pk == 0:
+                    self._silent_reads = getattr(self, "_silent_reads", 0) + 1
+                    if self._silent_reads >= 250:   # ~20 s of pure zeros = dead stream
+                        self.logger.warning("Wake mic went silent (dead stream) — reopening")
+                        _close(); stream = None; self._silent_reads = 0
+                        continue
+                else:
+                    self._silent_reads = 0
 
                 if actual_rate != TARGET_RATE:
                     frame = self._resample_to_16k(frame, actual_rate)
