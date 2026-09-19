@@ -248,6 +248,7 @@ class WebDashboard:
 
         self._latest_jpeg: Optional[bytes] = None
         self._jpeg_lock = threading.Lock()
+        self._stream_clients = 0   # >0 only while a browser is watching /video_feed
         self._start_time = time.time()
         self._log_lines: list[str] = []
         self._thread: Optional[threading.Thread] = None
@@ -256,7 +257,11 @@ class WebDashboard:
     # Camera subscriber
     # ------------------------------------------------------------------
     def _on_frame(self, frame: Frame):
-        """Called by CameraManager for every new frame."""
+        """Called by CameraManager for every new frame. Encode JPEG only while a
+        browser is actually watching — otherwise this ran cv2.imencode on every
+        frame for nobody (wasted CPU/heat on the fanless Pi)."""
+        if self._stream_clients <= 0:
+            return
         ret, jpeg = cv2.imencode(".jpg", frame.image, [cv2.IMWRITE_JPEG_QUALITY, 70])
         if ret:
             with self._jpeg_lock:
@@ -353,7 +358,9 @@ class WebDashboard:
     # ------------------------------------------------------------------
     def _mjpeg_gen(self):
         """Yield JPEG frames as an MJPEG stream."""
-        while True:
+        self._stream_clients += 1
+        try:
+          while True:
             with self._jpeg_lock:
                 frame = self._latest_jpeg
             if frame is None:
@@ -364,6 +371,8 @@ class WebDashboard:
                 frame = buf.tobytes()
             yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
             time.sleep(0.1)  # ~10 fps for browser
+        finally:
+          self._stream_clients = max(0, self._stream_clients - 1)
 
     # ------------------------------------------------------------------
     # Status data

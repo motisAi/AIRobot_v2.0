@@ -458,7 +458,7 @@ class FaceRecognitionModule:
                 self.backend = 'opencv'
                 return self._detect_faces(frame)
             self._yunet = cv2.FaceDetectorYN.create(
-                str(self._YUNET_MODEL), "", (w, h), 0.7, 0.3, 5000)
+                str(self._YUNET_MODEL), "", (w, h), 0.7, 0.3, 50)
             self._yunet_size = (w, h)
             self.logger.info("YuNet DNN face detector active (%s)", self._YUNET_MODEL.name)
         if self._yunet_size != (w, h):
