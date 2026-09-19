@@ -45,6 +45,9 @@ FATAL_LOG_PATTERNS = (
     "Segmentation fault",
 )
 MAX_ERRORS_2MIN = 15
+# present in the log = something silently degraded (reported, not fatal)
+SOFT_LOG_PATTERNS = ("Object detection off", "Object detector unavailable", "Wake mic not available",
+                     "Answered via fallback provider: hailo", "returned EMPTY content")
 
 
 @dataclass
@@ -170,7 +173,11 @@ def check_log(minutes: int = 2) -> Check:
         return Check("log", False, True, f"fatal pattern: {fatal[0][:160]}")
     if len(errors) > MAX_ERRORS_2MIN:
         return Check("log", False, True, f"{len(errors)} ERROR lines in {minutes} min: {errors[-1][:120]}")
-    return Check("log", True, True, f"{len(lines)} lines, {len(errors)} errors in {minutes} min")
+    soft = [p for p in SOFT_LOG_PATTERNS if any(p in l for l in lines)]
+    detail = f"{len(lines)} lines, {len(errors)} errors in {minutes} min"
+    if soft:
+        detail = "warn: " + "; ".join(soft) + " | " + detail
+    return Check("log", True, True, detail)
 
 
 def check_hardware() -> Check:
@@ -178,8 +185,21 @@ def check_hardware() -> Check:
     mics = sorted(glob.glob("/dev/snd/pcmC*D*c"))
     hailo = os.path.exists("/dev/hailo0")
     serial = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
-    detail = f"cams={len(cams)} mics={len(mics)} hailo={'yes' if hailo else 'NO'} serial={serial or '-'}"
+    real_cams = [c for c in cams if not re.search(r"rp1-cfe|csi|pispbe|rpivid", _v4l_name(c), re.I)]
+    detail = f"cams={len(real_cams)} mics={len(mics)} hailo={'yes' if hailo else 'NO'} serial={serial or '-'}"
+    # RobotNet dongle plugged in but no wlx interface => its DKMS driver is not loaded (bug_044)
+    dongle = any(Path(d, "idVendor").exists() and Path(d, "idVendor").read_text().strip() == "2357"
+                 for d in glob.glob("/sys/bus/usb/devices/*"))
+    if dongle and not glob.glob("/sys/class/net/wlx*"):
+        detail += " | warn: WiFi dongle present but no wlx interface (sudo modprobe 8821au; bug_044)"
     return Check("hardware", True, False, detail)
+
+
+def _v4l_name(node: str) -> str:
+    try:
+        return Path(f"/sys/class/video4linux/{os.path.basename(node)}/name").read_text()
+    except OSError:
+        return ""
 
 
 def check_brain(timeout: int = 40) -> Check:
