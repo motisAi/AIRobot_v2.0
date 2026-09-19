@@ -617,6 +617,16 @@ class AIRobot:
             self._handle_speak
         )
     
+    def _note_unknown(self, now: float) -> int:
+        """Windowed streak of unrecognised-face detections, shared by the guard and
+        greet paths. Resets if the previous unknown was >4 s ago, so a one-frame
+        phantom (a face-like patch on a wall) never reaches the confirm threshold."""
+        if now - getattr(self, '_unknown_last_time', 0.0) > 4.0:
+            self._unknown_streak = 0
+        self._unknown_last_time = now
+        self._unknown_streak = getattr(self, '_unknown_streak', 0) + 1
+        return self._unknown_streak
+
     def _handle_face_detected(self, event: RobotEvent):
         """Handle face detection event"""
         face_data = event.data
@@ -679,8 +689,7 @@ class AIRobot:
             now = time.time()
             if now - getattr(self.brain, 'last_master_time', 0) < 20:
                 return  # master is around — not an intruder
-            self._unknown_streak = getattr(self, '_unknown_streak', 0) + 1
-            if self._unknown_streak >= 3 and now - self._last_guard_alert > 30:
+            if self._note_unknown(now) >= 3 and now - self._last_guard_alert > 30:
                 threading.Thread(target=self._guard_alert,
                                  kwargs={"reason": "an unrecognized face"},
                                  daemon=True).start()
@@ -693,6 +702,11 @@ class AIRobot:
             conv = getattr(self, 'conversation', None)
             if conv is not None and not conv.active:
                 now = time.time()
+                # Require the unknown to persist a few detections before waving +
+                # greeting, so a phantom face (wall/painting) can't start a
+                # "we haven't met" session with nobody there.
+                if self._note_unknown(now) < 3:
+                    return
                 if now - getattr(self, '_last_unknown_session', 0) > 60:
                     self._last_unknown_session = now
                     # Wave hello to the new person, then greet/enroll them.

@@ -389,11 +389,23 @@ class FaceRecognitionModule:
                 face_rects = face_cascade.detectMultiScale(
                     gray, 
                     scaleFactor=1.1, 
-                    minNeighbors=7,
+                    minNeighbors=8,
                     minSize=(80, 80)
                 )
                 
+                if getattr(self, '_haar_eye', None) is None:
+                    self._haar_eye = cv2.CascadeClassifier(
+                        cv2.data.haarcascades + 'haarcascade_eye.xml')
                 for (x, y, w, h) in face_rects:
+                    # Phantom filter: a real frontal face shows at least one eye.
+                    # Wall texture / paintings that fool Haar almost never do, so an
+                    # eyeless box is dropped (kills a "new person" on a blank wall).
+                    roi = gray[y:y + h, x:x + w]
+                    eyes = self._haar_eye.detectMultiScale(
+                        roi, scaleFactor=1.1, minNeighbors=6,
+                        minSize=(max(12, w // 8), max(12, h // 8)))
+                    if len(eyes) < 1:
+                        continue
                     face_img = frame[y:y+h, x:x+w]
                     faces.append({
                         'face': face_img,
