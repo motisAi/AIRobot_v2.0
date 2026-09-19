@@ -469,3 +469,11 @@ a 1.5B model must not install packages into a running robot unsupervised; they r
 `max_tokens ≥ 2048` + `reasoning_effort: low` or content comes back empty/truncated; the Pi hit the 80 °C soft limit (no fan);
 no undervoltage recorded on the readable boots — the power-offs cut the log mid-line (hard cut), PSU still to be checked.
 **Rejected:** import shims for old paths (would double the file count and defeat the point); autonomous package installs.
+
+
+### 2026-09-19 — Telegram voice commands
+**Decision:** a voice note sent to the bot is downloaded, decoded with ffmpeg to 16 kHz PCM, transcribed through the SAME
+STT chain as her ears (: Groq Whisper → Google → Vosk, hallucination filter),
+echoed back as "🎤 heard: …", then handled exactly like a typed message (guard, face, tools, LLM). Every reply to a voice
+command is also sent as a voice note (Piper → ffmpeg libopus → ). Notes over 60 s are refused. Master chat only.
+**Why:** hands-free control from anywhere; reuses existing pieces, no new dependency (ffmpeg has libopus).

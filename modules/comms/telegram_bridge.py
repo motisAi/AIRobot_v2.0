@@ -13,7 +13,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
+import tempfile
 import threading
+import uuid
 import urllib.parse
 import urllib.request
 
@@ -29,6 +32,7 @@ class TelegramBridge:
         self._thread = None
         self._offset = 0
         self._lock = threading.Lock()
+        self._reply_with_voice = False
 
     @property
     def available(self) -> bool:
@@ -59,6 +63,8 @@ class TelegramBridge:
             self._api("sendMessage", {"chat_id": self.chat_id, "text": text}, timeout=15)
         except Exception as exc:
             logger.warning("send failed: %s", exc)
+        if getattr(self, "_reply_with_voice", False) and not text.startswith("🎤"):
+            self._send_voice(text)
 
     # -- poll loop ---------------------------------------------------------
     def _loop(self):
@@ -88,6 +94,9 @@ class TelegramBridge:
         if str(m.get("chat", {}).get("id", "")) != self.chat_id:
             return  # only the master's chat
         text = m.get("text")
+        if not text and (m.get("voice") or m.get("audio")):
+            self._handle_voice(m.get("voice") or m.get("audio"))
+            return
         if not text:
             if m.get("photo"):
                 self._send("I can't read photos you send yet — but ask me "
@@ -95,6 +104,84 @@ class TelegramBridge:
             return
         logger.info("received from phone: %r", text[:80])
         self._process(text.strip())
+
+    # -- voice notes from the phone ------------------------------------------
+    def _download_file(self, file_id: str) -> bytes:
+        info = self._api("getFile", {"file_id": file_id}, timeout=20)
+        path = info["result"]["file_path"]
+        url = f"https://api.telegram.org/file/bot{self.token}/{path}"
+        with urllib.request.urlopen(url, timeout=60) as r:
+            return r.read()
+
+    def _handle_voice(self, media: dict):
+        """Voice note (OGG/Opus) -> 16 kHz mono PCM -> the same STT chain her ears use."""
+        dur = int(media.get("duration", 0) or 0)
+        if dur > 60:
+            self._send("That voice message is over a minute — please keep commands under 60 seconds.")
+            return
+        speech = self.robot.modules.get("speech_recognition") if hasattr(self.robot, "modules") else None
+        if speech is None or not hasattr(speech, "_transcribe_pcm16k"):
+            self._send("I can't transcribe voice right now (speech module not loaded).")
+            return
+        try:
+            blob = self._download_file(media["file_id"])
+            proc = subprocess.run(
+                ["ffmpeg", "-loglevel", "error", "-i", "pipe:0", "-f", "s16le", "-ac", "1", "-ar", "16000", "pipe:1"],
+                input=blob, capture_output=True, timeout=60)
+            pcm = proc.stdout
+            if proc.returncode != 0 or len(pcm) < 3200:   # < 0.1 s
+                logger.warning("voice decode failed: %s", proc.stderr.decode("utf-8", "ignore")[:160])
+                self._send("I couldn't decode that voice message.")
+                return
+            text = speech._transcribe_pcm16k(pcm)
+        except Exception as exc:
+            logger.warning("voice transcription failed: %s", exc)
+            self._send("Sorry, I couldn't understand that voice message.")
+            return
+        if not text:
+            self._send("I heard the voice note but couldn't make out any words.")
+            return
+        logger.info("voice from phone (%ds): %r", dur, text[:80])
+        self._send(f"🎤 heard: “{text}”")
+        self._reply_with_voice = True
+        try:
+            self._process(text.strip())
+        finally:
+            self._reply_with_voice = False
+
+    def _send_voice(self, text: str) -> bool:
+        """Speak the reply as a Telegram voice note in Stella's own Piper voice."""
+        tts = self.robot.modules.get("tts") if hasattr(self.robot, "modules") else None
+        if tts is None or not hasattr(tts, "_generate_audio") or not text:
+            return False
+        wav = ogg = None
+        try:
+            wav = tts._generate_audio(text[:600])
+            if not wav:
+                return False
+            ogg = os.path.join(tempfile.gettempdir(), f"stella_reply_{uuid.uuid4().hex}.ogg")
+            r = subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", wav, "-c:a", "libopus",
+                                "-b:a", "32k", "-ac", "1", ogg], capture_output=True, timeout=30)
+            if r.returncode != 0:
+                return False
+            boundary = uuid.uuid4().hex
+            body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n{self.chat_id}\r\n"
+                    f"--{boundary}\r\nContent-Disposition: form-data; name=\"voice\"; filename=\"reply.ogg\"\r\n"
+                    f"Content-Type: audio/ogg\r\n\r\n").encode() + open(ogg, "rb").read() + f"\r\n--{boundary}--\r\n".encode()
+            req = urllib.request.Request(f"https://api.telegram.org/bot{self.token}/sendVoice", data=body,
+                                         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+            with urllib.request.urlopen(req, timeout=30):
+                return True
+        except Exception as exc:
+            logger.debug("voice reply skipped: %s", exc)
+            return False
+        finally:
+            for f in (wav, ogg):
+                try:
+                    if f and os.path.exists(f):
+                        os.remove(f)
+                except OSError:
+                    pass
 
     # -- command handling --------------------------------------------------
     def _process(self, text: str):
@@ -174,7 +261,8 @@ class TelegramBridge:
                        "• \"what do you see?\" (I look through my camera)\n"
                        "• \"turn on the light\"\n"
                        "• \"remind me in 10 minutes to…\"\n"
-                       "• \"guard on\" / \"guard off\" / \"status\"")
+                       "• \"guard on\" / \"guard off\" / \"status\"\n"
+                       "• or just send me a 🎤 voice message — I'll answer in my voice too")
             return
         if low in ("/guard_on", "/guardon", "guard on", "arm", "arm guard"):
             brain.guard_mode = True
