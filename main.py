@@ -1155,8 +1155,9 @@ class AIRobot:
             return
         # Start from REALITY: booting offline is a state, not a 'loss' to announce.
         was_online = wifi.is_online()
+        announced_offline_boot = False
         if not was_online:
-            self.logger.info("Network monitor: starting OFFLINE — will only announce a change")
+            self.logger.info("Network monitor: starting OFFLINE — will announce offline mode once")
         last_said = 0.0
         misses = 0
         while self.running:
@@ -1171,6 +1172,15 @@ class AIRobot:
             misses = 0 if online else (misses + 1)
             conv = getattr(self, 'conversation', None)
             busy = bool(conv and conv.active)
+            # Booted with NO internet: tell Moti once (spoken — Telegram can't reach
+            # him offline), so silence is never mistaken for "all fine".
+            if (not announced_offline_boot) and (not was_online) and (not online) and misses >= 2:
+                announced_offline_boot = True
+                last_said = time.time()
+                if not busy:
+                    self._announce("Heads up — I do not have an internet connection right now, "
+                                   "so I am running in offline mode. I can still talk, listen and "
+                                   "recognise you. You can reconnect me from the dashboard WiFi panel.")
             # Debounce: ~2 consecutive misses => really offline (avoids a blip).
             if was_online and misses >= 2:
                 was_online = False
