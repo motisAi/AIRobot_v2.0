@@ -177,7 +177,7 @@ hardware:
   # --- microphones (two mics, one per role) ---
   # Wake word listens on the camera's built-in mic; commands use the USB mic.
   wake_word_microphone_name: "Auto Focus Camera"   # camera mic: better wake pickup; stall now self-healed (bug_053)
-  speech_microphone_name: "USB PnP Sound Device"    # ALSA card 0 (USB mic)
+  speech_microphone_name: "Auto Focus Camera"    # USB PnP mic wedged/unopenable; use the working camera mic for both (bug_055)
   microphone_rate: 48000
   speech_microphone_rate: 44100
 
