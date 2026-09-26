@@ -1,571 +1,601 @@
-"""
-Wake Word Detection Module
-==========================
-Detects wake word "Hey Robot" using Picovoice Porcupine or alternatives.
-Runs continuously in background with minimal CPU usage.
+"""Wake word detection module tailored for the "Gonzo" keyword.
 
+Engine preference (config: model.wake_word_engine = auto):
+  1. **Vosk** — free, offline, small-model speech recognition that detects the
+     actual spoken word "gonzo". Recommended; no signup, no cost.
+  2. **Porcupine** — Picovoice keyword spotting (requires a registered key).
+  3. **Energy** — a lightweight RMS/VAD loudness gate that reacts to any loud
+     sound. Zero setup, but not word-specific. Used only as a last resort.
+
+All detection stays on-device per the privacy requirements.
 """
 
-import time
-import threading
-import queue
+from __future__ import annotations
+
 import logging
-import numpy as np
+import threading
+import time
 from pathlib import Path
-from typing import Optional, Callable, List
-import struct
-import wave
-import os
+from typing import Optional
+from collections import deque
 
-# Audio libraries
+import numpy as np
+
 try:
     import pyaudio
-except ImportError:
-    print("Warning: pyaudio not installed. Wake word detection will not work.")
+except ImportError:  # pragma: no cover - optional dependency
     pyaudio = None
 
-# Try to import Porcupine (Picovoice)
 try:
     import pvporcupine
     import pvrecorder
     PORCUPINE_AVAILABLE = True
-except ImportError:
+except ImportError:  # pragma: no cover - optional dependency
     PORCUPINE_AVAILABLE = False
-    print("Picovoice Porcupine not available. Using alternative wake word detection.")
 
-# Alternative: webrtcvad for simple voice activity detection
+try:
+    import json as _json
+    from vosk import Model as VoskModel, KaldiRecognizer, SetLogLevel as _VoskSetLogLevel
+    _VoskSetLogLevel(-1)  # silence vosk's verbose logging
+    VOSK_AVAILABLE = True
+except Exception:  # pragma: no cover - optional dependency
+    VOSK_AVAILABLE = False
+
 try:
     import webrtcvad
     VAD_AVAILABLE = True
-except ImportError:
+except ImportError:  # pragma: no cover - optional dependency
     VAD_AVAILABLE = False
 
-# Import configuration
-import sys
-sys.path.append(str(Path(__file__).parent.parent.parent))
-from config.settings import config, model_config
+from config.settings import model_config, hardware_config
+from core.robot_brain import RobotEvent
 
 
-class WakeWordDetector:
-    """
-    Wake word detection system.
-    Uses Picovoice Porcupine if available, otherwise falls back to alternatives.
-    """
-    
+class WakeWordModule:
+    """Continuously listens for the configured wake word ("gonzo")."""
+
     def __init__(self, brain=None):
-        """
-        Initialize wake word detector
-        
-        Args:
-            brain: Reference to robot brain for event emission
-        """
-        
-        # Logging
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.info("Initializing Wake Word Detector")
-        
-        # Brain reference
         self.brain = brain
-        
-        # Configuration
-        self.wake_word = model_config.wake_word
-        self.sensitivity = model_config.wake_word_sensitivity
+
+        self.keyword = model_config.wake_word.lower().strip() or "gonzo"
+        self.sensitivity = float(model_config.wake_word_sensitivity)
         self.access_key = model_config.picovoice_access_key
-        
-        # Audio settings
-        self.sample_rate = 16000  # Standard for speech
-        self.frame_length = 512  # Samples per frame
-        self.chunk_size = 1024
-        
-        # State
-        self.running = False
-        self.listening = True  # Can be paused
-        self.detected_callback = None
-        
-        # Threading
-        self.detection_thread = None
-        
-        # Audio interface
-        self.audio = None
-        self.stream = None
-        
-        # Detection engine
-        self.porcupine = None
-        self.use_porcupine = False
-        
-        # Alternative: Simple keyword detection
-        self.vad = None
-        self.use_vad = False
-        
-        # Buffer for alternative detection
-        self.audio_buffer = queue.Queue()
-        self.detection_buffer = []
-        
-        # Statistics
-        self.detection_count = 0
-        self.false_positive_count = 0
-        self.last_detection_time = 0
-        
-        # Initialize detection engine
-        self._initialize_engine()
-    
-    def _initialize_engine(self):
-        """Initialize the wake word detection engine"""
-        
-        # Try Porcupine first
-        if PORCUPINE_AVAILABLE and self.access_key:
-            try:
-                self._init_porcupine()
-                self.use_porcupine = True
-                self.logger.info("Using Picovoice Porcupine for wake word detection")
-                return
-            except Exception as e:
-                self.logger.warning(f"Failed to initialize Porcupine: {e}")
-        
-        # Fallback to VAD + simple detection
-        if VAD_AVAILABLE:
-            try:
-                self._init_vad()
-                self.use_vad = True
-                self.logger.info("Using WebRTC VAD for voice activity detection")
-                return
-            except Exception as e:
-                self.logger.warning(f"Failed to initialize VAD: {e}")
-        
-        # Last resort: simple audio threshold
-        self.logger.warning("No advanced wake word detection available. Using simple audio detection.")
-    
-    def _init_porcupine(self):
-        """Initialize Picovoice Porcupine"""
-        
-        # Built-in wake words (if no custom model)
-        keywords = ['hey google', 'alexa', 'ok google', 'hey siri']
-        
-        # Try custom wake word if model exists
-        custom_model_path = Path(model_config.wake_word_model_path)
-        
-        if custom_model_path.exists():
-            # Use custom model
-            self.porcupine = pvporcupine.create(
-                access_key=self.access_key,
-                keyword_paths=[str(custom_model_path)],
-                sensitivities=[self.sensitivity]
-            )
-        else:
-            # Use built-in wake word closest to our phrase
-            # For "hey robot", we'll use "hey google" and check the following audio
-            self.porcupine = pvporcupine.create(
-                access_key=self.access_key,
-                keywords=['hey google'],  # Closest to "hey robot"
-                sensitivities=[self.sensitivity]
-            )
-            
-            self.logger.info("Using 'hey google' as trigger, will verify 'robot' in post-processing")
-    
-    def _init_vad(self):
-        """Initialize WebRTC Voice Activity Detector"""
-        
-        # VAD aggressiveness (0-3, 3 is most aggressive)
-        aggressiveness = 2
-        self.vad = webrtcvad.Vad(aggressiveness)
-        
-        # Also initialize simple keyword matching
-        self.keywords = ['hey', 'robot', 'hi', 'hello']
-    
-    def start(self):
-        """Start wake word detection"""
-        
-        if self.running:
-            self.logger.warning("Wake word detection already running")
-            return
-        
-        self.running = True
-        
-        # Initialize PyAudio
-        if pyaudio:
-            self.audio = pyaudio.PyAudio()
-            
-            # Open audio stream
-            self.stream = self.audio.open(
-                format=pyaudio.paInt16,
-                channels=1,
-                rate=self.sample_rate,
-                input=True,
-                frames_per_buffer=self.chunk_size,
-                stream_callback=self._audio_callback if not self.use_porcupine else None
-            )
-            
-            if self.stream:
-                self.stream.start_stream()
-        
-        # Start detection thread
-        self.detection_thread = threading.Thread(target=self._detection_loop)
-        self.detection_thread.daemon = True
-        self.detection_thread.start()
-        
-        self.logger.info("Wake word detection started")
-    
-    def stop(self):
-        """Stop wake word detection"""
-        
-        self.running = False
-        
-        # Wait for thread
-        if self.detection_thread:
-            self.detection_thread.join(timeout=2.0)
-        
-        # Close audio stream
-        if self.stream:
-            self.stream.stop_stream()
-            self.stream.close()
-        
-        # Terminate PyAudio
-        if self.audio:
-            self.audio.terminate()
-        
-        # Clean up Porcupine
-        if self.porcupine:
-            self.porcupine.delete()
-        
-        self.logger.info("Wake word detection stopped")
-    
-    def _audio_callback(self, in_data, frame_count, time_info, status):
-        """
-        PyAudio callback for audio input (non-Porcupine mode)
-        
-        Args:
-            in_data: Audio data
-            frame_count: Number of frames
-            time_info: Time information
-            status: Status flags
-            
-        Returns:
-            Tuple of (data, flag)
-        """
-        
-        if self.listening and self.running:
-            # Add to buffer for processing
-            self.audio_buffer.put(in_data)
-        
-        return (None, pyaudio.paContinue)
-    
-    def _detection_loop(self):
-        """Main detection loop"""
-        
-        if self.use_porcupine:
-            self._porcupine_loop()
-        else:
-            self._alternative_loop()
-    
-    def _porcupine_loop(self):
-        """Detection loop using Porcupine"""
-        
-        recorder = pvrecorder.PvRecorder(
-            device_index=-1,  # Default audio device
-            frame_length=self.porcupine.frame_length
+        self.model_path = Path(model_config.wake_word_model_path)
+
+        self.device_index = self._resolve_microphone_index(
+            name_hint=hardware_config.wake_word_microphone_name,
+            explicit_index=hardware_config.wake_word_device_index,
         )
-        
-        recorder.start()
-        
-        self.logger.info("Porcupine listening for wake word...")
-        
-        try:
-            while self.running:
-                if not self.listening:
-                    time.sleep(0.1)
+
+        self.listen_event = threading.Event()
+        self.listen_event.set()
+        self.shutdown_event = threading.Event()
+        self._stream_closed_event = threading.Event()
+        self.thread: Optional[threading.Thread] = None
+        self.running = False
+
+        # Wake-word engine selection (auto|vosk|porcupine|energy).
+        self.engine_pref = getattr(model_config, "wake_word_engine", "auto").lower()
+        self.vosk_model_path = Path(getattr(model_config, "vosk_model_path", ""))
+        self.wake_phrases = [p.lower() for p in
+                             getattr(model_config, "wake_word_phrases", [self.keyword])]
+        # Fuzzy prefix for near-miss transcriptions, DERIVED from the wake word
+        # so it follows config changes (e.g. "gonzo"->"gonz", "robby"->"robb").
+        kw = self.keyword.split()[-1] if self.keyword else "gonzo"
+        self._wake_prefix = kw[:4] if len(kw) >= 4 else kw
+        self.detector_mode = self._select_mode()
+        self.porcupine = None
+        self._vosk_model = None
+        self.energy_threshold = 300.0
+        self.energy_window = deque(maxlen=50)
+        self.vad = webrtcvad.Vad(2) if VAD_AVAILABLE else None
+
+    def _select_mode(self) -> str:
+        """Pick the wake-word engine based on config and availability."""
+        pref = self.engine_pref
+        if pref == "energy":
+            return "energy"
+        if pref == "porcupine":
+            return "porcupine" if self._porcupine_ready() else "energy"
+        if pref == "vosk":
+            return "vosk" if self._vosk_ready() else "energy"
+        # auto: prefer real-word offline (vosk) -> porcupine -> energy
+        if self._vosk_ready():
+            return "vosk"
+        if self._porcupine_ready():
+            return "porcupine"
+        return "energy"
+
+    def _vosk_ready(self) -> bool:
+        return VOSK_AVAILABLE and self.vosk_model_path.exists()
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+    def start(self) -> None:
+        """Launch the listener thread."""
+
+        if self.running:
+            return
+
+        if pyaudio is None and not PORCUPINE_AVAILABLE:
+            self.logger.error("Neither PyAudio nor Porcupine are available; wake-word detection disabled")
+            return
+
+        if self.detector_mode == "porcupine":
+            try:
+                self.porcupine = self._build_porcupine_instance()
+            except Exception as exc:  # pragma: no cover - external dependency
+                self.logger.warning("Falling back to energy detector: %s", exc)
+                self.detector_mode = "energy"
+
+        if self.detector_mode == "vosk":
+            try:
+                self.logger.info("Loading Vosk wake-word model from %s", self.vosk_model_path)
+                self._vosk_model = VoskModel(str(self.vosk_model_path))
+            except Exception as exc:
+                self.logger.warning("Vosk load failed, falling back to energy: %s", exc)
+                self.detector_mode = "energy"
+
+        self.shutdown_event.clear()
+        self.thread = threading.Thread(target=self._listen_loop, daemon=True)
+        self.thread.start()
+        self.running = True
+        self.logger.info("Wake-word detector running in %s mode", self.detector_mode)
+
+    def stop(self) -> None:
+        """Gracefully stop the listener thread."""
+
+        self.shutdown_event.set()
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=2.0)
+        self.running = False
+
+        if self.porcupine:
+            try:
+                self.porcupine.delete()
+            except Exception:
+                pass
+            self.porcupine = None
+
+    def pause_listening(self, reason: str = "dialogue") -> None:
+        """Temporarily pause detection and release the microphone."""
+
+        self.logger.info("Pausing wake-word listener (%s) — releasing mic", reason)
+        self.listen_event.clear()
+        # Wait for the stream to actually close before returning
+        if not self._stream_closed_event.wait(timeout=2.0):
+            self.logger.warning("Timed out waiting for wake-word stream to close")
+
+    def resume_listening(self) -> None:
+        """Resume passive listening (stream will reopen in the loop)."""
+
+        self._stream_closed_event.clear()
+        self.listen_event.set()
+        self.logger.info("Wake-word listener resumed")
+
+    # ------------------------------------------------------------------
+    # Detection loops
+    # ------------------------------------------------------------------
+    def _listen_loop(self) -> None:
+        """Dispatch to the active detection strategy."""
+
+        if self.detector_mode == "porcupine":
+            self._porcupine_loop()
+        elif self.detector_mode == "vosk":
+            self._vosk_loop()
+        else:
+            self._energy_loop()
+
+    def _vosk_loop(self) -> None:
+        """Free, offline, word-specific wake detection using Vosk.
+
+        Streams the wake microphone through a small Vosk model and fires when a
+        configured wake phrase (or a fuzzy 'gonz*' token) is recognised.
+        """
+        if pyaudio is None or self._vosk_model is None:
+            self.logger.error("Vosk detector not ready; aborting")
+            return
+
+        TARGET_RATE = 16000
+        audio = None
+        stream = None
+        actual_rate = TARGET_RATE
+
+        def _open():
+            nonlocal audio, stream, actual_rate
+            from parts_used.audio_portaudio import get_pa
+            audio = get_pa()          # shared instance — do NOT terminate it
+            if audio is None:
+                return False
+            # Re-resolve the mic index by NAME on every attempt: PortAudio indices
+            # shift when USB devices reshuffle (reboot/replug), and retrying a stale
+            # index fails forever. This lets the retry loop self-heal without a restart.
+            idx = self._resolve_microphone_index(
+                name_hint=hardware_config.wake_word_microphone_name,
+                explicit_index=hardware_config.wake_word_device_index)
+            if idx is not None:
+                self.device_index = idx
+            # 48k first: the camera mic doesn't support 16k and would spam
+            # paInvalidSampleRate. We resample to 16k for Vosk anyway.
+            for rate in (48000, 44100, 16000):
+                try:
+                    stream = audio.open(
+                        format=pyaudio.paInt16, channels=1, rate=rate, input=True,
+                        frames_per_buffer=4096, input_device_index=self.device_index,
+                    )
+                    actual_rate = rate
+                    self.logger.info("Vosk wake mic open at %d Hz (device %s)",
+                                     rate, self.device_index)
+                    return True
+                except Exception:
                     continue
-                
-                # Read audio frame
+            audio = None  # shared instance — do not terminate
+            self.logger.debug("Could not open wake mic for Vosk")  # loop logs once at ERROR
+            return False
+
+        def _close():
+            nonlocal audio, stream
+            if stream:
+                try:
+                    stream.stop_stream(); stream.close()
+                except Exception:
+                    pass
+                stream = None
+            # Do NOT terminate the shared PyAudio instance — just drop our ref.
+            audio = None
+            self._stream_closed_event.set()
+
+        # If the mic isn't ready yet (e.g. USB still settling after a reboot), don't
+        # give up — the loop below re-tries _open() every second until it succeeds.
+        _open()
+
+        rec = KaldiRecognizer(self._vosk_model, TARGET_RATE)
+        self.logger.info("Vosk wake-word detector active for phrases: %s", self.wake_phrases)
+
+        try:
+            while not self.shutdown_event.is_set():
+                if not self.listen_event.is_set():
+                    if stream is not None:
+                        _close()
+                    else:
+                        self._stream_closed_event.set()  # nothing to close — don't stall pause_listening()
+                    time.sleep(0.05)
+                    continue
+                if stream is None:
+                    if not _open():
+                        # No mic: log ONCE, then retry with exponential backoff
+                        # (1s -> 60s) instead of hammering PortAudio every second.
+                        if not getattr(self, "_mic_missing_logged", False):
+                            self.logger.error("Wake mic not available — retrying with backoff (up to 60s)")
+                            self._mic_missing_logged = True
+                        delay = getattr(self, "_retry_delay", 1.0)
+                        self.shutdown_event.wait(delay)
+                        self._retry_delay = min(delay * 2, 60.0)
+                        continue
+                    self._retry_delay = 1.0
+                    if getattr(self, "_mic_missing_logged", False):
+                        self.logger.info("Wake mic recovered")
+                        self._mic_missing_logged = False
+                    rec = KaldiRecognizer(self._vosk_model, TARGET_RATE)
+
+                try:
+                    frame = stream.read(4096, exception_on_overflow=False)
+                    self._read_errs = 0
+                except Exception:
+                    # Repeated read failures = the stream is wedged; reopen it.
+                    self._read_errs = getattr(self, "_read_errs", 0) + 1
+                    if self._read_errs >= 30:
+                        self.logger.warning("Wake mic reads failing — reopening the stream")
+                        _close(); stream = None; self._read_errs = 0
+                    self.shutdown_event.wait(0.05)
+                    continue
+
+                # Dead-stream detector: a live mic never returns perfectly digital
+                # silence. Long runs of exact-zero frames mean the USB audio stream
+                # died while still 'open' (no error) — reopen so wake keeps working.
+                try:
+                    _pk = int(np.abs(np.frombuffer(frame, dtype=np.int16)).max()) if frame else 0
+                except Exception:
+                    _pk = 1
+                if _pk == 0:
+                    self._silent_reads = getattr(self, "_silent_reads", 0) + 1
+                    if self._silent_reads >= 250:   # ~20 s of pure zeros = dead stream
+                        self.logger.warning("Wake mic went silent (dead stream) — reopening")
+                        _close(); stream = None; self._silent_reads = 0
+                        continue
+                else:
+                    self._silent_reads = 0
+
+                if actual_rate != TARGET_RATE:
+                    frame = self._resample_to_16k(frame, actual_rate)
+
+                text = ""
+                if rec.AcceptWaveform(frame):
+                    text = _json.loads(rec.Result()).get("text", "")
+                    if text:
+                        # visibility: what the wake mic actually hears (finals only, no spam)
+                        self.logger.info("wake heard: %r", text[:80])
+                else:
+                    text = _json.loads(rec.PartialResult()).get("partial", "")
+
+                if text and self._matches_wake(text):
+                    self._emit_detection(confidence=0.9, method="vosk")
+                    rec = KaldiRecognizer(self._vosk_model, TARGET_RATE)  # reset
+                    time.sleep(1.2)
+        finally:
+            _close()
+
+    # Vosk's small EN model mis-renders "stella" wildly. These are the tokens it
+    # actually produces for it (measured), plus near-spellings. Kept off the most
+    # common English words to limit false wakes.
+    _WAKE_ALIASES = {
+        "stella", "stellar", "steller", "settler", "settlers", "sella",
+        "estella", "stellah", "stela", "taylor", "sailor", "stallion",
+    }
+
+    @staticmethod
+    def _lev(a: str, b: str) -> int:
+        """Small Levenshtein distance (for close spellings of the keyword)."""
+        if a == b:
+            return 0
+        m, n = len(a), len(b)
+        if not m:
+            return n
+        if not n:
+            return m
+        prev = list(range(n + 1))
+        for i, ca in enumerate(a, 1):
+            cur = [i]
+            for j, cb in enumerate(b, 1):
+                cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+            prev = cur
+        return prev[n]
+
+    def _matches_wake(self, text: str) -> bool:
+        """True if recognised text looks like the wake word. Tolerant of Vosk
+        mishearing "stella" (settler/taylor/stellar/...)."""
+        t = text.lower().strip()
+        if not t:
+            return False
+        if any(p in t for p in self.wake_phrases):
+            return True
+        toks = t.split()
+        if any(tok in self._WAKE_ALIASES for tok in toks):
+            return True
+        if any(tok.startswith(self._wake_prefix) for tok in toks):
+            return True
+        # close spelling to the actual keyword (e.g. "stellaa", "stela")
+        return any(len(tok) >= 4 and self._lev(tok, self.keyword) <= 2 for tok in toks)
+
+    @staticmethod
+    def _resample_to_16k(frame: bytes, src_rate: int) -> bytes:
+        """Downsample an int16 mono frame to 16 kHz for Vosk."""
+        samples = np.frombuffer(frame, dtype=np.int16)
+        if samples.size == 0 or src_rate == 16000:
+            return frame
+        n_out = int(round(samples.size * 16000 / src_rate))
+        if n_out <= 0:
+            return frame
+        x_old = np.linspace(0, 1, samples.size, endpoint=False)
+        x_new = np.linspace(0, 1, n_out, endpoint=False)
+        resampled = np.interp(x_new, x_old, samples).astype(np.int16)
+        return resampled.tobytes()
+
+    def _porcupine_loop(self) -> None:
+        """Run Porcupine on the configured microphone."""
+
+        if not PORCUPINE_AVAILABLE:
+            self.logger.error("Porcupine requested but not installed")
+            return
+
+        recorder = pvrecorder.PvRecorder(
+            device_index=self.device_index if self.device_index is not None else -1,
+            frame_length=self.porcupine.frame_length,
+        )
+
+        try:
+            recorder.start()
+            while not self.shutdown_event.is_set():
+                if not self.listen_event.is_set():
+                    time.sleep(0.05)
+                    continue
+
                 pcm = recorder.read()
-                
-                # Check for wake word
-                keyword_index = self.porcupine.process(pcm)
-                
-                if keyword_index >= 0:
-                    self._handle_detection()
-        
-        except Exception as e:
-            self.logger.error(f"Porcupine error: {e}")
-        
+                result = self.porcupine.process(pcm)
+                if result >= 0:
+                    self._emit_detection(confidence=0.99, method="porcupine")
+        except Exception as exc:
+            self.logger.error(f"Porcupine loop crashed: {exc}")
         finally:
             recorder.stop()
             recorder.delete()
-    
-    def _alternative_loop(self):
-        """Detection loop using alternative methods"""
-        
-        self.logger.info("Alternative detection listening...")
-        
-        # Buffer for accumulating audio
-        audio_accumulator = b''
-        
-        while self.running:
-            try:
-                if not self.listening:
-                    time.sleep(0.1)
-                    continue
-                
-                # Get audio data
-                if not self.audio_buffer.empty():
-                    audio_data = self.audio_buffer.get(timeout=0.1)
-                    audio_accumulator += audio_data
-                    
-                    # Process when we have enough data
-                    if len(audio_accumulator) >= self.sample_rate * 2:  # 2 seconds
-                        
-                        if self.use_vad:
-                            # Check for voice activity
-                            if self._check_voice_activity(audio_accumulator):
-                                # Simple keyword detection
-                                if self._check_keywords(audio_accumulator):
-                                    self._handle_detection()
-                        else:
-                            # Simple volume threshold
-                            if self._check_volume_threshold(audio_accumulator):
-                                self._handle_detection()
-                        
-                        # Clear accumulator
-                        audio_accumulator = b''
-                
-                else:
-                    time.sleep(0.01)
-            
-            except Exception as e:
-                self.logger.error(f"Detection loop error: {e}")
-                time.sleep(0.1)
-    
-    def _check_voice_activity(self, audio_data: bytes) -> bool:
-        """
-        Check if audio contains voice using VAD
-        
-        Args:
-            audio_data: Audio bytes
-            
-        Returns:
-            bool: True if voice detected
-        """
-        
-        if not self.vad:
-            return False
-        
-        # Convert bytes to numpy array
-        audio_array = np.frombuffer(audio_data, dtype=np.int16)
-        
-        # Process in 30ms frames (480 samples at 16kHz)
-        frame_size = 480
-        num_frames = len(audio_array) // frame_size
-        
-        voice_frames = 0
-        
-        for i in range(num_frames):
-            frame = audio_array[i * frame_size:(i + 1) * frame_size]
-            frame_bytes = frame.tobytes()
-            
-            if self.vad.is_speech(frame_bytes, self.sample_rate):
-                voice_frames += 1
-        
-        # Return True if >30% frames contain voice
-        return voice_frames > num_frames * 0.3
-    
-    def _check_keywords(self, audio_data: bytes) -> bool:
-        """
-        Simple keyword detection (very basic)
-        
-        Args:
-            audio_data: Audio bytes
-            
-        Returns:
-            bool: True if keywords might be present
-        """
-        
-        # This is a placeholder for more sophisticated detection
-        # In practice, you'd use speech recognition here
-        
-        # For now, just use volume patterns
-        audio_array = np.frombuffer(audio_data, dtype=np.int16)
-        
-        # Look for two peaks (hey + robot)
-        threshold = np.max(np.abs(audio_array)) * 0.3
-        above_threshold = np.abs(audio_array) > threshold
-        
-        # Simple pattern: two groups of activity
-        # This is very basic and will have many false positives
-        changes = np.diff(above_threshold.astype(int))
-        peaks = np.sum(changes == 1)
-        
-        return peaks >= 2
-    
-    def _check_volume_threshold(self, audio_data: bytes) -> bool:
-        """
-        Check if audio exceeds volume threshold
-        
-        Args:
-            audio_data: Audio bytes
-            
-        Returns:
-            bool: True if loud enough
-        """
-        
-        audio_array = np.frombuffer(audio_data, dtype=np.int16)
-        volume = np.sqrt(np.mean(audio_array**2))
-        
-        # Dynamic threshold based on sensitivity
-        threshold = 1000 * (1.0 - self.sensitivity)
-        
-        return volume > threshold
-    
-    def _handle_detection(self):
-        """Handle wake word detection"""
-        
-        # Prevent multiple rapid detections
-        current_time = time.time()
-        if current_time - self.last_detection_time < 2.0:
+
+    def _energy_loop(self) -> None:
+        """Fallback RMS/VAD detector used when Porcupine is unavailable."""
+
+        if pyaudio is None:
+            self.logger.error("PyAudio not installed; cannot run fallback detector")
             return
-        
-        self.last_detection_time = current_time
-        self.detection_count += 1
-        
-        self.logger.info(f"Wake word detected! (count: {self.detection_count})")
-        
-        # Callback if set
-        if self.detected_callback:
-            self.detected_callback()
-        
-        # Emit event to brain
-        if self.brain:
-            from core.robot_brain import RobotEvent
-            self.brain.emit_event(RobotEvent(
-                type='wake_word_detected',
-                source='wake_word',
-                data={'timestamp': current_time},
-                priority=1  # High priority
-            ))
-        
-        # Pause listening briefly to avoid re-triggering
-        self.pause_listening()
-        threading.Timer(2.0, self.resume_listening).start()
-    
-    def pause_listening(self):
-        """Temporarily pause wake word detection"""
-        self.listening = False
-        self.logger.debug("Wake word detection paused")
-    
-    def resume_listening(self):
-        """Resume wake word detection"""
-        self.listening = True
-        self.logger.debug("Wake word detection resumed")
-    
-    def set_callback(self, callback: Callable):
-        """
-        Set callback function for wake word detection
-        
-        Args:
-            callback: Function to call when wake word detected
-        """
-        self.detected_callback = callback
-    
-    def set_sensitivity(self, sensitivity: float):
-        """
-        Adjust detection sensitivity
-        
-        Args:
-            sensitivity: Sensitivity value (0.0 to 1.0)
-        """
-        self.sensitivity = max(0.0, min(1.0, sensitivity))
-        
-        if self.porcupine:
-            # Recreate Porcupine with new sensitivity
-            self.stop()
-            self._initialize_engine()
-            self.start()
-    
-    def get_statistics(self) -> dict:
-        """
-        Get detection statistics
-        
-        Returns:
-            Dictionary with statistics
-        """
-        return {
-            'running': self.running,
-            'listening': self.listening,
-            'detection_count': self.detection_count,
-            'false_positive_count': self.false_positive_count,
-            'last_detection': self.last_detection_time,
-            'engine': 'porcupine' if self.use_porcupine else 'vad' if self.use_vad else 'threshold',
-            'wake_word': self.wake_word,
-            'sensitivity': self.sensitivity
-        }
-    
-    def save_audio_sample(self, filepath: str, duration: int = 3):
-        """
-        Save audio sample for testing/debugging
-        
-        Args:
-            filepath: Path to save audio file
-            duration: Duration in seconds
-        """
-        
-        self.logger.info(f"Recording {duration}s audio sample...")
-        
-        frames = []
-        
-        for _ in range(0, int(self.sample_rate * duration / self.chunk_size)):
-            if self.stream:
-                data = self.stream.read(self.chunk_size)
-                frames.append(data)
-        
-        # Save as WAV file
-        with wave.open(filepath, 'wb') as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(self.audio.get_sample_size(pyaudio.paInt16))
-            wf.setframerate(self.sample_rate)
-            wf.writeframes(b''.join(frames))
-        
-        self.logger.info(f"Audio sample saved to {filepath}")
 
+        mic_rate = hardware_config.microphone_rate
+        self.logger.warning("Energy-based wake-word detector active (higher false positives)")
 
-# Standalone testing
-if __name__ == "__main__":
-    """Test wake word detection"""
-    
-    import sys
-    
-    # Setup logging
-    logging.basicConfig(level=logging.DEBUG)
-    
-    # Create detector
-    detector = WakeWordDetector()
-    
-    # Set callback
-    def on_detection():
-        print("\n🎤 WAKE WORD DETECTED! 🎤\n")
-    
-    detector.set_callback(on_detection)
-    
-    print("\nWake Word Detection Test")
-    print("=" * 50)
-    print(f"Say '{model_config.wake_word}' to trigger detection")
-    print("Press Ctrl+C to stop")
-    print()
-    
-    # Start detection
-    detector.start()
-    
-    try:
-        # Keep running
-        while True:
-            time.sleep(1)
-            
-            # Print statistics periodically
-            stats = detector.get_statistics()
-            print(f"\rDetections: {stats['detection_count']} | "
-                  f"Engine: {stats['engine']} | "
-                  f"Listening: {stats['listening']}", end='')
-    
-    except KeyboardInterrupt:
-        print("\n\nStopping...")
-    
-    finally:
-        detector.stop()
-        print("Detection stopped")
+        debug_counter = 0
+        audio = None
+        stream = None
+
+        def _open_stream():
+            nonlocal audio, stream, mic_rate
+            from parts_used.audio_portaudio import get_pa
+            audio = get_pa()          # shared instance — do NOT terminate it
+            if audio is None:
+                return False
+            for try_rate in [mic_rate, 48000, 44100, 22050, 16000]:
+                try:
+                    stream = audio.open(
+                        format=pyaudio.paInt16,
+                        channels=1,
+                        rate=try_rate,
+                        input=True,
+                        frames_per_buffer=512,
+                        input_device_index=self.device_index,
+                    )
+                    mic_rate = try_rate
+                    self.logger.info(f"Opened wake-word mic at {try_rate} Hz (device {self.device_index})")
+                    return True
+                except Exception:
+                    continue
+            self.logger.error("Unable to open microphone for wake-word detection at any sample rate")
+            audio = None
+            return False
+
+        def _close_stream():
+            nonlocal audio, stream
+            if stream:
+                try:
+                    stream.stop_stream()
+                    stream.close()
+                except Exception:
+                    pass
+                stream = None
+            audio = None  # shared instance — do not terminate
+            self.logger.info("Wake-word mic released")
+            self._stream_closed_event.set()
+
+        # Initial open
+        if not _open_stream():
+            return
+
+        try:
+            while not self.shutdown_event.is_set():
+                # --- paused: close the stream and wait ---
+                if not self.listen_event.is_set():
+                    if stream is not None:
+                        _close_stream()
+                    time.sleep(0.05)
+                    continue
+
+                # --- resumed: reopen the stream if needed ---
+                if stream is None:
+                    if not _open_stream():
+                        time.sleep(1.0)
+                        continue
+
+                try:
+                    frame = stream.read(512, exception_on_overflow=False)
+                except Exception:
+                    continue
+
+                rms = self._calculate_rms(frame)
+                self.energy_window.append(rms)
+                dynamic_threshold = max(np.mean(self.energy_window) * 2.5, self.energy_threshold)
+
+                debug_counter += 1
+                if debug_counter % 500 == 0:
+                    self.logger.info(f"Energy: rms={rms:.0f}, threshold={dynamic_threshold:.0f}, window_mean={np.mean(self.energy_window):.0f}")
+
+                if rms > dynamic_threshold:
+                    if self.vad and not self._contains_voice(frame):
+                        continue
+                    self._emit_detection(confidence=min(rms / dynamic_threshold, 1.0), method="energy")
+                    time.sleep(1.0)
+        finally:
+            _close_stream()
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def _emit_detection(self, confidence: float, method: str) -> None:
+        """Notify the robot brain that the wake word was heard."""
+
+        if not self.brain:
+            return
+
+        self.logger.info(f"Wake word detected (method={method}, confidence={confidence:.2f})")
+        event = RobotEvent(
+            type='wake_word_detected',
+            source='wake_word',
+            data={'confidence': confidence, 'method': method, 'keyword': self.keyword},
+            priority=2,
+        )
+        try:
+            self.brain.emit_event(event)
+        except Exception as exc:
+            self.logger.error(f"Failed to emit wake-word event: {exc}")
+
+    def _porcupine_ready(self) -> bool:
+        """Return True if Porcupine should be used."""
+
+        if not PORCUPINE_AVAILABLE or not self.access_key:
+            return False
+        if self.model_path.is_file():
+            return True
+        # Allow Porcupine to leverage its bundled keyword list when no custom
+        # .ppn file is available (it contains a "hey {keyword}" fallback).
+        return True
+
+    def _build_porcupine_instance(self):
+        """Create a configured Porcupine instance."""
+
+        if self.model_path.is_file():
+            return pvporcupine.create(
+                access_key=self.access_key,
+                keyword_paths=[str(self.model_path)],
+                sensitivities=[self.sensitivity],
+            )
+        return pvporcupine.create(
+            access_key=self.access_key,
+            keywords=[self.keyword],
+            sensitivities=[self.sensitivity],
+        )
+
+    def _resolve_microphone_index(self, name_hint: Optional[str], explicit_index: Optional[int]) -> Optional[int]:
+        """Return the ALSA/PortAudio device index that best matches ``name_hint``."""
+
+        if explicit_index is not None:
+            return explicit_index
+
+        if not name_hint:
+            return None
+
+        from parts_used.audio_portaudio import get_pa
+        audio = get_pa()          # shared instance — do NOT terminate it
+        if audio is None:
+            return None
+        try:
+            for idx in range(audio.get_device_count()):
+                info = audio.get_device_info_by_index(idx)
+                device_name = info.get('name', '').lower()
+                if name_hint.lower() in device_name:
+                    return idx
+        except Exception as exc:
+            self.logger.warning(f"Failed to enumerate audio devices: {exc}")
+
+        return None
+
+    @staticmethod
+    def _calculate_rms(frame: bytes) -> float:
+        """Compute the root-mean-square energy for an audio frame."""
+
+        samples = np.frombuffer(frame, dtype=np.int16).astype(np.float64)
+        if samples.size == 0:
+            return 0.0
+        return float(np.sqrt(np.mean(np.square(samples))))
+
+    def _contains_voice(self, frame: bytes) -> bool:
+        """Use WebRTC VAD to determine if the frame contains speech."""
+
+        if not self.vad:
+            return True
+
+        try:
+            # WebRTC VAD only supports 8000, 16000, 32000, 48000 Hz
+            # If our rate doesn't match, skip VAD and rely on RMS only
+            rate = hardware_config.microphone_rate
+            if rate not in (8000, 16000, 32000, 48000):
+                return True
+            return self.vad.is_speech(frame, rate)
+        except Exception:
+            return True

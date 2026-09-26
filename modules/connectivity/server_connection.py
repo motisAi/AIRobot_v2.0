@@ -32,7 +32,12 @@ import hashlib
 # Import modules
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
-from hardware.sim7600x_controller import SIM7600XController
+# SIM7600X is optional (needs pyserial + the 4G HAT); guard so this module can
+# be imported on machines without the modem/serial stack.
+try:
+    from parts_used.sim7600x_modem import SIM7600XController
+except Exception:  # pragma: no cover - optional dependency
+    SIM7600XController = None
 from config.settings import config
 
 

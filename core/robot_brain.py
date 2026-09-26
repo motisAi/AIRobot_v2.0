@@ -6,11 +6,11 @@ Coordinates all modules and manages robot behavior.
 
 """
 
-import asyncio
 import threading
 import queue
 import time
 import logging
+import random
 from enum import Enum, auto
 from typing import Dict, List, Optional, Any, Callable
 from dataclasses import dataclass, field
@@ -24,7 +24,7 @@ from transitions import Machine
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
-from config.settings import config, system_config, behavior_config
+from config.settings import config, system_config, behavior_config, security_config, PROJECT_ROOT
 
 
 class RobotState(Enum):
@@ -70,6 +70,12 @@ class RobotEvent:
     timestamp: float = field(default_factory=time.time)
     requires_response: bool = False
     callback: Optional[Callable] = None
+
+    def __lt__(self, other):
+        """Allow PriorityQueue to break ties by timestamp."""
+        if not isinstance(other, RobotEvent):
+            return NotImplemented
+        return self.timestamp < other.timestamp
 
 
 @dataclass
@@ -134,13 +140,21 @@ class RobotBrain:
         
         # User management
         self.current_user = None
+        self.current_user_name = None
+        self.last_face_time = 0.0   # when a face was last recognised (for identity recency)
+        self.last_master_time = 0.0  # when the master was last recognised (guard grace)
         self.authenticated = False
         self.master_mode = False
+        self.guard_mode = False   # home-guard/security mode (master toggles it)
         
         # Timers and counters
         self.idle_timer = 0
         self.interaction_count = 0
         self.uptime_start = time.time()
+        
+        # AI Engine and Learning DB — set by main.py after construction
+        self.ai_engine = None
+        self.learning_db = None
         
     def _setup_state_machine(self):
         """Configure the state machine with transitions"""
@@ -221,6 +235,16 @@ class RobotBrain:
         self.logger.info("Entering IDLE state")
         self.idle_timer = time.time()
         self.current_task = None
+        # Notify external modules so they can resume passive listeners such as
+        # wake-word detection.
+        try:
+            self.emit_event(RobotEvent(
+                type='dialogue_idle',
+                source='brain',
+                priority=8
+            ))
+        except Exception as exc:  # pragma: no cover - defensive safeguard
+            self.logger.debug(f"Failed to emit dialogue_idle event: {exc}")
         
         # Check for queued tasks
         if not self.task_queue.empty():
@@ -228,29 +252,67 @@ class RobotBrain:
             self.execute_task(task)
     
     def on_start_listening(self):
-        """Called when starting to listen"""
+        """Called when starting to listen. Greets the user (by name when known)
+        or asks a newcomer for their name, then opens the command mic."""
         self.logger.info("Starting to listen for commands")
-        
-        # Notify audio module to start recording
-        if 'audio' in self.modules:
-            self.modules['audio'].start_recording()
-        
+
+        audio = self.modules.get('audio')
+
+        # Decide the spoken prompt based on who (if anyone) we recognise.
+        if self.authenticated and self.current_user_name:
+            prompt = f"How can I help you, {self.current_user_name}?"
+        elif self.authenticated:
+            prompt = "How can I help you?"
+        elif behavior_config.learn_new_faces:
+            # We don't know who this is — ask their name and route the next
+            # utterance into the enrollment flow.
+            prompt = behavior_config.unknown_person_response
+            self.working_memory['awaiting_name'] = True
+            self.working_memory['awaiting_name_time'] = time.time()
+        else:
+            prompt = "How can I help you?"
+
+        # Speak the prompt to completion (so we don't record our own voice),
+        # then open the command microphone.
+        if audio is not None and hasattr(audio, 'speak'):
+            try:
+                audio.speak(prompt, wait=True)
+            except Exception as e:
+                self.logger.warning("Greeting prompt failed: %s", e)
+
         # Visual feedback
         self.set_led_color('blue')
-        
-        # Set timeout for listening
-        asyncio.create_task(self._listening_timeout())
+
+        # Notify speech module to start listening
+        if 'speech' in self.modules:
+            self.modules['speech'].listen_for_command()
+
+        # Set timeout for listening (thread-safe, no asyncio)
+        threading.Thread(target=self._listening_timeout, daemon=True).start()
     
     def on_process_speech(self, text: str):
-        """Process received speech"""
+        """Process received speech using the AI engine when available."""
         self.logger.info(f"Processing speech: {text}")
         
         # Add to working memory
         self.working_memory['last_input'] = text
         self.working_memory['input_time'] = time.time()
+        self.interaction_count += 1
         
-        # Analyze intent
-        intent = self._analyze_intent(text)
+        # Log conversation in persistent DB
+        if self.learning_db:
+            self.learning_db.log_conversation('user', text, user_id=self.current_user)
+        
+        # Check if we're expecting a name (after "What's your name?")
+        if self.working_memory.get('awaiting_name'):
+            self._learn_new_person_name(text)
+            return
+        
+        # Analyze intent (AI-powered when available)
+        if self.ai_engine:
+            intent = self.ai_engine.analyze_intent(text)
+        else:
+            intent = self._analyze_intent(text)
         
         # Make decision
         action = self._make_decision(intent)
@@ -262,17 +324,21 @@ class RobotBrain:
             self.generate_response()
     
     def on_generate_response(self):
-        """Generate and deliver response"""
+        """Generate and deliver response using AI engine."""
         self.logger.info("Generating response")
         
         response = self._generate_response_text()
+        
+        # Log assistant response in persistent DB
+        if self.learning_db and response:
+            self.learning_db.log_conversation('assistant', response, user_id=self.current_user)
         
         # Speak response
         if 'audio' in self.modules and response:
             self.modules['audio'].speak(response)
         
-        # Return to idle after response
-        asyncio.create_task(self._response_complete())
+        # Return to idle after response (thread-safe)
+        threading.Thread(target=self._response_complete, daemon=True).start()
     
     def on_execute_task(self, task: Dict[str, Any]):
         """Execute a specific task"""
@@ -289,32 +355,83 @@ class RobotBrain:
             self.start_observing()
         elif task_type == 'learning':
             self.start_learning(task)
+        elif task_type == 'device_control':
+            threading.Thread(target=self._execute_device_control, args=(task,), daemon=True).start()
         else:
-            # Generic task execution
-            asyncio.create_task(self._execute_generic_task(task))
+            # Generic task execution (threaded)
+            threading.Thread(target=self._execute_generic_task, args=(task,), daemon=True).start()
+
+    def _execute_device_control(self, task: Dict[str, Any]):
+        """Send a real-world command to the microcontroller and confirm by voice."""
+        params = task.get('parameters', {}) or {}
+        action = params.get('action', 'on')
+        target = params.get('target', 'device')
+        hw = self.modules.get('hardware')
+        spoken_action = {
+            'on': 'turned on', 'off': 'turned off',
+            'open': 'opened', 'close': 'closed',
+        }.get(action, action)
+
+        try:
+            reply = None
+            if hw is not None and hasattr(hw, 'send_command'):
+                if action in ('on', 'off'):
+                    reply = hw.set_output(target, action == 'on')
+                else:
+                    reply = hw.send_command(action, target=target)
+
+            connected = bool(getattr(hw, 'connected', False)) if hw is not None else False
+            if hw is None:
+                message = "I don't have a microcontroller to control that yet."
+            elif not connected:
+                # Log-only mode: acknowledge but be honest.
+                message = (f"Okay, I would have {spoken_action} the {target}, but no "
+                           f"microcontroller is connected yet.")
+            else:
+                message = f"Okay, I {spoken_action} the {target}."
+
+            self.emit_event(RobotEvent(type='speak', source='brain', data={'text': message}))
+            self.logger.info("device_control %s %s -> %s", action, target, reply)
+        except Exception as e:
+            self.logger.error(f"Device control failed: {e}")
+            self.emit_event(RobotEvent(type='speak', source='brain',
+                                       data={'text': f"Sorry, I couldn't control the {target}."}))
+        finally:
+            self.return_idle()
     
     def on_start_moving(self, movement_data: Dict):
         """Start movement action"""
         self.logger.info(f"Starting movement: {movement_data}")
-        
-        if 'hardware' in self.modules:
-            self.modules['hardware'].move(movement_data)
-        
-        # Monitor movement completion
-        asyncio.create_task(self._monitor_movement())
-    
+
+        hw = self.modules.get('hardware')
+        if hw is not None:
+            # The microcontroller bridge exposes move(); older ESP32 controllers
+            # expose discrete move_* methods. Route defensively.
+            if hasattr(hw, 'move'):
+                hw.move(movement_data)
+            elif hasattr(hw, 'send_command'):
+                params = movement_data if isinstance(movement_data, dict) else {}
+                hw.send_command('move', **params)
+            else:
+                self.logger.warning("Hardware module has no movement API; ignoring")
+
+        # Monitor movement completion (threaded)
+        threading.Thread(target=self._monitor_movement, daemon=True).start()
+
     def on_emergency_stop(self):
         """Handle emergency stop"""
         self.logger.critical("EMERGENCY STOP ACTIVATED!")
-        
+
         # Stop all motors immediately
-        if 'hardware' in self.modules:
-            self.modules['hardware'].stop_all_motors()
-        
+        hw = self.modules.get('hardware')
+        if hw is not None and hasattr(hw, 'stop_all_motors'):
+            hw.stop_all_motors()
+
         # Alert
         self.set_led_color('red')
-        if 'audio' in self.modules:
-            self.modules['audio'].play_alert_sound()
+        audio = self.modules.get('audio')
+        if audio is not None and hasattr(audio, 'play_alert_sound'):
+            audio.play_alert_sound()
         
         # Save state for debugging
         self._save_emergency_state()
@@ -330,8 +447,8 @@ class RobotBrain:
             'state': self.state.name
         })
         
-        # Attempt recovery
-        asyncio.create_task(self._attempt_recovery(error))
+        # Attempt recovery (threaded)
+        threading.Thread(target=self._attempt_recovery, args=(error,), daemon=True).start()
     
     def on_start_patrol(self):
         """Start patrol mode"""
@@ -341,8 +458,8 @@ class RobotBrain:
         self.working_memory['patrol_start'] = time.time()
         self.working_memory['patrol_waypoints'] = self._generate_patrol_route()
         
-        # Start patrol loop
-        asyncio.create_task(self._patrol_loop())
+        # Start patrol loop (threaded)
+        threading.Thread(target=self._patrol_loop, daemon=True).start()
     
     def on_start_learning(self, learning_data: Dict):
         """Enter learning mode"""
@@ -351,8 +468,8 @@ class RobotBrain:
         # Set learning context
         self.working_memory['learning_context'] = learning_data
         
-        # Start learning process
-        asyncio.create_task(self._learning_process(learning_data))
+        # Start learning process (threaded)
+        threading.Thread(target=self._learning_process, args=(learning_data,), daemon=True).start()
     
     def on_start_observing(self):
         """Start observation mode"""
@@ -360,10 +477,11 @@ class RobotBrain:
         
         # Enable all sensors
         if 'vision' in self.modules:
-            self.modules['vision'].enable_continuous_capture()
+            if hasattr(self.modules['vision'], 'enable_continuous_capture'):
+                self.modules['vision'].enable_continuous_capture()
         
-        # Start analysis
-        asyncio.create_task(self._observation_loop())
+        # Start analysis (threaded)
+        threading.Thread(target=self._observation_loop, daemon=True).start()
     
     def on_raise_alert(self, alert_data: Dict):
         """Handle alert state"""
@@ -465,9 +583,11 @@ class RobotBrain:
     def _handle_builtin_event(self, event: RobotEvent):
         """Handle built-in system events"""
         
+        # NOTE: wake_word_detected and speech_recognized are intentionally NOT
+        # handled here. The ConversationManager (main._handle_wake_word) owns the
+        # full wake -> multi-turn dialogue flow. Handling them here too would run
+        # a second, conflicting listen loop and fight over the command mic.
         event_map = {
-            'wake_word_detected': lambda: self.wake_word_heard(),
-            'speech_recognized': lambda: self.speech_received(event.data.get('text')),
             'face_detected': lambda: self._handle_face_detection(event.data),
             'object_detected': lambda: self._handle_object_detection(event.data),
             'movement_complete': lambda: self.return_idle(),
@@ -481,13 +601,38 @@ class RobotBrain:
     
     # Decision Making
     
+    @staticmethod
+    def _detect_device_control(text_lower: str) -> Optional[Dict[str, Any]]:
+        """Detect real-world device commands like 'turn on the light'."""
+        on_phrases = ("turn on", "switch on", "power on", "activate", "enable")
+        off_phrases = ("turn off", "switch off", "power off", "deactivate", "disable")
+        action = None
+        if any(p in text_lower for p in on_phrases):
+            action = "on"
+        elif any(p in text_lower for p in off_phrases):
+            action = "off"
+        elif "open" in text_lower:
+            action = "open"
+        elif "close" in text_lower or "shut" in text_lower:
+            action = "close"
+        if action is None:
+            return None
+        devices = ("light", "lights", "lamp", "fan", "door", "plug", "socket",
+                   "outlet", "tv", "heater", "ac", "curtain", "blind", "gate",
+                   "pump", "relay", "led")
+        for d in devices:
+            if d in text_lower:
+                target = d[:-1] if d.endswith("s") else d
+                return {"action": action, "target": target}
+        return None
+
     def _analyze_intent(self, text: str) -> Dict[str, Any]:
         """
         Analyze user intent from speech text
-        
+
         Args:
             text: Speech text to analyze
-            
+
         Returns:
             Intent dictionary with type and entities
         """
@@ -500,7 +645,15 @@ class RobotBrain:
         
         # Convert to lowercase for analysis
         text_lower = text.lower()
-        
+
+        # Device control ("turn on the light") — checked before movement.
+        device = self._detect_device_control(text_lower)
+        if device is not None:
+            intent['type'] = 'device_control'
+            intent['entities'] = device
+            intent['confidence'] = 0.9
+            return intent
+
         # Movement commands
         if any(word in text_lower for word in ['move', 'go', 'come', 'follow', 'stop']):
             intent['type'] = 'movement'
@@ -569,100 +722,109 @@ class RobotBrain:
             Action to execute or None
         """
         action = None
-        
+
+        # LLM-provided intents may omit 'type' — default to conversation.
+        intent_type = intent.get('type') or 'conversation'
+
         # Check permissions first
-        if not self._check_permissions(intent['type']):
+        if not self._check_permissions(intent_type):
+            if not self.authenticated:
+                msg = "I need to see your face first. Please look at the camera so I can identify you."
+            else:
+                msg = "Sorry, only my master can give me physical commands like that."
             return {
                 'type': 'response',
-                'message': 'Sorry, you need to be authenticated for that action.'
+                'message': msg
             }
-        
+
+        # Conversational intents (query, object questions, social, plain
+        # conversation) return None so on_process_speech falls through to
+        # generate_response() -> AIEngine.think(), which answers naturally and
+        # can search the web. Only physical/stateful intents become tasks.
+        if intent_type in ('query', 'object_interaction', 'social', 'conversation'):
+            return None
+
         # Make decision based on intent type
-        if intent['type'] == 'movement':
+        if intent_type == 'movement':
             action = {
                 'type': 'movement',
                 'name': 'move_robot',
-                'parameters': intent['entities']
+                'parameters': intent.get('entities', {})
             }
-        
-        elif intent['type'] == 'query':
-            action = {
-                'type': 'query',
-                'name': 'answer_query',
-                'query_type': intent['entities'].get('query_type')
-            }
-        
-        elif intent['type'] == 'object_interaction':
-            action = {
-                'type': 'vision',
-                'name': 'find_object',
-                'parameters': intent['entities']
-            }
-        
-        elif intent['type'] == 'learning':
+
+        elif intent_type == 'learning':
             action = {
                 'type': 'learning',
                 'name': 'learn_information',
                 'data': {'source': 'user_command'}
             }
-        
-        elif intent['type'] == 'system':
-            command = intent['entities'].get('command')
+
+        elif intent_type == 'device_control':
+            # Route real-world commands ("turn on the light") to the
+            # microcontroller bridge (ESP32 / Pi Zero). Handled in on_execute_task.
+            action = {
+                'type': 'device_control',
+                'name': 'device_command',
+                'parameters': intent.get('entities', {}),
+            }
+
+        elif intent_type == 'system':
+            command = intent.get('entities', {}).get('command')
             if command == 'shutdown' and self.master_mode:
                 action = {
                     'type': 'system',
                     'name': 'shutdown'
                 }
-        
-        elif intent['type'] == 'social':
-            action = {
-                'type': 'social',
-                'name': 'social_response',
-                'greeting_type': intent['entities'].get('greeting_type')
-            }
-        
+
         return action
     
     def _check_permissions(self, action_type: str) -> bool:
         """
-        Check if current user has permission for action
+        Check if current user has permission for the requested action.
         
-        Args:
-            action_type: Type of action to check
-            
-        Returns:
-            bool: True if permitted
+        Permission tiers:
+          - Public (anyone): social, query, conversation
+          - Authenticated (known face/voice): object_interaction, learning
+          - Master only: movement, system, hardware commands
         """
-        # Public actions (no auth required)
-        public_actions = ['social', 'query', 'conversation']
-        
-        if action_type in public_actions:
+        # Public actions — no auth needed
+        if action_type in ('social', 'query', 'conversation'):
             return True
         
-        # Check authentication
+        # Everything else requires authentication
         if not self.authenticated:
             return False
         
-        # Master-only actions
-        master_only = ['system', 'learning']
-        
+        # Physical / hardware / system actions — master only
+        master_only = ('system', 'movement', 'hardware', 'device_control')
         if action_type in master_only and not self.master_mode:
+            self.logger.warning(
+                "Non-master user %s attempted privileged action: %s",
+                self.current_user, action_type,
+            )
             return False
         
         return True
     
     def _generate_response_text(self) -> str:
-        """
-        Generate appropriate response text
-        
-        Returns:
-            Response text to speak
-        """
-        # Check context
+        """Generate appropriate response text using AI engine when available."""
         last_input = self.working_memory.get('last_input', '')
         current_task = self.current_task
         
-        # Generate based on context
+        # Use AI engine for intelligent responses
+        if self.ai_engine and last_input:
+            # Build context from sensors
+            context = {}
+            if 'object_detection' in self.modules:
+                objs = self.modules['object_detection'].get_current_objects()
+                if objs:
+                    context['objects'] = [o['label'] for o in objs[:5]]
+            from datetime import datetime as dt
+            context['time'] = dt.now().strftime('%H:%M')
+            
+            return self.ai_engine.think(last_input, context=context)
+        
+        # Fallback: rule-based responses
         if current_task and current_task.get('type') == 'social':
             greeting_type = current_task.get('greeting_type', 'greeting')
             if greeting_type == 'greeting':
@@ -677,7 +839,6 @@ class RobotBrain:
             elif query_type == 'name':
                 return f"My name is {behavior_config.robot_name}"
         
-        # Default response
         return "I understand. How can I help you?"
     
     # Memory Management
@@ -752,146 +913,123 @@ class RobotBrain:
         
         return sorted(relevant, key=lambda x: x.importance, reverse=True)
     
-    # Async Helper Methods
+    # Threaded Helper Methods
     
-    async def _listening_timeout(self):
+    def _listening_timeout(self):
         """Timeout for listening state"""
-        await asyncio.sleep(5.0)  # 5 second timeout
+        time.sleep(10.0)  # 10 second timeout (must be > recording time)
         
         if self.state == RobotState.LISTENING:
             self.logger.info("Listening timeout, returning to idle")
             self.return_idle()
     
-    async def _response_complete(self):
+    def _response_complete(self):
         """Wait for response completion"""
-        await asyncio.sleep(0.5)  # Brief pause
+        time.sleep(0.5)  # Brief pause
         self.return_idle()
     
-    async def _execute_generic_task(self, task: Dict):
+    def _execute_generic_task(self, task: Dict):
         """Execute a generic task"""
         try:
-            # Simulate task execution
-            await asyncio.sleep(2.0)
-            
+            time.sleep(2.0)
             self.logger.info(f"Task {task.get('name')} completed")
             self.return_idle()
-            
         except Exception as e:
             self.logger.error(f"Task execution failed: {e}")
             self.error_occurred(e)
     
-    async def _monitor_movement(self):
+    def _monitor_movement(self):
         """Monitor movement completion"""
-        # Wait for movement complete event
-        timeout = 10.0  # 10 second timeout
+        timeout = 10.0
         start_time = time.time()
         
         while time.time() - start_time < timeout:
             if self.state != RobotState.MOVING:
                 break
-            await asyncio.sleep(0.1)
+            time.sleep(0.1)
         
         if self.state == RobotState.MOVING:
             self.logger.warning("Movement timeout")
             self.return_idle()
     
-    async def _attempt_recovery(self, error: Exception):
+    def _attempt_recovery(self, error: Exception):
         """Attempt to recover from error"""
         self.logger.info(f"Attempting recovery from {error}")
+        time.sleep(2.0)
         
-        # Wait a moment
-        await asyncio.sleep(2.0)
-        
-        # Try to return to idle
         try:
             self.return_idle()
             self.logger.info("Recovery successful")
         except Exception as e:
             self.logger.error(f"Recovery failed: {e}")
-            # Last resort - emergency stop
             self.emergency_stop()
     
-    async def _patrol_loop(self):
+    def _patrol_loop(self):
         """Main patrol loop"""
         waypoints = self.working_memory.get('patrol_waypoints', [])
         waypoint_index = 0
         
         while self.state == RobotState.PATROLLING:
             if waypoints:
-                # Move to next waypoint
                 waypoint = waypoints[waypoint_index]
                 
-                # Navigate to waypoint
                 self.emit_event(RobotEvent(
                     type='navigate_to',
                     source='brain',
                     data={'destination': waypoint}
                 ))
                 
-                # Wait for arrival or timeout
-                await asyncio.sleep(10.0)
-                
-                # Next waypoint
+                time.sleep(10.0)
                 waypoint_index = (waypoint_index + 1) % len(waypoints)
             
-            # Check for interesting observations
-            if random.random() < 0.1:  # 10% chance
+            if random.random() < 0.1:
                 self.start_observing()
-                await asyncio.sleep(5.0)
+                time.sleep(5.0)
             
-            await asyncio.sleep(1.0)
+            time.sleep(1.0)
     
-    async def _learning_process(self, learning_data: Dict):
+    def _learning_process(self, learning_data: Dict):
         """Process learning task"""
         self.logger.info("Starting learning process")
         
         learning_type = learning_data.get('type', 'general')
         
         if learning_type == 'face':
-            # Learn new face
             if 'vision' in self.modules:
-                result = await self.modules['vision'].learn_face(learning_data)
+                result = self.modules['vision'].learn_face(learning_data)
                 self.add_memory(result, 'long_term', importance=0.9)
         
         elif learning_type == 'object':
-            # Learn new object
-            if 'vision' in self.modules:
-                result = await self.modules['vision'].learn_object(learning_data)
-                self.add_memory(result, 'long_term', importance=0.7)
+            if 'object_detection' in self.modules:
+                objects = self.modules['object_detection'].get_current_objects()
+                if objects and self.learning_db:
+                    for obj in objects:
+                        self.learning_db.save_object(obj['label'])
+                self.add_memory(objects, 'long_term', importance=0.7)
         
         elif learning_type == 'voice':
-            # Learn voice profile
-            if 'audio' in self.modules:
-                result = await self.modules['audio'].learn_voice(learning_data)
+            if 'audio' in self.modules and hasattr(self.modules['audio'], 'learn_voice'):
+                result = self.modules['audio'].learn_voice(learning_data)
                 self.add_memory(result, 'long_term', importance=0.8)
         
-        # Return to previous state
-        await asyncio.sleep(1.0)
+        time.sleep(1.0)
         self.return_idle()
     
-    async def _observation_loop(self):
+    def _observation_loop(self):
         """Continuous observation loop"""
-        observation_duration = 10.0  # Observe for 10 seconds
+        observation_duration = 10.0
         start_time = time.time()
         
         while time.time() - start_time < observation_duration:
             if self.state != RobotState.OBSERVING:
                 break
             
-            # Get vision data
-            if 'vision' in self.modules:
-                observations = self.modules['vision'].get_current_observations()
-                
-                # Process observations
+            if 'object_detection' in self.modules:
+                observations = self.modules['object_detection'].get_current_objects()
                 for obs in observations:
-                    if obs['type'] == 'person':
-                        self._handle_person_observation(obs)
-                    elif obs['type'] == 'object':
-                        self._handle_object_observation(obs)
-                    elif obs['type'] == 'anomaly':
-                        self.raise_alert({'message': f"Anomaly detected: {obs['description']}"})
+                    self._handle_object_observation(obs)
             
-            await asyncio.sleep(0.5)
+            time.sleep(0.5)
         
         self.return_idle()
     
@@ -901,33 +1039,93 @@ class RobotBrain:
         """Handle face detection event"""
         face_id = data.get('face_id')
         confidence = data.get('confidence', 0)
+        is_master = data.get('is_master', False)
+        name = data.get('name', 'unknown')
         
-        if face_id == 'unknown' and confidence > 0.7:
-            # Unknown person
-            if behavior_config.learn_new_faces:
-                response = behavior_config.unknown_person_response
-                self.emit_event(RobotEvent(
-                    type='speak',
-                    source='brain',
-                    data={'text': response}
-                ))
+        now = time.time()
+        # Cooldown: don't greet the same face within 30 seconds
+        last_greet = getattr(self, '_face_greet_times', {})
+        if not hasattr(self, '_face_greet_times'):
+            self._face_greet_times = {}
+            last_greet = self._face_greet_times
+
+        # Record recency of a RECOGNISED face (drives identity verification in
+        # the conversation — she won't claim to know you if she hasn't seen you).
+        if face_id and face_id != 'unknown':
+            self.last_face_time = now
+
+        if face_id in last_greet and (now - last_greet[face_id]) < 30:
+            return  # Already greeted recently
+
+        # During an active conversation the ConversationManager owns the voice,
+        # so we update identity silently and skip passive greetings.
+        suppress = getattr(self, '_suppress_greetings', False)
+
+        if face_id == 'unknown':
+            # A stranger is in frame — drop any master privileges. But ONE bad
+            # recognition frame must not wipe identity: within the configured
+            # identity grace, treat an 'unknown' as a mis-read; otherwise require
+            # a few consecutive unknowns before actually clearing (main.py uses
+            # the same >=3 pattern for guard alerts).
+            if self.master_mode or self.current_user is not None:
+                grace = getattr(security_config, 'identity_memory_seconds', 60.0)
+                if now - self.last_master_time < grace:
+                    self._face_greet_times['unknown'] = now
+                    return  # recent master — almost certainly a mis-recognition
+                self._brain_unknown_streak = getattr(self, '_brain_unknown_streak', 0) + 1
+                if self._brain_unknown_streak < 3:
+                    self._face_greet_times['unknown'] = now
+                    return
+                self.logger.info("Unknown face x%d — clearing previous identity/master",
+                                 self._brain_unknown_streak)
+                self._brain_unknown_streak = 0
+                self.master_mode = False
+                self.authenticated = False
+                self.current_user = None
+                self.current_user_name = None
+                if self.ai_engine:
+                    self.ai_engine._current_user = None
+            # NOTE: asking the name + enrolling is handled by main._handle_face_detected,
+            # which starts a real conversation session (so the command mic actually
+            # listens). We only mark the greet time here for the cooldown.
+            self._face_greet_times['unknown'] = now
         
-        elif face_id == security_config.master_user_id:
+        elif is_master or face_id == security_config.master_user_id:
             # Master detected
             self.master_mode = True
             self.authenticated = True
+            self._brain_unknown_streak = 0
+            self.last_master_time = now
             self.current_user = face_id
-            
-            self.emit_event(RobotEvent(
-                type='speak',
-                source='brain',
-                data={'text': f"Welcome back, Master!"}
-            ))
+            self.current_user_name = name if name and name != 'unknown' else None
+            if self.ai_engine:
+                self.ai_engine._current_user = face_id
+
+            self._face_greet_times[face_id] = now
+            if not suppress:
+                # Spoken welcome is owned by main._welcome_master (wave +
+                # emotion-aware opener + starts a listening session); the brain
+                # stays silent here to avoid a double "Welcome back" greeting.
+                pass
         
         else:
-            # Known person
+            # Known person (not the master) — ensure master privileges are off.
+            self._brain_unknown_streak = 0
+            self.master_mode = False
             self.authenticated = True
             self.current_user = face_id
+            self.current_user_name = name if name and name != 'unknown' else None
+            if self.ai_engine:
+                self.ai_engine._current_user = face_id
+
+            self._face_greet_times[face_id] = now
+            # Personalized greeting
+            if not suppress:
+                self.emit_event(RobotEvent(
+                    type='speak',
+                    source='brain',
+                    data={'text': f"Hello {name}! Nice to see you again."}
+                ))
             
             # Recall memories about this person
             memories = self.recall_memory(face_id)
@@ -935,13 +1133,63 @@ class RobotBrain:
                 last_interaction = memories[0].context.get('last_seen')
                 # Personalized greeting based on memory
     
+    def _learn_new_person_name(self, text: str):
+        """Learn the name of a new person from speech input."""
+        self.working_memory.pop('awaiting_name', None)
+        self.working_memory.pop('awaiting_name_time', None)
+        
+        # Extract name — strip common prefixes
+        name = text.strip()
+        for prefix in ['my name is', 'i am', "i'm", 'call me', 'it is', "it's", 'this is']:
+            if name.lower().startswith(prefix):
+                name = name[len(prefix):].strip()
+                break
+        name = name.strip('.,!? ').title()
+        
+        if not name:
+            self.emit_event(RobotEvent(
+                type='speak', source='brain',
+                data={'text': "Sorry, I didn't catch your name. Could you say it again?"}
+            ))
+            self.working_memory['awaiting_name'] = True
+            return
+        
+        self.logger.info(f"Learning new face for: {name}")
+        
+        # Trigger face learning in the face recognition module
+        face_module = self.modules.get('face_recognition')
+        if face_module:
+            success = face_module.learn_face(name)
+            if success:
+                self.emit_event(RobotEvent(
+                    type='speak', source='brain',
+                    data={'text': f"Nice to meet you, {name}! I'll remember your face."}
+                ))
+                if self.learning_db:
+                    self.learning_db.log_conversation(
+                        'system', f'Learned new face: {name}', user_id=name.lower()
+                    )
+            else:
+                self.emit_event(RobotEvent(
+                    type='speak', source='brain',
+                    data={'text': f"Nice to meet you, {name}! I had trouble saving your face, but I'll try again next time."}
+                ))
+        else:
+            self.emit_event(RobotEvent(
+                type='speak', source='brain',
+                data={'text': f"Nice to meet you, {name}!"}
+            ))
+        
+        # Return to idle
+        threading.Thread(target=self._response_complete, daemon=True).start()
+    
     def _handle_object_detection(self, data: Dict):
         """Handle object detection event"""
         objects = data.get('objects', [])
         
         for obj in objects:
             # Add to working memory
-            self.working_memory[f"object_{obj['class']}"] = {
+            self.working_memory[f"object_{obj.get('label') or obj.get('class') or 'object'}"] = {
                 'location': obj.get('location'),
                 'confidence': obj.get('confidence'),
                 'time': time.time()
@@ -950,7 +1198,7 @@ class RobotBrain:
             # Check if this is what we're looking for
             if self.current_task and self.current_task.get('type') == 'find_object':
                 target = self.current_task.get('target')
-                if target and target.lower() in obj['class'].lower():
+                if target and target.lower() in (obj.get('label') or obj.get('class') or '').lower():
                     # Found the object!
                     self.emit_event(RobotEvent(
                         type='object_found',
@@ -1182,7 +1430,6 @@ class RobotBrain:
 
 
 # Import for other modules
-import random  # For patrol randomness
 
 if __name__ == "__main__":
     """Test the Robot Brain"""

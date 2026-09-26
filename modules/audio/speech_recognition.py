@@ -1,324 +1,596 @@
+"""Speech recognition module that prefers Whisper but falls back to
+``speech_recognition`` when GPU support is unavailable.
+
+The implementation records audio on demand (when the wake word fires) so it can
+run continuously on resource-constrained Jetson hardware without wasting CPU
+cycles.
 """
-Speech Recognition Module
-=========================
-Converts speech to text using OpenAI Whisper (offline).
-Optimized for Raspberry Pi with model selection based on available resources.
 
+from __future__ import annotations
 
-"""
-
-import time
-import threading
-import queue
+import json
 import logging
-import numpy as np
-from pathlib import Path
-from typing import Optional, Dict, Any, Callable
-import wave
+import queue
 import tempfile
-import os
+import threading
+import time
+import wave
+from pathlib import Path
+from typing import List, Optional
 
-# Audio libraries
+import numpy as np
+
 try:
     import pyaudio
-    import speech_recognition as sr
-    SR_AVAILABLE = True
-except ImportError:
-    SR_AVAILABLE = False
-    print("Warning: speech_recognition not installed")
+except ImportError:  # pragma: no cover - optional dependency
+    pyaudio = None
 
-# Whisper
+try:
+    import webrtcvad
+    VAD_AVAILABLE = True
+except Exception:  # pragma: no cover
+    webrtcvad = None
+    VAD_AVAILABLE = False
+
+try:
+    from vosk import Model as VoskModel, KaldiRecognizer, SetLogLevel as _VoskSetLogLevel
+    _VoskSetLogLevel(-1)
+    VOSK_AVAILABLE = True
+except Exception:  # pragma: no cover
+    VOSK_AVAILABLE = False
+
 try:
     import whisper
     WHISPER_AVAILABLE = True
-except ImportError:
+except ImportError:  # pragma: no cover - optional dependency
+    whisper = None
     WHISPER_AVAILABLE = False
-    print("Warning: OpenAI Whisper not installed")
 
-# Import configuration
-import sys
-sys.path.append(str(Path(__file__).parent.parent.parent))
-from config.settings import config, model_config, hardware_config
+try:
+    import speech_recognition as sr
+    SR_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional dependency
+    sr = None
+    SR_AVAILABLE = False
+
+from config.settings import model_config, hardware_config, behavior_config
+from core.robot_brain import RobotEvent
+
+# behavior.language -> Google STT BCP-47 code
+_STT_LANG = {"en": "en-US", "he": "he-IL"}
 
 
 class SpeechRecognitionModule:
-    """
-    Speech recognition using OpenAI Whisper for offline processing.
-    Falls back to Google Speech Recognition if Whisper unavailable.
-    """
-    
+    """Handles voice capture and transcription."""
+
     def __init__(self, brain=None):
-        """
-        Initialize speech recognition module
-        
-        Args:
-            brain: Reference to robot brain for event emission
-        """
-        
-        # Logging
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.info("Initializing Speech Recognition Module")
-        
-        # Brain reference
         self.brain = brain
-        
-        # Configuration
-        self.model_name = model_config.whisper_model
-        self.language = model_config.whisper_language
-        self.device = model_config.whisper_device
-        
-        # Audio settings
-        self.sample_rate = hardware_config.microphone_rate
+
+        self.sample_rate = getattr(hardware_config, 'speech_microphone_rate', hardware_config.microphone_rate)
         self.chunk_size = hardware_config.microphone_chunk
         self.timeout = hardware_config.microphone_timeout
         self.phrase_limit = hardware_config.microphone_phrase_time_limit
-        
-        # State
+
+        self.device_index = hardware_config.speech_device_index
+        self.device_name = hardware_config.speech_microphone_name
+
+        # Resolve device index by name at init if not explicitly set
+        if self.device_index is None and self.device_name:
+            self.device_index = self._resolve_microphone_index()
+            if self.device_index is not None:
+                self.logger.info(f"Resolved speech mic '{self.device_name}' -> device {self.device_index}")
+            else:
+                self.logger.warning(f"Could not resolve speech mic '{self.device_name}'")
+
         self.running = False
-        self.recording = False
-        self.processing = False
-        
-        # Whisper model
-        self.whisper_model = None
-        self.use_whisper = False
-        
-        # Speech recognizer (fallback)
-        self.recognizer = None
-        self.microphone = None
-        
-        # Audio buffer
-        self.audio_queue = queue.Queue()
-        self.audio_buffer = []
-        
-        # Threading
-        self.recognition_thread = None
-        self.recording_thread = None
-        
-        # Callbacks
-        self.speech_callback = None
-        self.error_callback = None
-        
-        # Statistics
-        self.recognition_count = 0
-        self.error_count = 0
-        self.average_processing_time = 0
-        
-        # Initialize recognition engine
-        self._initialize_engine()
-    
-    def _initialize_engine(self):
-        """Initialize speech recognition engine"""
-        
-        # Try Whisper first
-        if WHISPER_AVAILABLE:
-            try:
-                self._load_whisper_model()
-                self.use_whisper = True
-                self.logger.info(f"Using Whisper model: {self.model_name}")
-            except Exception as e:
-                self.logger.warning(f"Failed to load Whisper: {e}")
-        
-        # Fallback to speech_recognition
-        if SR_AVAILABLE and not self.use_whisper:
-            try:
-                self.recognizer = sr.Recognizer()
-                self.microphone = sr.Microphone(
-                    device_index=hardware_config.microphone_device_index,
-                    sample_rate=self.sample_rate,
-                    chunk_size=self.chunk_size
-                )
-                
-                # Adjust for ambient noise
-                with self.microphone as source:
-                    self.recognizer.adjust_for_ambient_noise(source, duration=1)
-                
-                self.logger.info("Using speech_recognition with Google Speech API")
-            except Exception as e:
-                self.logger.error(f"Failed to initialize speech_recognition: {e}")
-        
-        if not self.use_whisper and not self.recognizer:
-            self.logger.error("No speech recognition engine available!")
-    
-    def _load_whisper_model(self):
-        """Load Whisper model with optimization for Raspberry Pi"""
-        
-        # Check available memory
-        import psutil
-        available_memory = psutil.virtual_memory().available / (1024**3)  # GB
-        
-        # Auto-select model based on available memory
-        if available_memory < 2:
-            actual_model = "tiny"
-            self.logger.warning(f"Low memory ({available_memory:.1f}GB), using tiny model")
-        elif available_memory < 4:
-            actual_model = "base" if self.model_name != "tiny" else "tiny"
-        else:
-            actual_model = self.model_name
-        
-        # Load model
-        self.logger.info(f"Loading Whisper model '{actual_model}'...")
-        
-        self.whisper_model = whisper.load_model(
-            actual_model,
-            device=self.device,
-            download_root=str(Path(config.PROJECT_ROOT) / "data" / "models")
-        )
-        
-        self.model_name = actual_model
-        self.logger.info(f"Whisper model '{actual_model}' loaded successfully")
-    
-    def start(self):
-        """Start speech recognition"""
-        
+        self.listener_lock = threading.Lock()
+        self.active_listener: Optional[threading.Thread] = None
+        self._stop_recording = threading.Event()
+
+        self.whisper_model_name = model_config.whisper_model
+        self.whisper_language = model_config.whisper_language
+        self.whisper_device = model_config.whisper_device
+        self.whisper_instance = None
+
+        self.recognizer = sr.Recognizer() if SR_AVAILABLE else None
+
+        # Recognition language (Google STT), from the single behavior.language switch.
+        _lang = (getattr(behavior_config, 'language', 'en') or 'en').lower()
+        self.stt_language = _STT_LANG.get(_lang[:2], "en-US")
+
+        # STT mode + offline Vosk fallback
+        self.stt_mode = getattr(model_config, 'stt_mode', 'auto').lower()
+        self.vosk_model_path = getattr(model_config, 'vosk_model_path', '')
+        self._vosk_model = None
+        self._vad = webrtcvad.Vad(2) if VAD_AVAILABLE else None
+
+    # ------------------------------------------------------------------
+    def start(self) -> None:
+        """Flag the service as available. Heavy models load lazily."""
+
         if self.running:
-            self.logger.warning("Speech recognition already running")
             return
-        
+
+        if pyaudio is None and not SR_AVAILABLE:
+            self.logger.error("PyAudio is required for command capture. Install portaudio bindings.")
+            return
+
         self.running = True
-        
-        # Start recognition thread
-        self.recognition_thread = threading.Thread(target=self._recognition_loop)
-        self.recognition_thread.daemon = True
-        self.recognition_thread.start()
-        
-        self.logger.info("Speech recognition started")
-    
-    def stop(self):
-        """Stop speech recognition"""
-        
+        self.logger.info("Speech recognition module ready (Whisper=%s)", WHISPER_AVAILABLE)
+
+    def stop(self) -> None:
+        """Stop active listeners."""
+
         self.running = False
-        self.recording = False
-        
-        # Wait for threads
-        if self.recognition_thread:
-            self.recognition_thread.join(timeout=2.0)
-        if self.recording_thread:
-            self.recording_thread.join(timeout=2.0)
-        
-        self.logger.info("Speech recognition stopped")
-    
-    def start_recording(self, duration: Optional[float] = None):
+        self._stop_recording.set()
+        if self.active_listener and self.active_listener.is_alive():
+            self.active_listener.join(timeout=2.0)
+        self.active_listener = None
+
+    # ------------------------------------------------------------------
+    # Synchronous, silence-aware capture for the conversation session
+    # ------------------------------------------------------------------
+    def capture_utterance(self, start_timeout: float = 12.0,
+                          end_silence: float = 1.2,
+                          max_seconds: float = 12.0) -> Optional[str]:
+        """Record ONE spoken sentence and return its transcript (or None).
+
+        Uses voice-activity detection so it stops as soon as you finish talking.
+        Returns None if the user says nothing within ``start_timeout`` seconds.
+        Blocking — call from the conversation loop, not the event thread.
         """
-        Start recording audio for recognition
-        
-        Args:
-            duration: Maximum duration in seconds (None for unlimited)
-        """
-        
-        if self.recording:
-            self.logger.warning("Already recording")
-            return
-        
-        self.recording = True
-        self.audio_buffer = []
-        
-        # Start recording thread
-        self.recording_thread = threading.Thread(
-            target=self._record_audio,
-            args=(duration,)
-        )
-        self.recording_thread.daemon = True
-        self.recording_thread.start()
-        
-        self.logger.info("Started recording")
-    
-    def stop_recording(self) -> Optional[str]:
-        """
-        Stop recording and process audio
-        
-        Returns:
-            Recognized text or None
-        """
-        
-        if not self.recording:
-            self.logger.warning("Not recording")
+        if pyaudio is None:
             return None
-        
-        self.recording = False
-        
-        # Wait for recording to finish
-        if self.recording_thread:
-            self.recording_thread.join(timeout=1.0)
-        
-        # Process recorded audio
-        if self.audio_buffer:
-            return self._process_audio_buffer()
-        
-        return None
-    
-    def _record_audio(self, duration: Optional[float] = None):
-        """
-        Record audio from microphone
-        
-        Args:
-            duration: Maximum duration in seconds
-        """
-        
-        if self.use_whisper:
-            self._record_for_whisper(duration)
-        else:
-            self._record_with_speech_recognition(duration)
-    
-    def _record_for_whisper(self, duration: Optional[float] = None):
-        """Record audio for Whisper processing"""
-        
+        from parts_used.audio_portaudio import get_pa
+        audio = get_pa()
+        if audio is None:
+            return None
+
+        TARGET = 16000
+        frame_ms = 30
+        # Open the command mic; prefer 16k, else 44.1k and resample per-frame.
+        stream = None
+        rate = TARGET
+        # A NAMED mic that is absent must not fall through to PortAudio 'default'
+        # (that would silently capture the wrong device / a loopback).
+        if self.device_name and self.device_index is None and not self.mic_available():
+            self.logger.error("Command mic '%s' not available — skipping capture", self.device_name)
+            return None
+        # Native rate first (USB PnP mic is 44.1k) to avoid paInvalidSampleRate spam.
+        for r in (44100, 48000, 16000):
+            try:
+                stream = audio.open(format=pyaudio.paInt16, channels=1, rate=r,
+                                    input=True, frames_per_buffer=int(r * frame_ms / 1000),
+                                    input_device_index=self.device_index)
+                rate = r
+                break
+            except Exception:
+                stream = None
+        if stream is None:
+            self.logger.error("Could not open command mic for capture")
+            return None
+
+        in_frame = int(rate * frame_ms / 1000)
+        voiced: List[bytes] = []
+        started = False
+        t0 = time.time()
+        silence = 0.0
+        # Read in a background daemon thread so a stalled USB mic can never wedge
+        # this loop forever (the real root cause of "stuck / no response"): the
+        # consumer below times out and ends the utterance instead of hanging.
+        _q: "queue.Queue" = queue.Queue(maxsize=64)
+        _stop_reader = threading.Event()
+
+        def _reader():
+            try:
+                while not _stop_reader.is_set():
+                    try:
+                        d = stream.read(in_frame, exception_on_overflow=False)
+                    except Exception:
+                        break
+                    try:
+                        _q.put(d, timeout=1.0)
+                    except queue.Full:
+                        pass
+            finally:
+                # ONLY the reader thread touches the stream. Closing it from the
+                # main thread while read() is in flight corrupts the heap (SIGABRT
+                # "unaligned tcache chunk"). Reader owns open->read->close.
+                try:
+                    stream.stop_stream(); stream.close()
+                except Exception:
+                    pass
+
+        _rt = threading.Thread(target=_reader, name="mic-reader", daemon=True)
+        _rt.start()
+        stall_limit = 8.0   # no audio for this long = the mic stalled -> give up
         try:
-            import pyaudio
-            
-            audio = pyaudio.PyAudio()
-            
+            while True:
+                try:
+                    raw = _q.get(timeout=stall_limit)
+                except queue.Empty:
+                    self.logger.warning("Command mic stalled (no audio %.0fs) — ending capture", stall_limit)
+                    break
+                frame16 = raw if rate == TARGET else self._resample_16k(raw, rate)
+                speech = self._is_speech(frame16)
+                if not started:
+                    if speech:
+                        started = True
+                        voiced.append(frame16)
+                    elif time.time() - t0 > start_timeout:
+                        return None  # user never spoke
+                else:
+                    voiced.append(frame16)
+                    silence = 0.0 if speech else silence + frame_ms / 1000.0
+                    if silence >= end_silence:
+                        break
+                    if len(voiced) * frame_ms / 1000.0 >= max_seconds:
+                        break
+        finally:
+            _stop_reader.set()
+            try:
+                _rt.join(timeout=2.0)   # reader thread closes the stream itself
+            except Exception:
+                pass
+
+        if not voiced:
+            return None
+        pcm = b''.join(voiced)
+        # Reject near-silence: Whisper/Vosk invent phrases ("Thank you.", ".")
+        # from ambient noise, which spawned endless phantom replies. Require real
+        # speech-level energy + a minimum spoken duration before transcribing.
+        samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+        rms = float(np.sqrt((samples ** 2).mean())) if samples.size else 0.0
+        voiced_secs = len(voiced) * frame_ms / 1000.0
+        if rms < 220.0 or voiced_secs < 0.35:
+            self.logger.info("Ignoring low-energy capture (rms=%.0f, %.2fs) — likely silence",
+                             rms, voiced_secs)
+            return None
+        return self._transcribe_pcm16k(pcm)
+
+    def _is_speech(self, frame16k: bytes) -> bool:
+        """VAD on a 30ms/16k frame; if VAD unavailable, use an energy gate."""
+        if self._vad is not None and len(frame16k) == 960:
+            try:
+                return self._vad.is_speech(frame16k, 16000)
+            except Exception:
+                pass
+        samples = np.frombuffer(frame16k, dtype=np.int16).astype(np.float32)
+        return samples.size > 0 and float(np.sqrt((samples ** 2).mean())) > 300
+
+    @staticmethod
+    def _resample_16k(raw: bytes, src_rate: int) -> bytes:
+        s = np.frombuffer(raw, dtype=np.int16)
+        if s.size == 0:
+            return raw
+        n = int(round(s.size * 16000 / src_rate))
+        x_old = np.linspace(0, 1, s.size, endpoint=False)
+        x_new = np.linspace(0, 1, n, endpoint=False)
+        return np.interp(x_new, x_old, s).astype(np.int16).tobytes()
+
+    def _transcribe_groq(self, pcm: bytes) -> Optional[str]:
+        """Transcribe via Groq Whisper (whisper-large-v3-turbo). Fast + accurate +
+        free. Returns None if no key / offline / failure (caller falls back)."""
+        import io as _io, os as _os, uuid as _uuid, urllib.request as _url
+        key = _os.getenv("GROQ_API_KEY", "")
+        if not key or not pcm:
+            return None
+        try:
+            buf = _io.BytesIO()
+            with wave.open(buf, "wb") as w:
+                w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+                w.writeframes(pcm)
+            wav = buf.getvalue()
+            b = "----stella" + _uuid.uuid4().hex
+            lang = (self.stt_language or "en")[:2]
+            pre = (
+                f"--{b}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper-large-v3-turbo\r\n"
+                f"--{b}\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\n{lang}\r\n"
+                f"--{b}\r\nContent-Disposition: form-data; name=\"response_format\"\r\n\r\ntext\r\n"
+                f"--{b}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.wav\"\r\nContent-Type: audio/wav\r\n\r\n"
+            )
+            body = pre.encode() + wav + f"\r\n--{b}--\r\n".encode()
+            req = _url.Request(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                data=body, method="POST",
+                headers={"Authorization": "Bearer " + key,
+                         "Content-Type": f"multipart/form-data; boundary={b}",
+                         "User-Agent": "Mozilla/5.0"})
+            with _url.urlopen(req, timeout=15) as r:
+                txt = r.read().decode(errors="ignore").strip()
+            return txt or None
+        except Exception as exc:
+            self.logger.info("Groq STT unavailable: %s", exc)
+            return None
+
+    # Whisper's classic no-speech outputs ("Foreign", "Thank you.", "so", "oh",
+    # "Hey"). Treated as silence so they are never answered or enrolled as names.
+    _HALLUCINATIONS = {"foreign", "thank you", "thanks", "thanks for watching",
+                       "thank you for watching", "you", "so", "oh", "hey", "uh",
+                       "um", "hmm", "mm", ".", "...", "subtitles by the amara.org community"}
+
+    def mic_available(self) -> bool:
+        """True if the configured command mic is currently present (fresh by-name
+        resolution each call, so an unplugged mic is noticed)."""
+        if pyaudio is None:
+            return False
+        import glob
+        # No ALSA capture PCM at all => genuinely no microphone (e.g. at work).
+        if not glob.glob('/dev/snd/pcmC*D*c'):
+            return False
+        if self.device_name:
+            saved = self.device_index
+            self.device_index = None
+            idx = self._resolve_microphone_index()
+            if idx is not None:
+                self.device_index = idx
+            else:
+                # Hardware exists but PortAudio isn't listing it by name (the
+                # known enumeration flip-flop) — keep the old index / default.
+                self.device_index = saved
+        return True
+
+    def _transcribe_pcm16k(self, pcm: bytes) -> Optional[str]:
+        """Transcribe, then drop known STT hallucinations (treated as silence)."""
+        txt = self._transcribe_pcm16k_raw(pcm)
+        if not txt:
+            return None
+        norm = txt.lower().strip().strip('.,!?…"\' ')
+        if norm in self._HALLUCINATIONS or (len(norm) <= 2 and not norm.isdigit()):
+            self.logger.info("Ignoring likely STT hallucination: %r", txt)
+            return None
+        return txt
+
+    def _transcribe_pcm16k_raw(self, pcm: bytes) -> Optional[str]:
+        """Transcribe raw 16k mono PCM using the configured STT mode."""
+        mode = self.stt_mode
+        # Groq Whisper first — fast, accurate, free.
+        if mode in ('auto', 'google', 'groq'):
+            t = self._transcribe_groq(pcm)
+            if t:
+                return t
+        # Google (secondary online fallback)
+        if mode in ('auto', 'google') and SR_AVAILABLE and self.recognizer:
+            try:
+                audio = sr.AudioData(pcm, 16000, 2)
+                text = self.recognizer.recognize_google(audio, language=self.stt_language)
+                if text:
+                    return text.strip()
+            except Exception as exc:
+                if mode == 'google':
+                    self.logger.warning("Google STT failed: %s", exc)
+                    return None
+                self.logger.info("Google STT unavailable, trying offline Vosk: %s", exc)
+        # Vosk offline fallback
+        if mode in ('auto', 'vosk', 'groq', 'google'):
+            return self._transcribe_vosk(pcm)
+        return None
+
+    def _transcribe_vosk(self, pcm: bytes) -> Optional[str]:
+        if not VOSK_AVAILABLE or not self.vosk_model_path or not Path(self.vosk_model_path).exists():
+            return None
+        try:
+            if self._vosk_model is None:
+                self._vosk_model = VoskModel(str(self.vosk_model_path))
+            rec = KaldiRecognizer(self._vosk_model, 16000)
+            rec.AcceptWaveform(pcm)
+            result = json.loads(rec.FinalResult())
+            text = result.get('text', '').strip()
+            return text or None
+        except Exception as exc:
+            self.logger.warning("Vosk STT failed: %s", exc)
+            return None
+
+    # ------------------------------------------------------------------
+    def listen_for_command(self, timeout: Optional[float] = None) -> bool:
+        """Capture audio for a single command.
+
+        Args:
+            timeout: Maximum seconds to wait for the utterance.
+        Returns:
+            bool: True when a new listener thread was started.
+        """
+
+        if not self.running:
+            self.logger.warning("Speech recognition module not running")
+            return False
+
+        with self.listener_lock:
+            if self.active_listener and self.active_listener.is_alive():
+                self.logger.debug("Speech recognizer already listening")
+                return False
+
+            self._stop_recording.clear()
+            self.active_listener = threading.Thread(
+                target=self._capture_and_transcribe,
+                args=(timeout or self.phrase_limit,),
+                daemon=True,
+            )
+            self.active_listener.start()
+            return True
+
+    # ------------------------------------------------------------------
+    def _capture_and_transcribe(self, duration: float) -> None:
+        """Record audio and dispatch it to the selected recognizer."""
+
+        audio_path = None
+        try:
+            self.logger.info(f"Recording {duration}s from device {self.device_index} at {self.sample_rate}Hz...")
+            audio_path = self._record_audio(duration)
+            if not audio_path:
+                self.logger.warning("No audio captured")
+                self._emit_failure("audio_unavailable")
+                return
+
+            self.logger.info(f"Transcribing {audio_path}...")
+            text = self._transcribe(audio_path)
+            if text:
+                self.logger.info(f"Recognized: '{text}'")
+                self._emit_success(text)
+            else:
+                self.logger.warning("Empty transcript — no speech detected")
+                self._emit_failure("empty_transcript")
+        except Exception as exc:
+            self.logger.error(f"Speech capture failed: {exc}")
+            self._emit_failure("exception")
+        finally:
+            if audio_path and Path(audio_path).exists():
+                try:
+                    Path(audio_path).unlink()
+                except Exception:
+                    pass
+            with self.listener_lock:
+                self.active_listener = None
+
+    def _record_audio(self, duration: float) -> Optional[str]:
+        """Record PCM audio from the configured microphone."""
+
+        if pyaudio is None:
+            self.logger.error("PyAudio missing; cannot capture audio")
+            return None
+
+        device_index = self._resolve_microphone_index()
+        from parts_used.audio_portaudio import get_pa
+        audio = get_pa()          # shared instance — do NOT terminate it
+        if audio is None:
+            self.logger.error("PyAudio missing; cannot capture audio")
+            return None
+        try:
             stream = audio.open(
                 format=pyaudio.paInt16,
                 channels=1,
                 rate=self.sample_rate,
                 input=True,
-                frames_per_buffer=self.chunk_size
+                frames_per_buffer=self.chunk_size,
+                input_device_index=device_index,
             )
-            
-            self.logger.info("Recording audio...")
-            
-            start_time = time.time()
-            
-            while self.recording:
-                # Check duration
-                if duration and (time.time() - start_time) > duration:
+        except Exception as exc:
+            self.logger.error(f"Failed to open microphone: {exc}")
+            return None
+
+        frames = []
+        start_time = time.time()
+        try:
+            while time.time() - start_time < duration:
+                if self._stop_recording.is_set():
                     break
-                
-                # Read audio chunk
                 try:
                     data = stream.read(self.chunk_size, exception_on_overflow=False)
-                    self.audio_buffer.append(data)
-                except Exception as e:
-                    self.logger.error(f"Recording error: {e}")
+                    frames.append(data)
+                except Exception as exc:
+                    self.logger.warning(f"Microphone read error: {exc}")
                     break
-            
-            # Clean up
+        finally:
             stream.stop_stream()
             stream.close()
-            audio.terminate()
-            
-            self.logger.info(f"Recording complete ({len(self.audio_buffer)} chunks)")
-            
-        except Exception as e:
-            self.logger.error(f"Recording failed: {e}")
-    
-    def _record_with_speech_recognition(self, duration: Optional[float] = None):
-        """Record using speech_recognition library"""
-        
-        if not self.recognizer or not self.microphone:
-            self.logger.error("Speech recognition not initialized")
+
+        if not frames:
+            return None
+
+        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+        tmp_name = tmp_file.name
+        tmp_file.close()
+        with wave.open(tmp_name, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(self.sample_rate)
+            wf.writeframes(b''.join(frames))
+
+        return tmp_name
+
+    def _transcribe(self, audio_path: str) -> Optional[str]:
+        """Convert the recorded WAV file to text."""
+
+        if WHISPER_AVAILABLE:
+            try:
+                self._ensure_whisper_model()
+                result = self.whisper_instance.transcribe(
+                    audio_path,
+                    language=self.whisper_language,
+                    fp16=False,
+                )
+                text = result.get('text', '').strip()
+                return text or None
+            except Exception as exc:
+                self.logger.warning(f"Whisper transcription failed: {exc}")
+
+        if SR_AVAILABLE and self.recognizer:
+            with sr.AudioFile(audio_path) as source:
+                audio = self.recognizer.record(source)
+            try:
+                text = self.recognizer.recognize_google(audio, language=self.stt_language)
+                return text.strip()
+            except Exception as exc:
+                self.logger.warning(f"SpeechRecognition fallback failed: {exc}")
+
+        return None
+
+    def _ensure_whisper_model(self) -> None:
+        """Load the Whisper model on first use."""
+
+        if not WHISPER_AVAILABLE or self.whisper_instance:
             return
-        
+
+        model_name = self.whisper_model_name or "tiny"
         try:
-            with self.microphone as source:
-                self.logger.info("Listening...")
-                
-                # Record audio
-                if duration:
-                    audio = self.recognizer.listen(
-                        source,
-                        timeout=self.timeout,
-                        phrase_time_limit=duration
-                    )
-                else:
-                    audio = self.recogn
+            self.whisper_instance = whisper.load_model(
+                model_name,
+                device=self.whisper_device,
+                download_root=str(Path.home() / ".cache" / "robot_whisper"),
+            )
+        except Exception as exc:
+            self.logger.warning(f"Unable to load Whisper model '{model_name}': {exc}")
+            self.whisper_instance = None
+
+    def _resolve_microphone_index(self) -> Optional[int]:
+        """Resolve the microphone index using the configured hint."""
+
+        if self.device_index is not None:
+            return self.device_index
+
+        if not self.device_name:
+            return None
+
+        from parts_used.audio_portaudio import get_pa
+        audio = get_pa()          # shared instance — do NOT terminate it
+        if audio is None:
+            return None
+        try:
+            for idx in range(audio.get_device_count()):
+                info = audio.get_device_info_by_index(idx)
+                if self.device_name.lower() in info.get('name', '').lower():
+                    return idx
+        except Exception as exc:
+            self.logger.warning(f"Could not enumerate microphones: {exc}")
+
+        return None
+
+    # ------------------------------------------------------------------
+    def _emit_success(self, text: str) -> None:
+        if not self.brain:
+            return
+        event = RobotEvent(
+            type='speech_recognized',
+            source='speech_recognition',
+            data={'text': text},
+            priority=3,
+        )
+        try:
+            self.brain.emit_event(event)
+        except Exception as exc:
+            self.logger.error(f"Failed to emit speech_recognized event: {exc}")
+
+    def _emit_failure(self, reason: str) -> None:
+        if not self.brain:
+            return
+        event = RobotEvent(
+            type='speech_listen_failed',
+            source='speech_recognition',
+            data={'reason': reason},
+            priority=5,
+        )
+        try:
+            self.brain.emit_event(event)
+        except Exception as exc:
+            self.logger.error(f"Failed to emit speech_listen_failed event: {exc}")
