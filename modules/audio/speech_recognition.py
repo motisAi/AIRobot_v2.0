@@ -183,14 +183,23 @@ class SpeechRecognitionModule:
         _stop_reader = threading.Event()
 
         def _reader():
-            while not _stop_reader.is_set():
+            try:
+                while not _stop_reader.is_set():
+                    try:
+                        d = stream.read(in_frame, exception_on_overflow=False)
+                    except Exception:
+                        break
+                    try:
+                        _q.put(d, timeout=1.0)
+                    except queue.Full:
+                        pass
+            finally:
+                # ONLY the reader thread touches the stream. Closing it from the
+                # main thread while read() is in flight corrupts the heap (SIGABRT
+                # "unaligned tcache chunk"). Reader owns open->read->close.
                 try:
-                    d = stream.read(in_frame, exception_on_overflow=False)
+                    stream.stop_stream(); stream.close()
                 except Exception:
-                    break
-                try:
-                    _q.put(d, timeout=1.0)
-                except queue.Full:
                     pass
 
         _rt = threading.Thread(target=_reader, name="mic-reader", daemon=True)
@@ -221,7 +230,7 @@ class SpeechRecognitionModule:
         finally:
             _stop_reader.set()
             try:
-                stream.stop_stream(); stream.close()
+                _rt.join(timeout=2.0)   # reader thread closes the stream itself
             except Exception:
                 pass
 
