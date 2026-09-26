@@ -176,41 +176,20 @@ class SpeechRecognitionModule:
         started = False
         t0 = time.time()
         silence = 0.0
-        # Read in a background daemon thread so a stalled USB mic can never wedge
-        # this loop forever (the real root cause of "stuck / no response"): the
-        # consumer below times out and ends the utterance instead of hanging.
-        _q: "queue.Queue" = queue.Queue(maxsize=64)
-        _stop_reader = threading.Event()
-
-        def _reader():
-            try:
-                while not _stop_reader.is_set():
-                    try:
-                        d = stream.read(in_frame, exception_on_overflow=False)
-                    except Exception:
-                        break
-                    try:
-                        _q.put(d, timeout=1.0)
-                    except queue.Full:
-                        pass
-            finally:
-                # ONLY the reader thread touches the stream. Closing it from the
-                # main thread while read() is in flight corrupts the heap (SIGABRT
-                # "unaligned tcache chunk"). Reader owns open->read->close.
-                try:
-                    stream.stop_stream(); stream.close()
-                except Exception:
-                    pass
-
-        _rt = threading.Thread(target=_reader, name="mic-reader", daemon=True)
-        _rt.start()
-        stall_limit = 8.0   # no audio for this long = the mic stalled -> give up
+        # Single-thread capture: open -> read -> close all here. (A background
+        # reader thread was tried and REVERTED: closing the stream cross-thread
+        # crashed the process, bug_054, and abandoning a blocked reader leaked the
+        # device so the next capture could not open it.) A hard wall-clock cap
+        # bounds a stalled read; the two-stage watchdog covers a truly wedged mic.
+        hard_deadline = t0 + max(start_timeout, max_seconds) + 5.0
         try:
             while True:
+                if time.time() > hard_deadline:
+                    self.logger.warning("Command mic capture exceeded its hard deadline — ending")
+                    break
                 try:
-                    raw = _q.get(timeout=stall_limit)
-                except queue.Empty:
-                    self.logger.warning("Command mic stalled (no audio %.0fs) — ending capture", stall_limit)
+                    raw = stream.read(in_frame, exception_on_overflow=False)
+                except Exception:
                     break
                 frame16 = raw if rate == TARGET else self._resample_16k(raw, rate)
                 speech = self._is_speech(frame16)
@@ -228,9 +207,8 @@ class SpeechRecognitionModule:
                     if len(voiced) * frame_ms / 1000.0 >= max_seconds:
                         break
         finally:
-            _stop_reader.set()
             try:
-                _rt.join(timeout=2.0)   # reader thread closes the stream itself
+                stream.stop_stream(); stream.close()
             except Exception:
                 pass
 
