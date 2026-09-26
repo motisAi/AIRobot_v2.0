@@ -1,3 +1,7 @@
+> **SUPERSEDED by ../stella-architecture.md on 2026-09-27; kept for history.**
+> **Paths/facts here may be stale.**
+>
+
 # Stella — Architecture v2: Layout, Self-Evolution, Safety Net (2026-09-19)
 
 _Supersedes the folder-layout and process parts of [stella-architecture-2026-09-13.md](stella-architecture-2026-09-13.md). The capability stack (online primary → offline fallback per capability), the Hailo/NIM plan and the phased roadmap in that document stay valid and are referenced here, not repeated._

@@ -21,22 +21,22 @@ live in **`.env`** (never in git).
 | `main.py` | The entry point. Wires every part and module together, runs the systemd service. | — |
 | `config/` | `config.yaml` (behaviour, the ONE file you edit), `settings.py` (typed config), `platforms/` (Pi 5 overrides). | comments inside `config.yaml` |
 | `core/` | `robot_brain.py` (event bus + robot state + memory), `watchdog.py` (restarts her when stuck). | — |
-| **`parts_used/`** | **One file per physical part**: USB camera, audio devices, Hailo‑10H, ESP32 hand, microcontroller bridge, 4G modem, WiFi, RC toy. | [parts_used/README.md](parts_used/README.md) |
-| **`modules/`** | Capabilities grouped by what they do: `ai/`, `audio/`, `vision/`, `conversation/`, `comms/`, `smart_home/`, `media/`, `navigation/`, `connectivity/`, `web/`. | [modules/README.md](modules/README.md) |
+| **`parts_used/`** | **One file per physical part**: USB camera, audio devices, Hailo‑10H, ESP32 hand, microcontroller bridge, WiFi, RC toy. | [parts_used/README.md](parts_used/README.md) |
+| **`modules/`** | Capabilities grouped by what they do: `ai/`, `audio/`, `vision/`, `conversation/`, `comms/`, `smart_home/`, `media/`, `navigation/`, `web/`. | [modules/README.md](modules/README.md) |
 | `face_bridge/` | The screen face: WebSocket server + web app (`http://<pi>:8080`). | [docs/hardware/face-subsystem.md](docs/hardware/face-subsystem.md) |
 | `firmware/` | ESP32 sketches (hand, tests, I²C scan). | [docs/firmware/hand-esp32.md](docs/firmware/hand-esp32.md) |
 | **`evolution/`** | Stella's self‑improvement system: **Guardian** (health + rollback), manifest, Scout, reports. | [evolution/README.md](evolution/README.md) |
 | **`bug_report/`** | One file per bug ever fixed: symptom → root cause → fix → how to verify. **Check here before debugging anything.** | [bug_report/README.md](bug_report/README.md) |
-| `tests/` | Smoke tests run by Guardian (`tests/test_imports.py`). | [tests/README.md](tests/README.md) |
+| `tests/` | Smoke and invariant tests run by Guardian on every deploy (`test_imports`, `test_no_orphans`, `test_config_keys`; audio tests land with the audio hardening). | [tests/README.md](tests/README.md) |
 | `tools/` | Operator scripts: enrol the master face, manage faces, check deps, hand control. | [tools/README.md](tools/README.md) |
 | `deploy/` | systemd unit, **`deploy.sh`** (restart → Guardian → auto‑rollback), sudoers/WiFi helpers. | [evolution/README.md](evolution/README.md#deploying-safely) |
-| `docs/` | Architecture, dated decision log, hardware/wiring, briefs. | [docs/README.md](docs/README.md) |
+| `docs/` | The single architecture doc, dated decision log, hardware/wiring, briefs, CONTINUE.md. | [docs/README.md](docs/README.md) |
 | `data/` | Runtime state, gitignored: models, faces DB, logs, memory DB, TTS cache. | — |
 
-**Architecture:** [docs/architecture/stella-architecture-2026-09-19.md](docs/architecture/stella-architecture-2026-09-19.md)
-(layout, safety net, self‑evolution) builds on
-[stella-architecture-2026-09-13.md](docs/architecture/stella-architecture-2026-09-13.md)
-(capability stack online → offline, Hailo/NVIDIA plan, phased roadmap).
+**Architecture:** [docs/architecture/stella-architecture.md](docs/architecture/stella-architecture.md) — the single
+current document (hardware, threads, config, the canonical two‑mic audio design, watchdog, evolution, layout,
+engineering rules, test checklist). The dated 2026‑09‑13 / 2026‑09‑19 documents are archived under
+`docs/architecture/archive/` and are history only.
 
 ---
 
@@ -44,8 +44,10 @@ live in **`.env`** (never in git).
 
 ### 🎙️ Voice & conversation
 - **Wake word** ("Stella" / "hey Stella"), offline (Vosk; openWakeWord "Hey Stella" planned).
-- **Two microphones, two roles** — camera mic for the wake word, USB mic for the command
-  (voice‑activity detection ends the sentence). No mic → she stays quiet instead of talking to herself.
+- **Two microphones, two roles, two devices** — the camera's built‑in mic ("Auto Focus Camera") for the wake word,
+  the "USB PnP Sound Device" dongle for the command (voice‑activity detection ends the sentence). Canonical spec,
+  by‑id names and the handoff sequence: [architecture §4](docs/architecture/stella-architecture.md#4-audio--the-canonical-two-mic-design).
+  No mic → she stays quiet instead of talking to herself.
 - **Multi‑turn conversation** — greets, chats, asks "anything else?" after silence, says goodbye.
 - **Speech‑to‑text chain:** Groq Whisper → Google → offline Vosk, with a hallucination filter.
 - **Natural neural voice** — Piper (offline). HDMI output auto‑detected, non‑HDMI fallback.
@@ -76,9 +78,9 @@ anti‑fabrication rules stop her inventing facts or firing tools on filler.
 | `do_gesture` | Hand gestures: wave, thumbs_up, point, peace, fist, count, middle_finger… |
 
 ### 👁️ Vision
-- **Face recognition + enrolment** (dlib, CPU) with master authentication for privileged actions.
+- **Face recognition + enrolment** (YuNet detector + dlib embeddings, euclidean threshold 0.60, CPU) with master authentication for privileged actions.
 - **Object detection** — YOLOv8n via OpenCV‑DNN on CPU (`data/models/yolov8n.onnx`), 1 inference/s,
-  scene‑change events; Hailo NPU path available once HailoRT ≥ 5.2 is installed.
+  scene‑change events; the Hailo NPU serves only the offline LLM — the NPU vision path waits for the runtime repair (matched pyhailort wheel, not PyPI).
 - **Scene understanding** — cloud VLM (Moondream, NVIDIA NIM llama‑3.2‑11b‑vision).
 - **Motion guard** for the home‑guard mode; **hand mirror** (MediaPipe landmarks → servos).
 
@@ -123,6 +125,11 @@ Every key is commented in the file.
 `TELEGRAM_CHAT_ID`, `SENSIBO_API_KEY` (+ optional `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`).
 Edit a value → `sudo systemctl restart airobot`.
 
+### Accounts and keys
+Services behind those keys (no secrets here): Groq (console.groq.com), Google AI Studio (Gemini), Telegram BotFather,
+Sensibo, Moondream, NVIDIA NIM, and a Tuya IoT project (`devices.json` via `python -m tinytuya wizard`).
+No Picovoice account — Porcupine is not used.
+
 ---
 
 ## Run & ops
@@ -137,7 +144,7 @@ venv/bin/python tools/reenroll.py         # re-enrol the master face
 `git reset --hard <previous commit>` + restart. Every fixed bug gets a file in `bug_report/`.
 
 ## Hardware setup
-- **Pi 5 + Hailo‑10H**, USB camera (+ mic), USB mic, HDMI monitor or USB speaker for audio.
+- **Pi 5 + Hailo‑10H**, USB camera (its built‑in mic = wake mic), USB PnP mic (= command mic), HDMI monitor or USB speaker for audio.
   Use the official 27 W PSU; the Pi has powered off when the Ethernet cable was plugged in on a
   weaker supply. No fan is fitted yet and she reaches the 80 °C soft limit under load.
 - **Hand:** ESP32‑S3 → PCA9685 `3V3→VCC, GND→GND, GPIO8→SDA, GPIO9→SCL`, servos on channels 0–4,
@@ -148,8 +155,11 @@ venv/bin/python tools/reenroll.py         # re-enrol the master face
   `numpy<2`, `face_recognition`, `vosk`, `piper`. Python deps: `requirements.txt`.
 
 ## Known quirks
-- HDMI audio card numbers and USB device order reshuffle across reboots — devices are resolved
-  by name; a restart re‑opens a mic that failed at boot.
+- HDMI audio card numbers and USB device order reshuffle across reboots — devices are resolved by stable
+  identity (by‑id / card id), never by index. **Two‑mic rule:** wake and command must be two different devices
+  (wake = camera mic, command = USB PnP); a single shared mic fails (bug_055) and a helper thread for mic reads
+  crashes or leaks the device (bug_028, bug_054). A mic absent when the service started needs a restart until the
+  by‑id resolver with re‑init lands (architecture §4).
 - Groq free tier rate‑limits (per‑minute and daily); Gemini and the NPU catch the overflow.
 - Reflashing the ESP32 requires stopping `airobot` first (it holds the serial port).
 - Everything else that ever went wrong, and how it was fixed: [bug_report/](bug_report/README.md).

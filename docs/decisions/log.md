@@ -1,5 +1,8 @@
 # Decision Log
 
+> **Entries before 2026-09-19 reference the pre-reorganisation paths (`modules/hardware/*`).** The current layout is in
+> [../architecture/stella-architecture.md](../architecture/stella-architecture.md) §11; the canonical audio design is §4.
+
 Newest first. Each entry: what we decided, why, and what we rejected. Keep it short.
 
 ---
@@ -326,6 +329,11 @@ access key) or a trained openWakeWord model. Face-recognition sim is low (~0.45-
 ---
 
 ### 2026-09-13 — "Stuck / not responding": blocking mic read hung conversations
+
+**REVERTED — do not reintroduce a reader thread.** The fix below (mic read on a daemon thread) caused the SIGABRT
+crash loop in the next entry and bug_028; it was reintroduced on 2026-09-19 (440223d, bug_049) and reverted again on
+2026-09-26 (442c8a8, bug_054/bug_055). Current mechanism: single-thread capture + hard deadline + two-stage watchdog
+(architecture doc §4.2).
 **Symptom:** intermittently she stops responding to voice. Log shows a
 conversation started (wake fired, "Pausing wake-word listener — releasing mic"),
 she asked "Can I do anything else?", then SILENCE for 10 min — no farewell, no
@@ -485,8 +493,118 @@ command is also sent as a voice note (Piper → ffmpeg libopus → Telegram send
 **Guard:** the say/speak/read verbs require an explicit out-loud/speaker cue so normal requests ("say what you see") are not hijacked; announce/broadcast trigger on their own. Verified with 10 phrasings (7 trigger, 3 must not).
 
 ### 2026-09-19 — Full audit (14-agent workflow) + reliability/perf fixes
+
+**PARTLY REVERTED — the "background reader-thread + 8s consumer timeout" fix for bug_049 was reverted on 2026-09-26
+(442c8a8) after it crashed the process (bug_054) and then leaked the command mic (bug_055). Do not reintroduce it.
+The two-stage watchdog from the same commit stands.**
 **Decision:** ran a 5-dimension review (stuck, face-recognition, speed/thermal, architecture/capability, correctness) with adversarial verification; applied the verified safe fixes in 4 Guardian-deployed commits (57ad402, 440223d, 3210df1, c03a86b).
 **Root cause of "stuck":** unbounded PortAudio `stream.read()` on the shared USB dongle — a stall wedged the capture loop, froze `_conv_activity`, blocked `conversation.stop()`, forcing a full ~30s service restart. Fixed with a background reader-thread + 8s consumer timeout (get_read_available returns 0 on this ALSA build, so the poll variant was rejected) and a two-stage watchdog (soft conv.stop() before a restart). bug_049.
 **Also fixed:** master identity cleared on a single Unknown frame (debounce + identity grace, bug_047); YuNet tight box vs dlib-enrolled geometry (box padding at both encode sites, re-enroll pending, bug_048); send_photo tool 400 on groq-120b (required:[]+additionalProperties:false, bug_043); Sensibo 422 from echoed stale fields (fresh state + drop temp in fan/dry, bug_051); TTS fallback subprocess timeouts.
 **Perf/thermal:** cv2.setNumThreads(2) + object-detection MIN_DETECT_INTERVAL 1.0->4.0 (top heat source was the 1Hz all-core YOLO); dashboard encodes JPEG only while a browser is streaming; YuNet top_k 5000->50. Temp under load fell ~65C->~58C.
 **Deferred (LATER, in the audit output):** YuNet frontal-landmark gate + 5-pt alignment; per-face temporal smoothing at the recognition layer; provider-chain total wall-clock budget; settings.py euclidean/0.60 default hardening. **Needs Moti:** re-enroll Moti+Orr under YuNet; a fan/heatsink; a 2nd USB sound device or the planned I2S mics.
+
+---
+
+### 2026-09-20 — Stella "dead" on home WiFi: onboard radio renamed wlan0 -> wlan1 (bug_052)
+**Symptom:** unreachable on any home IP; only the RobotNet AP (10.0.0.1, USB dongle) answered. `iw dev` showed the
+onboard radio as `wlan1`, no `wlan0`; `sudo iw dev wlan0 scan` -> "No such device".
+**Root cause:** a boot race in interface naming — the onboard Broadcom radio sometimes comes up as `wlan1` and the
+netplan stanza only knew `wlan0`.
+**Decision:** dual-name netplan (`/etc/netplan/50-cloud-init.yaml`, system file, not in the repo) so the home-WiFi
+client config applies whichever name the radio gets. Documented in bug_052 (committed 2026-09-26, 56c2dc3).
+**Rejected:** a udev rename rule (another moving part at boot) and pinning by MAC only.
+
+---
+
+### 2026-09-26 — Wake mic moved back to the camera mic (d3b2577, bug_053)
+**Symptom:** she recognised Moti on camera but never answered "Hey Stella"; `wake heard:` lines were gibberish
+("good luck to the moon", "richard").
+**Root cause:** bug_046 (2026-09-19, 743ef31) had moved the wake role to the USB PnP dongle to dodge a stall; that mic has
+AGC and poor pickup at conversational distance, so Vosk never matched "stella". Mic quality, not a stall.
+**Decision:** wake = camera built-in mic ("Auto Focus Camera", ALSA card `Camera`); command = "USB PnP Sound Device"
+(card `Device`). The stall that motivated bug_046 is covered by the wake-loop self-heal (dead-stream reopen).
+**Status:** verified live 2026-09-26 21:12 (wake on the camera mic, paired pause/resume, NRestarts=0).
+
+---
+
+### 2026-09-26 — Reader thread: re-added 2026-09-19 (440223d), crashed (bug_054), re-fixed (ed73b10), REVERTED (442c8a8)
+**What happened, in order (journal + git):**
+1. 2026-09-19 22:43, 440223d (bug_049): a background reader thread bounded the command-mic read (8 s consumer timeout) —
+   the same design that bug_027/bug_028 had introduced and reverted on 2026-09-13. Nothing at the edit point said so.
+2. 2026-09-26 13:31 and 13:33: `malloc(): unaligned tcache chunk detected` -> SIGABRT -> systemd restart after each
+   wake (bug_054): the main thread's `finally` closed the stream while the reader was blocked in `read()`.
+3. 13:39, ed73b10: reader made the sole owner of the stream; "stress-tested 4 open/read/close cycles" — a test that never
+   exercised the stall branch.
+4. 13:47: a capture stalled; the main thread `join(timeout=2)`-ed and continued, abandoning a thread that still held
+   the ALSA device. `Could not open command mic for capture` x8 in 4 minutes.
+5. 13:51, 442c8a8: **reader thread reverted**. `capture_utterance()` is single-thread again (open -> read -> close on the
+   conversation thread) with a hard wall-clock deadline between reads; a truly wedged `read()` is bounded only by the
+   two-stage watchdog (75 s soft stop, +25 s restart).
+**Decision (rules, now in architecture doc §12):** a PortAudio stream is opened, read, stopped and closed by exactly one
+thread, enforced by a `MicStream` owner guard in code; never abandon a thread holding a stream; a close/join timeout is
+terminal for that device (flag + watchdog), never a reopen; reproduce the real stall (usbreset/unplug during a blocked
+read) before any mic fix; one audio change per day with a 24 h soak. **A reverted fix is edited in place** — bug_049
+now says REVERTED, the 09-13 and 09-19 entries above carry banners.
+**Rejected:** sounddevice callback migration for now (bigger change; the single-thread read + watchdog is sufficient and
+proven); any "stuck read" fix that adds a thread.
+
+---
+
+### 2026-09-26 — Single-mic detour (2051a76) and the misdiagnosis it came from (bug_055); two-mic layout restored (a2e3229)
+**What happened:** the 13:47 open failures (caused by our leaked reader thread, above) were read as "USB PnP mic wedged /
+unopenable". 2051a76 (13:56) routed the command mic to the camera mic as well — one device for wake and command — and
+cited a bug_055 that did not exist. At 14:40 the wake thread did not close its stream within `pause_listening()`'s 2 s
+(`Timed out waiting for wake-word stream to close`); the code proceeded to open the command mic on the same, still-held
+device -> `Could not open command mic for capture`. Deaf again.
+**Root cause of the failure:** with one ALSA device the wake-stream close and the command-stream open contend; with two
+devices they cannot. The USB mic was never faulty.
+**Decision:** a2e3229 (20:26) restored the canonical **two-mic layout** — wake = camera built-in mic
+(by-id `usb-Signo_Camera_WB-400_Auto_Focus_Camera*`, card `Camera`, hw:3, 48 kHz), command = USB PnP Sound Device
+(by-id `usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device*`, card `Device`, hw:0, 44.1 kHz). Startup will refuse a config
+where both roles resolve to one device; a wake-close timeout becomes terminal (no command open, watchdog escalates).
+**Single-mic handoff is documented as failed and is not retried.** Wake moved three times in a week (743ef31 -> d3b2577 ->
+2051a76) before being restored; from now on a mic-role change needs a bug file, a log entry and a 24 h soak.
+**Status:** 0 restarts and zero `Could not open` / `Timed out` lines since 20:26.
+
+---
+
+### 2026-09-27 — Deep clean: one architecture doc, engineering rules, dead code and stale docs removed
+**Why:** between 2026-09-19 and 09-26 roughly five audio failures were caused by fixes (three SIGABRTs, one device leak,
+one failed single-mic detour) against one or two organic stalls. The hardware problem is ordinary (two cheap USB mics,
+PortAudio's frozen device table, a user-session PulseAudio); the structural problem was that nothing audio had a single
+owner (three mic resolvers, an unused AudioManager doing a second Pa_Initialize, hard-coded rates beside unread config
+keys, a legacy brain pipeline opening mics through second paths, a silent `input_device_index=None` fall-through), and
+the lessons were written in the wrong place (a decision-log entry still presenting the reader thread as THE fix,
+bug_049 still "fixed", a commit citing a non-existent bug_055).
+**Decisions:**
+- **One architecture document**: `docs/architecture/stella-architecture.md` (sections 0–14: hardware, process/threads,
+  config, the canonical two-mic audio design with invariants I1–I8, conversation, vision, smart home/guard, bridges,
+  watchdog, evolution/deploy, layout, the 14 engineering rules, test checklist, debt). The two dated docs move to
+  `docs/architecture/archive/` with a SUPERSEDED banner; `docs/architecture.md`, `docs/GONZO_GUIDE.md`,
+  `docs/rpi5_setup.md` (apt list kept in `docs/hardware/hailo.md`), `docs/service_accounts.txt` and `claude_read.txt`
+  are deleted. Docs describe the CURRENT layout; history stays in `bug_report/` and this log.
+- **Engineering rules** (architecture doc §12, verbatim): PortAudio single-owner guard in code; terminal close-timeout;
+  two mics / two roles / two devices; one resolver on stable identity, never a silent default; one PyAudio instance;
+  reverted fixes edited in place; bug file per fix with no number gaps; reproduce before fix; one audio change per day
+  + 24 h soak; deploy only via Guardian from a clean tree; config-key and no-orphan tests; identity not index; one owner
+  per concern; docs updated in the same commit.
+- **Removed (verified no importer / no live producer)**: `parts_used/esp32_controller.py`, `parts_used/sim7600x_modem.py`
+  (its import-time serial probe blocked every `config.settings` import on `/dev/ttyAMA0`), `modules/connectivity/`,
+  `tools/test_sim7600x.py`, `config/config.json` (the silent Gonzo-era fallback), `main.py --create-service` and
+  `--test` code with the `face_recognition.py` legacy camera methods; `stella_manifest.yaml` untracked and gitignored
+  (a tracked generated file dirtied the tree after the first nightly run and disabled deploy). Kept on purpose after
+  review: brain transitions still reachable by voice (movement, learning, recovery, LED) — removal is a separate step.
+- **Bug ledger**: bug_055 created (the misdiagnosis, honestly), bug_050 retired to close the gap, bug_049 -> REVERTED,
+  bug_054 -> its first fix marked reverted, bug_046 -> superseded by bug_053, bug_053 -> verified; README rebuilt from
+  the file headers; template gains `Superseded by` / `Reverted` fields.
+- **Scheduler**: the user crontab (`0 3 * * * evolution/nightly.sh`) is the only scheduler; `deploy/stella-evolution.*`
+  are an optional sudo alternative, not installed.
+- **Code fixes queued** (architecture doc §4.7 / §14, each its own Guardian-deployed commit with its test): MicStream
+  guard, by-id resolver, terminal wake-close timeout, startup wake≠command assertion, config mic ids and rates, gain
+  boost by card id, shared device table log, config.json fallback removed with loud YAML failure, known-good dataclass
+  defaults, SIM7600X probe removed, watchdog docstring + wake-listener visibility check, stale paths in
+  `tools/check_deps.py` and `docs/firmware/hand-esp32.md`, `MqttConfig`, dead .gitignore lines and `gonzo.log` ->
+  `stella.log`.
+**Rejected:** deleting `core/robot_brain.py` dead states in this pass (live and dead code interleaved; needs its own
+verification); removing the DeepFace/legacy face-recognition methods beyond the camera path; any change to the mic
+assignment itself.

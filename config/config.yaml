@@ -1,8 +1,8 @@
 # ============================================================================
-#  GONZO  —  AI Robot control panel   (Raspberry Pi 5 + Hailo-10H)
+#  STELLA  —  AI Robot control panel   (Raspberry Pi 5 + Hailo-10H)
 # ============================================================================
 #  This is the ONE file you edit to change how the robot behaves.
-#  Change a value, save, and restart the robot (python main.py).
+#  Change a value, save, and restart the robot (sudo systemctl restart airobot).
 #  Secrets (API keys) do NOT go here — they live in the .env file.
 #
 #  Booleans are true / false (lowercase). Lists use [a, b, c].
@@ -23,7 +23,7 @@ behavior:
   max_memories: 1000
 
 # ------------------------------------------------------------------ AI brain
-# How Gonzo thinks and talks back.
+# How Stella thinks and talks back.
 ai:
   # mode:
   #   local  -> on-device Hailo-10H NPU (qwen 1.5B). Free, offline, ~5s. Works
@@ -69,7 +69,7 @@ ai:
 # ------------------------------------------------------------------ conversation
 # How the multi-turn voice chat behaves after the wake word.
 conversation:
-  idle_timeout: 12.0        # seconds of silence before Gonzo asks "anything else?"
+  idle_timeout: 12.0        # seconds of silence before Stella asks "anything else?"
   end_silence: 1.2          # seconds of silence that ends one spoken sentence
   max_utterance: 12.0       # max length of a single spoken sentence (seconds)
   greeting: "How can I help you{name}?"
@@ -88,7 +88,7 @@ music:
   volume_step: 20      # louder/quieter step size
 
 # ------------------------------------------------------------------ web search
-# Lets Gonzo answer questions using the live web, like Claude/Copilot.
+# Lets Stella answer questions using the live web.
 web_search:
   enabled: true
   provider: "duckduckgo"         # duckduckgo = free, no API key | none = off
@@ -99,7 +99,7 @@ web_search:
 # ------------------------------------------------------------------ robotic hand
 # 5-finger hand on ESP32 + PCA9685 (gesture firmware in firmware/hand/).
 # Stella holds one serial link and sends gestures: hello, fist, open, thumbs,
-# point, peace, middle, count. NOTE: while enabled, Stella owns /dev/ttyUSB0 —
+# point, peace, middle, count. NOTE: while enabled, Stella owns the serial_port below (/dev/ttyACM0) —
 # stop the service before re-flashing the ESP32.
 hand:
   enabled: true                  # set true after flashing the ESP32 hand firmware
@@ -174,17 +174,21 @@ hardware:
   # Adaptive software brightening for face recognition (recommended on).
   camera_low_light_boost: true
 
-  # --- microphones (two mics, one per role) ---
-  # Wake word listens on the camera's built-in mic; commands use the USB mic.
-  wake_word_microphone_name: "Auto Focus Camera"   # camera mic: better wake pickup; stall now self-healed (bug_053)
-  speech_microphone_name: "USB PnP Sound Device"    # command mic (two-mic layout: wake=camera, command=USB PnP) — the setup that worked
-  microphone_rate: 48000
-  speech_microphone_rate: 44100
+  # --- microphones: TWO mics, TWO roles, TWO different devices (never one shared mic — bug_055) ---
+  # WAKE    = the camera's built-in mic  "Auto Focus Camera"  (ALSA card id 'Camera', by-id usb-Signo_Camera_WB-400_Auto_Focus_Camera*, native 48 kHz)
+  # COMMAND = the USB dongle            "USB PnP Sound Device" (ALSA card id 'Device', by-id usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device*, native 44.1 kHz)
+  # Resolved by name (by-id resolver coming); card numbers and PortAudio indices are NOT stable — never pin an index.
+  # Full spec: docs/architecture/stella-architecture.md section 4.
+  wake_word_microphone_name: "Auto Focus Camera"   # WAKE mic (camera). Do not move to the USB PnP dongle: AGC/poor pickup, Vosk mistranscribes (bug_053)
+  speech_microphone_name: "USB PnP Sound Device"    # COMMAND mic (dongle). Must differ from the wake mic (bug_055)
+  microphone_rate: 48000         # wake mic native rate (tried first, then 44100/16000; the camera mic has no 16 k)
+  speech_microphone_rate: 44100  # command mic native rate (tried first, then 48000/16000)
 
-  # --- audio OUTPUT (where Gonzo speaks) ---
-  # Sound currently goes to the HDMI monitor (plugged into HDMI port 2 = ALSA
-  # card 3 / vc4hdmi1). To use a USB speaker later: set audio_output_device to
-  # "usb" and audio_output_card to null (it will auto-detect the USB card).
+  # --- audio OUTPUT (where Stella speaks) ---
+  # Sound goes to the HDMI monitor. The HDMI cards are vc4hdmi0 / vc4hdmi1 (cards 1 and 2 today;
+  # card 0 is the USB PnP mic and card 3 is the camera mic — HDMI card numbers move across reboots, so they
+  # are auto-detected). To use a USB speaker later: set audio_output_device to "usb" and
+  # audio_output_card to null (it will auto-detect the USB card).
   audio_output_device: "hdmi"    # hdmi | usb | analog | auto | default
   # Leave card null: HDMI card numbers change across reboots, so Stella now
   # auto-detects which HDMI port the monitor is on. Set a name like "vc4hdmi0"
@@ -205,7 +209,7 @@ model:
   # stranger look identical to the master. Lower threshold = stricter.
   face_distance_metric: "euclidean"
   face_recognition_threshold: 0.60
-  # Object detection (Hailo NPU). Needs a compiled .hef in data/models/.
+  # Object detection: runs on the CPU via OpenCV-DNN (data/models/yolov8n.onnx). The Hailo NPU serves only the offline LLM.
   object_model: "yolov8n"
   object_confidence_threshold: 0.5
   # Voice (Text-to-Speech). Piper = free, offline, natural neural voice.
@@ -226,19 +230,19 @@ model:
   # Speech-to-text: auto (Google online, fall back to offline Vosk) | google | vosk
   stt_mode: "auto"
 
-  # Wake word — "Hey Gonzo"
+  # Wake word — "Hey Stella"
   wake_word: "stella"
   wake_word_sensitivity: 0.5
-  # Engine: auto | vosk | porcupine | energy
-  #   vosk   = free, offline, detects the actual word "gonzo" (recommended)
+  # Engine: auto | vosk | energy   (porcupine is not used — Picovoice free tier ended)
+  #   vosk   = free, offline, detects the actual word "stella" (recommended)
   #   energy = loudness trigger (works with zero setup, not word-specific)
   wake_word_engine: "auto"
   wake_word_phrases: ["stella", "hey stella"]
 
 # ------------------------------------------------------------------ system
 system:
-  enable_hailo: false            # leave the Hailo NPU for hailo-ollama (offline LLM);
-                                 # Stella's vision uses the cloud VLM, not the NPU
+  enable_hailo: false            # leave the Hailo NPU for hailo-ollama (offline LLM); object detection runs
+                                 # on the CPU (OpenCV-DNN) and scene understanding on the cloud VLM, not the NPU
 
   frame_skip: 8                  # process every Nth camera frame (higher = lighter CPU)
   auto_learning_enabled: true

@@ -11,7 +11,10 @@ offline** inference — she keeps working with no internet.
     use it as the live model. `qwen2.5-instruct:1.5b` is the responsive one (warm ≈ 2–5 s;
     first/cold load ≈ 40 s, absorbed by a background warmup at startup).
 - Vision/object detection is **not** on the Hailo (would contend for the single NPU context
-  with the LLM). Vision uses cloud Moondream; face recognition uses CPU dlib.
+  with the LLM, and the pip `hailort` wheel in the venv is ABI-broken against HailoRT 5.1.1 —
+  see "Hailo runtime repair" in the architecture doc §14). Object detection runs on the **CPU**
+  (OpenCV-DNN, `data/models/yolov8n.onnx`, `system.enable_hailo: false`); scene understanding uses
+  the cloud VLM (Moondream → NVIDIA NIM); face recognition uses CPU YuNet + dlib.
 
 ## The API gotcha (important)
 `hailo-ollama` 5.1.1 serves **only** the OpenAI-compatible endpoint:
@@ -38,7 +41,8 @@ hailortcli fw-control identify                       # expect: Device Architectu
 ```
 Then restart Stella: `sudo -n systemctl restart airobot` (the NPU warmup will preload qwen).
 
-**To prevent silent breakage** on future kernel updates, consider holding the kernel:
+Since 2026-09-19 `linux-headers-raspi` is installed, so DKMS rebuilds the driver on kernel upgrades
+automatically (bug_011). **To prevent silent breakage** you can also hold the kernel:
 `sudo apt-mark hold linux-image-raspi linux-headers-raspi` (optional).
 
 ## Quick health checks
@@ -49,3 +53,34 @@ curl -s localhost:8000/api/tags                       # models available?
 curl -s localhost:8000/v1/chat/completions -H 'Content-Type: application/json' \
   -d '{"model":"qwen2.5-instruct:1.5b","messages":[{"role":"user","content":"hi"}],"stream":false}'
 ```
+
+## Base packages (OS prerequisites)
+
+Moved here from the deleted `docs/rpi5_setup.md` (2026-09-27). Ubuntu Server 24.04 LTS (64-bit) on the Pi 5;
+this is the apt baseline the Python venv builds on:
+
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y \
+    python3-dev python3-venv python3-pip \
+    portaudio19-dev libportaudio2 \
+    ffmpeg libssl-dev \
+    libopencv-dev \
+    git
+```
+
+Then the project venv (the service uses `venv/`, not `.venv/`):
+```bash
+cd ~/AIRobot_v2.0
+python3 -m venv venv
+venv/bin/pip install --upgrade pip
+venv/bin/pip install -r requirements.txt
+```
+
+Hailo specifics: install HailoRT and the firmware from the **Hailo Developer Zone `.deb` packages for aarch64**
+(`hailort_*.deb`, `hailo-firmware_*.deb`; `hailortcli fw-control identify` must report `HAILO10H`). Do **not**
+`apt install hailo-all` (Raspberry-Pi-OS shortcut, wrong for Ubuntu Server) and do **not** `pip install hailort`
+from PyPI (the 4.23.0 wheel is what broke the venv bindings) — the only usable Python binding is the matched
+pyhailort wheel from the h10-hailort bundle. `hailo-ollama` is a separate system service (`systemctl status hailo-ollama`).
+Other system tools the app expects: `arduino-cli` + the `esp32` core (hand firmware), `yt-dlp` + `ffmpeg` (music,
+Telegram voice), `alsa-utils` (`aplay`, `amixer`), `espeak-ng` (TTS fallback).
