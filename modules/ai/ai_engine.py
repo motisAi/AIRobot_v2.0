@@ -1167,6 +1167,15 @@ class AIEngine:
         # page; the transcript is still saved to the DB, and curated memories +
         # preferences below give continuity.)
 
+        # 2. Durable FACTS about this specific person (distilled at session end).
+        try:
+            if self._current_user:
+                facts = self.learning_db.recall_user_facts(self._current_user, limit=8)
+                if facts:
+                    parts.append("What you remember about this person: " + "; ".join(facts))
+        except Exception:
+            pass
+
         # 3. User preferences + grudge mood
         try:
             if self._current_user:
@@ -1188,6 +1197,58 @@ class AIEngine:
     # ------------------------------------------------------------------
     # Automatic preference extraction
     # ------------------------------------------------------------------
+    def learn_facts_from_session(self, user_id: str, history: list) -> None:
+        """Distill 0-3 durable facts about the user from a finished conversation and
+        store them (so she remembers people next time). Best-effort; runs in the
+        background at session end. Uses whatever provider is available (offline too)."""
+        if not self.learning_db or not user_id or not history:
+            return
+        lines = []
+        for m in history[-20:]:
+            role = m.get("role"); content = (m.get("content") or "").strip()
+            if role in ("user", "assistant") and content:
+                lines.append(("User: " if role == "user" else "You: ") + content[:300])
+        if len(lines) < 2:
+            return
+        sys_p = ("You extract durable, long-term facts about the USER from a conversation. "
+                 "Return ONLY a JSON array of 0 to 3 short factual strings worth remembering "
+                 "next time (their name, preferences, relationships, job, pets, ongoing plans). "
+                 "Ignore greetings, small talk, one-off requests, and weather/time questions. "
+                 "If nothing is worth remembering, return [].")
+        msgs = [{"role": "system", "content": sys_p},
+                {"role": "user", "content": "\n".join(lines) + "\n\nJSON array of durable facts:"}]
+        text = None
+        for name in getattr(self, "_chain", []):
+            if self._skip(name):
+                continue
+            try:
+                text = self._query_backend(name, msgs)
+                if text and text.strip():
+                    break
+            except Exception:
+                continue
+        if not text:
+            return
+        import re as _re, json as _json
+        mm = _re.search(r"\[.*\]", text, _re.S)
+        if not mm:
+            return
+        try:
+            facts = _json.loads(mm.group(0))
+        except Exception:
+            return
+        stored = 0
+        for f in (facts if isinstance(facts, list) else []):
+            f = str(f).strip()
+            if 3 <= len(f) <= 200 and stored < 3:
+                try:
+                    self.learning_db.remember_fact(user_id, f)
+                    stored += 1
+                except Exception:
+                    pass
+        if stored:
+            self.logger.info("Learned %d fact(s) about %s", stored, user_id)
+
     def _extract_preferences(self, user_input: str, reply: str) -> None:
         """Use keyword heuristics to auto-save user preferences."""
         if not self.learning_db or not self._current_user:

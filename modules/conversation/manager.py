@@ -234,6 +234,17 @@ class ConversationManager:
             # the next one starts fresh (the transcript is already saved to the DB).
             engine2 = getattr(self.robot, 'ai_engine', None)
             if engine2 is not None:
+                # Distill durable facts about this person BEFORE wiping the page,
+                # so she remembers them next time (runs in the background).
+                try:
+                    _uid = getattr(engine2, '_current_user', None)
+                    _hist = list(getattr(engine2, '_conversation_history', []))
+                    if _uid and len(_hist) >= 2:
+                        import threading as _th
+                        _th.Thread(target=engine2.learn_facts_from_session,
+                                   args=(_uid, _hist), daemon=True).start()
+                except Exception:
+                    pass
                 try:
                     engine2.clear_history()
                 except Exception:

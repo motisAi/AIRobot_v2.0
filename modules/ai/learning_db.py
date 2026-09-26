@@ -142,6 +142,32 @@ class LearningDB:
             self._conn.commit()
             return c.lastrowid
 
+    def remember_fact(self, user_id: str, content: str, importance: float = 0.6) -> int:
+        """Store a durable fact about a user (deduped, exact-match)."""
+        content = (content or "").strip()
+        if not user_id or not content:
+            return 0
+        pat = '%"user_id"%"' + user_id + '"%'
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id FROM memories WHERE type='fact' AND context LIKE ? "
+                "AND lower(content)=lower(?)", (pat, content)).fetchone()
+            if row:
+                return row["id"]
+        return self.add_memory(content, memory_type="fact", importance=importance,
+                               context={"user_id": user_id})
+
+    def recall_user_facts(self, user_id: str, limit: int = 8):
+        """Return durable facts stored about this user, most important/newest first."""
+        if not user_id:
+            return []
+        pat = '%"user_id"%"' + user_id + '"%'
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT content FROM memories WHERE type='fact' AND context LIKE ? "
+                "ORDER BY importance DESC, id DESC LIMIT ?", (pat, limit)).fetchall()
+            return [r["content"] for r in rows]
+
     def recall_memories(self, query: str, memory_type: str = "all",
                         limit: int = 10) -> List[Dict]:
         """Search memories by substring match.  Returns newest-first."""
