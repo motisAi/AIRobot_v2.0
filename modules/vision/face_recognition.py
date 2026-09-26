@@ -99,8 +99,6 @@ class FaceRecognitionModule:
         # Load existing faces
         self.load_face_database()
         
-        # Legacy camera support (only used when no camera_manager provided)
-        self.camera = None
         self.camera_index = hardware_config.camera_index
         self.resolution = hardware_config.camera_resolution
         self.fps = hardware_config.camera_fps
@@ -114,7 +112,6 @@ class FaceRecognitionModule:
         self.running = False
         
         # Threading
-        self.capture_thread = None
         self.recognition_thread = None
         self.frame_queue = queue.Queue(maxsize=10)
         self.result_queue = queue.Queue()
@@ -132,54 +129,19 @@ class FaceRecognitionModule:
         self.learning_face_id = None
         self.learning_samples = []
         
-    def initialize_camera(self) -> bool:
-        """
-        Initialize camera for face detection
-        
-        Returns:
-            bool: True if successful
-        """
-        try:
-            self.camera = cv2.VideoCapture(self.camera_index)
-            
-            # Set camera properties
-            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
-            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
-            self.camera.set(cv2.CAP_PROP_FPS, self.fps)
-            self.camera.set(cv2.CAP_PROP_BUFFERSIZE, hardware_config.camera_buffer_size)
-            
-            # Test camera
-            ret, frame = self.camera.read()
-            if ret:
-                self.logger.info(f"Camera initialized successfully at index {self.camera_index}")
-                return True
-            else:
-                self.logger.error("Failed to read from camera")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"Failed to initialize camera: {e}")
-            return False
-    
+
     def start(self):
         """Start face recognition system"""
         self.logger.info("Starting face recognition")
         self.running = True
         
-        if self.camera_manager:
-            # Preferred: subscribe to shared camera
-            self.camera_manager.subscribe("face_recognition", self._on_shared_frame)
-            self.logger.info("Face recognition subscribed to shared camera")
-        else:
-            # Legacy: open our own camera
-            if not self.camera:
-                if not self.initialize_camera():
-                    self.logger.error("Cannot start without camera")
-                    return False
-            
-            self.capture_thread = threading.Thread(target=self._capture_loop)
-            self.capture_thread.daemon = True
-            self.capture_thread.start()
+        if not self.camera_manager:
+            # The shared CameraManager is the ONLY camera owner (no cv2.VideoCapture
+            # here — the legacy own-camera path was removed in the 2026-09-27 clean-up).
+            self.logger.error("Face recognition needs the shared CameraManager — not started")
+            return False
+        self.camera_manager.subscribe("face_recognition", self._on_shared_frame)
+        self.logger.info("Face recognition subscribed to shared camera")
         
         # Start recognition thread (processes frames from queue)
         self.recognition_thread = threading.Thread(target=self._recognition_loop)
@@ -205,46 +167,15 @@ class FaceRecognitionModule:
         if self.camera_manager:
             self.camera_manager.unsubscribe("face_recognition")
         
-        # Wait for threads
-        if self.capture_thread:
-            self.capture_thread.join(timeout=2.0)
+        # Wait for the recognition thread
         if self.recognition_thread:
             self.recognition_thread.join(timeout=2.0)
-        
-        # Release legacy camera
-        if self.camera:
-            self.camera.release()
-            self.camera = None
         
         # Save database
         self.save_face_database()
         self.logger.info("Face recognition stopped")
     
-    def _capture_loop(self):
-        """Continuously capture frames from camera"""
-        while self.running:
-            try:
-                if self.camera and self.camera.isOpened():
-                    ret, frame = self.camera.read()
-                    
-                    if ret:
-                        # Update current frame
-                        self.current_frame = frame
-                        
-                        # Add to queue if not full
-                        if not self.frame_queue.full():
-                            self.frame_queue.put(frame)
-                    else:
-                        self.logger.warning("Failed to capture frame")
-                        time.sleep(0.1)
-                else:
-                    self.logger.warning("Camera not available")
-                    time.sleep(1.0)
-                    
-            except Exception as e:
-                self.logger.error(f"Capture error: {e}")
-                time.sleep(0.1)
-    
+
     def _recognition_loop(self):
         """Process frames for face recognition"""
         while self.running:
@@ -901,15 +832,7 @@ class FaceRecognitionModule:
                 self.logger.debug(f"Could not encode {img_path.name}: {e}")
         return embeddings
     
-    def get_current_frame(self) -> Optional[np.ndarray]:
-        """
-        Get the current camera frame
-        
-        Returns:
-            Current frame or None
-        """
-        return self.current_frame
-    
+
     def get_processed_frame(self) -> Optional[np.ndarray]:
         """
         Get the processed frame with face annotations

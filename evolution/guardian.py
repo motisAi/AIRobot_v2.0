@@ -125,6 +125,23 @@ def check_imports() -> Check:
                  else out.splitlines()[0][:200])
 
 
+def check_tests() -> Check:
+    """Run every tests/test_*.py with the venv python (each is a standalone script
+    that exits non-zero on failure; also pytest-compatible)."""
+    tests = sorted((ROOT / "tests").glob("test_*.py"))
+    if not tests:
+        return Check("tests", True, True, "no tests found")
+    failed = []
+    for t in tests:
+        r = _run([str(PY), str(t)], timeout=300)
+        if r.returncode != 0:
+            tail = ((r.stdout + r.stderr).strip().splitlines() or ["?"])[-1][:140]
+            failed.append(f"{t.name}: {tail}")
+    if failed:
+        return Check("tests", False, True, " | ".join(failed)[:300])
+    return Check("tests", True, True, f"{len(tests)} test files pass")
+
+
 def check_config() -> Check:
     code = (
         "import sys,os; os.chdir(sys.argv[1]); sys.path.insert(0, sys.argv[1])\n"
@@ -291,6 +308,7 @@ def main() -> int:
     rep.add(_timed(check_syntax))
     rep.add(_timed(check_imports))
     rep.add(_timed(check_config))
+    rep.add(_timed(check_tests))
     rep.add(_timed(lambda: check_service(a.wait_seconds if a.wait else 0, a.stable if a.wait else 0)))
     rep.add(_timed(check_log))
     rep.add(_timed(check_hardware))
