@@ -31,17 +31,15 @@ load_dotenv()
 # Project root directory
 PROJECT_ROOT = Path(__file__).parent.parent.absolute()
 
-# Default base config file. YAML is preferred; falls back to legacy JSON.
+# The ONE base config file. No JSON fallback (a stale config.json silently
+# overriding config.yaml was a Gonzo-era trap).
 DEFAULT_CONFIG_YAML = PROJECT_ROOT / "config" / "config.yaml"
-DEFAULT_CONFIG_JSON = PROJECT_ROOT / "config" / "config.json"
 
 
 def default_config_path() -> Optional[str]:
-    """Return the base config file to auto-load (YAML preferred, JSON fallback)."""
+    """Return the base config file to auto-load (config/config.yaml only)."""
     if DEFAULT_CONFIG_YAML.exists() and YAML_AVAILABLE:
         return str(DEFAULT_CONFIG_YAML)
-    if DEFAULT_CONFIG_JSON.exists():
-        return str(DEFAULT_CONFIG_JSON)
     if DEFAULT_CONFIG_YAML.exists():
         # YAML present but PyYAML missing — warn later during load.
         return str(DEFAULT_CONFIG_YAML)
@@ -85,47 +83,9 @@ def detect_hailo_device() -> bool:
         return False
 
 
-def detect_sim7600x_module() -> bool:
-    """
-    Detect if SIM7600X module is connected and responsive.
-    
-    Returns:
-        bool: True if SIM7600X is detected, False otherwise
-    """
-    try:
-        # Check for SIM7600X on GPIO pins 0&1 (UART0)
-        # Typically appears as /dev/ttyS0 or /dev/ttyAMA0
-        potential_ports = ['/dev/ttyS0', '/dev/ttyAMA0', '/dev/serial0']
-        
-        for port in potential_ports:
-            if Path(port).exists():
-                try:
-                    import serial
-                    # Test communication with AT commands
-                    ser = serial.Serial(port, 115200, timeout=2)
-                    ser.write(b'AT\r\n')
-                    response = ser.read(100).decode('utf-8', errors='ignore')
-                    ser.close()
-                    
-                    if 'OK' in response:
-                        logging.info(f"SIM7600X detected on {port}")
-                        return True
-                        
-                except Exception as e:
-                    logging.debug(f"No response from {port}: {e}")
-                    continue
-                    
-        logging.warning("SIM7600X module not detected")
-        return False
-        
-    except Exception as e:
-        logging.error(f"Error detecting SIM7600X: {e}")
-        return False
-
 
 # Hardware detection results
 HAILO_AVAILABLE = detect_hailo_device()
-SIM7600X_AVAILABLE = detect_sim7600x_module()
 
 
 @dataclass
@@ -134,9 +94,9 @@ class ModelConfig:
     
     # Face Recognition Settings
     face_model: str = "VGG-Face"  # Options: VGG-Face, Facenet, OpenFace, DeepFace
-    face_backend: str = "opencv"  # Options: opencv, ssd, dlib, mtcnn
-    face_distance_metric: str = "cosine"  # Options: cosine, euclidean, euclidean_l2
-    face_recognition_threshold: float = 0.4  # Lower = more strict
+    face_backend: str = "yunet"  # yunet (DNN) | opencv (Haar fallback)
+    face_distance_metric: str = "euclidean"  # dlib embeddings need euclidean (~0.6)
+    face_recognition_threshold: float = 0.60  # distance <= 0.60 = match
     face_detection_confidence: float = 0.7
     
     # Object Detection Settings (YOLO with Hailo)
@@ -171,7 +131,7 @@ class ModelConfig:
     tts_speed: float = 1.0  # Speech speed multiplier
     
     # Wake Word Detection
-    wake_word: str = "gonzo"
+    wake_word: str = "stella"
     wake_word_sensitivity: float = 0.5  # 0-1, higher = more sensitive
     wake_word_model_path: str = str(PROJECT_ROOT / "data" / "models" / "wake_word.ppn")
     picovoice_access_key: str = os.getenv("PICOVOICE_ACCESS_KEY", "")
@@ -181,8 +141,8 @@ class ModelConfig:
     #   energy    -> loudness trigger (no signup, but not word-specific)
     wake_word_engine: str = "auto"
     vosk_model_path: str = str(PROJECT_ROOT / "data" / "models" / "vosk-small-en")
-    # Phrases that count as the wake word (Vosk). Fuzzy 'gonz*' also matches.
-    wake_word_phrases: list = field(default_factory=lambda: ["gonzo", "hey gonzo"])
+    # Phrases that count as the wake word (Vosk). Fuzzy 'stel*' also matches.
+    wake_word_phrases: list = field(default_factory=lambda: ["stella", "hey stella"])
     
     # Voice Identification
     voice_embedding_size: int = 512
@@ -242,23 +202,6 @@ class HardwareConfig:
     esp32_timeout: float = 1.0
     esp32_retry_attempts: int = 3
     
-    # SIM7600X 4G Module (Waveshare) - Connected to GPIO pins 0&1 (UART0)
-    sim7600x_port: str = "/dev/ttyAMA1"  # Primary port for SIM7600X on GPIO 0&1
-    sim7600x_alt_ports: list = field(default_factory=lambda: ["/dev/ttyAMA0", "/dev/serial0"])  # Alternative ports
-    sim7600x_baudrate: int = 115200
-    sim7600x_pin: Optional[str] = None  # SIM PIN if required
-    sim7600x_apn: str = "internet"  # Change based on your carrier (e.g., "hologram" for Hologram)
-    sim7600x_timeout: float = 10.0
-    sim7600x_retry_attempts: int = 3
-    sim7600x_power_pin: int = 6  # GPIO pin to control power (if wired)
-    sim7600x_reset_pin: int = 5  # GPIO pin to control reset (if wired)
-    sim7600x_status_pin: int = 13  # GPIO pin to read status (if wired)
-    
-    # Network Settings for SIM7600X
-    network_mode: str = "auto"  # auto, lte, gsm, 3g
-    preferred_network: str = "lte"
-    roaming_enabled: bool = True
-    
     # Hailo AI Accelerator
     hailo_device_id: int = 0
     hailo_power_mode: str = "performance"  # performance, balanced, power_save
@@ -279,7 +222,6 @@ class HardwareConfig:
     uart_device_map: Dict[str, str] = field(
         default_factory=lambda: {
             "esp32": "/dev/ttyUSB0",
-            "sim7600x": "/dev/ttyAMA1",
         }
     )
 
@@ -297,7 +239,6 @@ class SystemConfig:
     audio_thread_count: int = 2
     enable_gpu: bool = False
     enable_hailo: bool = HAILO_AVAILABLE  # Automatically detect Hailo availability
-    enable_sim7600x: bool = SIM7600X_AVAILABLE  # Automatically detect SIM7600X availability
     
     # Processing Optimization
     frame_skip: int = 3  # Process every Nth frame
@@ -382,7 +323,7 @@ class BehaviorConfig:
     """Robot behavior and personality settings"""
     
     # Personality
-    robot_name: str = os.getenv("ROBOT_NAME", "RoboAI")
+    robot_name: str = os.getenv("ROBOT_NAME", "Stella")
     personality_type: str = "helpful"  # helpful, playful, professional
     response_style: str = "concise"  # concise, detailed, chatty
     # Language Stella listens & speaks in: "en" (English) | "he" (Hebrew).
@@ -430,11 +371,11 @@ class AIConfig:
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     openai_base_url: str = os.getenv("OPENAI_BASE_URL", "")
     anthropic_model: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
-    groq_model: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    groq_model: str = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
     # Smaller/faster Groq model (same key) used automatically when the big model
     # is rate-limited (HTTP 429), so Stella degrades gracefully instead of dying.
     groq_fast_model: str = os.getenv("GROQ_FAST_MODEL", "openai/gpt-oss-20b")
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
     # Fallback chain order (tried left-to-right; 'hailo' = local NPU always works)
     fallback_order: list = field(default_factory=lambda: ["groq", "gemini", "hailo"])
     # Agent mode: let the LLM call tools (web, weather, camera, devices, reminders)
@@ -607,7 +548,7 @@ class RobotConfig:
         self._apply_platform_profile()
 
         # Load custom config if provided, otherwise auto-load the base config
-        # file (config/config.yaml preferred, config/config.json fallback).
+        # file (config/config.yaml).
         load_target = config_file or default_config_path()
         if load_target and Path(load_target).exists():
             self.load_from_file(load_target)

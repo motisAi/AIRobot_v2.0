@@ -81,9 +81,8 @@ def apply_rpi5_overrides(robot_config: "RobotConfig") -> None:
         # Default camera on RPi5 (USB cam on /dev/video0)
         robot_config.hardware.camera_index = 0
 
-        # UART mappings for RPi5 — ESP32 usually on USB, SIM7600X on GPIO UART
+        # UART mappings for RPi5 — ESP32 usually on USB
         robot_config.hardware.uart_device_map.setdefault("esp32", "/dev/ttyUSB0")
-        robot_config.hardware.uart_device_map.setdefault("sim7600x", "/dev/ttyAMA1")
 
         # Microphone hints — user can override via .env
         robot_config.hardware.wake_word_microphone_name = (

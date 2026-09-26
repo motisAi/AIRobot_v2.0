@@ -43,7 +43,7 @@ except Exception as e:
     print(f"  hailo-ollama: -- not reachable ({e})")
 
 print("\n=== Wake-word model (Vosk) ===")
-vosk_dir = Path(__file__).parent / 'data' / 'models' / 'vosk-small-en'
+vosk_dir = Path(__file__).resolve().parent.parent / 'data' / 'models' / 'vosk-small-en'  # repo root
 print(f"  {vosk_dir}: {ok(vosk_dir.exists())}")
 
 print("\n=== Config ===")

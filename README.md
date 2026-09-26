@@ -128,7 +128,7 @@ Edit a value → `sudo systemctl restart airobot`.
 ## Run & ops
 ```bash
 sudo systemctl restart airobot            # start/restart (autostarts on boot)
-journalctl -u airobot -f                  # live log        (app log: data/logs/gonzo.log)
+journalctl -u airobot -f                  # live log        (app log: data/logs/stella.log)
 venv/bin/python evolution/guardian.py     # health check: syntax, imports, config, service, log, hardware, brain, power
 deploy/deploy.sh                          # after a commit: restart → Guardian → auto-rollback if unhealthy
 venv/bin/python tools/reenroll.py         # re-enrol the master face

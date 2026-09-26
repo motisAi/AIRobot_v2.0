@@ -135,19 +135,18 @@ class AIRobot:
         self.logger.info(f"   {behavior_config.robot_name} AI ROBOT SYSTEM")
         self.logger.info("=" * 60)
         
-        # Load custom configuration if provided, else prefer config.yaml
-        # (the editable control panel), falling back to legacy config.json.
+        # Load custom configuration if provided, else config/config.yaml (the ONE
+        # editable control panel). No JSON fallback: a missing yaml fails loudly.
         yaml_config = PROJECT_ROOT / "config" / "config.yaml"
-        json_config = PROJECT_ROOT / "config" / "config.json"
         if config_file:
             config.load_from_file(config_file)
             self.logger.info(f"Loaded settings from {config_file}")
         elif yaml_config.exists():
             config.load_from_file(str(yaml_config))
             self.logger.info("Loaded settings from config/config.yaml")
-        elif json_config.exists():
-            config.load_from_file(str(json_config))
-            self.logger.info("Loaded settings from config/config.json")
+        else:
+            self.logger.error("config/config.yaml not found — refusing to start on defaults")
+            raise SystemExit(2)
         
         # Validate configuration
         if not config.validate():
@@ -213,7 +212,7 @@ class AIRobot:
         log_dir.mkdir(parents=True, exist_ok=True)
 
         file_handler = RotatingFileHandler(
-            log_dir / "gonzo.log", maxBytes=2_000_000, backupCount=3,
+            log_dir / "stella.log", maxBytes=2_000_000, backupCount=3,
         )
         file_handler.setFormatter(logging.Formatter(log_format))
 
@@ -1408,11 +1407,6 @@ def main():
         help='Enable debug mode',
         action='store_true'
     )
-    parser.add_argument(
-        '--test',
-        help='Run in test mode',
-        action='store_true'
-    )
     
     args = parser.parse_args()
     
@@ -1432,32 +1426,10 @@ def main():
         # Initialize robot
         robot = AIRobot(config_file=args.config)
         
-        # Test mode
-        if args.test:
-            print("\n" + "=" * 60)
-            print("   RUNNING IN TEST MODE")
-            print("=" * 60)
-            
-            # Initialize modules
-            robot.initialize_modules()
-            
-            # Run tests
-            run_system_tests(robot)
-            
-            print("\n" + "=" * 60)
-            print("   TEST COMPLETE")
-            print("=" * 60)
-            
-        else:
-            # Normal operation
-            # Initialize modules
-            robot.initialize_modules()
-            
-            # Start modules
-            robot.start_modules()
-            
-            # Run main loop
-            robot.run()
+        # Initialize, start, run
+        robot.initialize_modules()
+        robot.start_modules()
+        robot.run()
     
     except Exception as e:
         print(f"\nFATAL ERROR: {e}")
@@ -1470,198 +1442,5 @@ def main():
             robot.shutdown()
 
 
-def run_system_tests(robot: AIRobot):
-    """
-    Run system tests
-    
-    Args:
-        robot: Robot instance to test
-    """
-    print("\nRunning system tests...")
-    
-    # Test 1: Configuration
-    print("\n1. Configuration Test:")
-    if config.validate():
-        print("   ✓ Configuration valid")
-    else:
-        print("   ✗ Configuration invalid")
-    
-    # Test 2: Module initialization
-    print("\n2. Module Initialization:")
-    for name, module in robot.modules.items():
-        print(f"   ✓ {name} initialized")
-    
-    # Test 3: Camera test
-    print("\n3. Camera Test:")
-    if 'face_recognition' in robot.modules:
-        face_module = robot.modules['face_recognition']
-        if face_module.initialize_camera():
-            print("   ✓ Camera accessible")
-            
-            # Try to capture a frame
-            time.sleep(1)
-            frame = face_module.get_current_frame()
-            if frame is not None:
-                print(f"   ✓ Frame captured: {frame.shape}")
-            else:
-                print("   ✗ Failed to capture frame")
-        else:
-            print("   ✗ Camera not accessible")
-    
-    # Test 4: Brain state machine
-    print("\n4. Brain State Machine:")
-    brain = robot.brain
-    print(f"   Initial state: {brain.state.name}")
-    
-    # Test state transitions
-    brain.startup_complete()
-    print(f"   After startup: {brain.state.name}")
-    
-    brain.wake_word_heard()
-    print(f"   After wake word: {brain.state.name}")
-    
-    brain.return_idle()
-    print(f"   Return to idle: {brain.state.name}")
-    
-    # Test 5: Event system
-    print("\n5. Event System:")
-    test_event = RobotEvent(
-        type='test_event',
-        source='test',
-        data={'test': True},
-        priority=5
-    )
-    brain.emit_event(test_event)
-    print("   ✓ Event emitted successfully")
-    
-    # Test 6: Memory system
-    print("\n6. Memory System:")
-    brain.add_memory(
-        content="Test memory",
-        memory_type='short_term',
-        importance=0.5
-    )
-    memories = brain.recall_memory("Test")
-    if memories:
-        print(f"   ✓ Memory stored and recalled: {len(memories)} items")
-    else:
-        print("   ✗ Memory recall failed")
-    
-    # Test 7: Performance check
-    print("\n7. Performance Check:")
-    import psutil
-    
-    cpu_percent = psutil.cpu_percent(interval=1)
-    memory_percent = psutil.virtual_memory().percent
-    disk_percent = psutil.disk_usage('/').percent
-    
-    print(f"   CPU Usage: {cpu_percent}%")
-    print(f"   Memory Usage: {memory_percent}%")
-    print(f"   Disk Usage: {disk_percent}%")
-    
-    # Check temperature (Raspberry Pi)
-    try:
-        temp_file = Path("/sys/class/thermal/thermal_zone0/temp")
-        if temp_file.exists():
-            temp = int(temp_file.read_text()) / 1000
-            print(f"   Temperature: {temp}°C")
-    except:
-        print("   Temperature: N/A")
-    
-    # Test 8: File system
-    print("\n8. File System:")
-    data_dirs = [
-        "data/models",
-        "data/faces",
-        "data/voices",
-        "data/logs"
-    ]
-    
-    for dir_path in data_dirs:
-        full_path = PROJECT_ROOT / dir_path
-        if full_path.exists():
-            print(f"   ✓ {dir_path} exists")
-        else:
-            print(f"   ✗ {dir_path} missing")
-    
-    # Test 9: Hardware interfaces (if available)
-    print("\n9. Hardware Interfaces:")
-    
-    # Check for ESP32
-    esp32_port = Path(hardware_config.esp32_port)
-    if esp32_port.exists():
-        print(f"   ✓ ESP32 port found: {esp32_port}")
-    else:
-        print(f"   ✗ ESP32 port not found: {esp32_port}")
-    
-    # Check for GSM / 4G modem (SIM7600X)
-    gsm_port = Path(hardware_config.sim7600x_port)
-    if gsm_port.exists():
-        print(f"   ✓ GSM port found: {gsm_port}")
-    else:
-        print(f"   ✗ GSM port not found: {gsm_port}")
-    
-    # Test 10: Network connectivity
-    print("\n10. Network Test:")
-    try:
-        import socket
-        socket.create_connection(("8.8.8.8", 53), timeout=3)
-        print("   ✓ Internet connection available")
-    except:
-        print("   ✗ No internet connection")
-    
-    print("\nTest Summary:")
-    print("All basic systems checked. Review results above.")
-
-
-def create_systemd_service():
-    """
-    Create systemd service file for auto-start on boot
-    This should be run with sudo
-    """
-    import getpass
-    user = getpass.getuser()
-    python_bin = sys.executable  # the venv interpreter running this process
-    service_content = f"""[Unit]
-Description=Gonzo AI Robot
-After=network-online.target hailo-ollama.service
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart={python_bin} {PROJECT_ROOT}/main.py
-Restart=on-failure
-RestartSec=5
-User={user}
-WorkingDirectory={PROJECT_ROOT}
-Environment=PYTHONUNBUFFERED=1
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-"""
-    
-    service_file = "/etc/systemd/system/ai-robot.service"
-    
-    try:
-        with open(service_file, 'w') as f:
-            f.write(service_content)
-        
-        print(f"Service file created at {service_file}")
-        print("To enable auto-start on boot, run:")
-        print("  sudo systemctl daemon-reload")
-        print("  sudo systemctl enable ai-robot.service")
-        print("  sudo systemctl start ai-robot.service")
-        
-    except PermissionError:
-        print("Permission denied. Run with sudo to create service file:")
-        print(f"  sudo python3 {__file__} --create-service")
-
-
 if __name__ == "__main__":
-    # Check for special commands
-    if len(sys.argv) > 1 and sys.argv[1] == '--create-service':
-        create_systemd_service()
-    else:
-        main()
+    main()

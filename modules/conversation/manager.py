@@ -68,7 +68,7 @@ class ConversationManager:
         if not text:
             return
         print(f"\n{behavior_config.robot_name}: {text}\n", flush=True)
-        self.logger.info("SAY: %s", text)   # goes to gonzo.log for debugging
+        self.logger.info("SAY: %s", text)   # goes to stella.log for debugging
         self._dashboard_log(f"{behavior_config.robot_name}: {text}")
         tts = self.robot.modules.get('tts')
         if tts and getattr(tts, 'running', False):
@@ -203,7 +203,7 @@ class ConversationManager:
                     break
 
                 print(f"\nYou: {text}", flush=True)
-                self.logger.info("HEARD: %s", text)   # goes to gonzo.log
+                self.logger.info("HEARD: %s", text)   # goes to stella.log
                 try:
                     self.robot._conv_activity = time.monotonic()
                 except Exception:

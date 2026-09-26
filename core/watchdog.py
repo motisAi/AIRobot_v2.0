@@ -11,7 +11,8 @@ Checks (every `interval` seconds):
   * Audio out— if the TTS output device stops opening (HDMI card renumbered),
                re-resolve it. Conservative: only after 2 consecutive failures and
                never while she's speaking (to avoid the HDMI 'busy' false alarm).
-The wake/command mics already self-heal by re-resolving their index by name.
+The mics are resolved by stable identity on every open (see architecture §4); a device
+missing at PortAudio init is invisible until the service restarts.
 """
 
 from __future__ import annotations
@@ -53,9 +54,10 @@ class HardwareWatchdog:
 
     # -- stuck conversation (mic hang) ------------------------------------
     def _check_stuck_conversation(self):
-        """If a conversation is active but Stella has not spoken for 120s, the
-        mic capture has hung (PortAudio blocking read on a stalled USB mic).
-        Restart the service to recover — safe, no cross-thread audio ops."""
+        """If a conversation is active but nothing has been heard/said for 75s the
+        mic capture has probably stalled. Stage 1 soft-stops the session; only if
+        it is STILL stuck ~25s later do we restart the service (never touch a
+        PortAudio stream from here — see bug_028/bug_054)."""
         r = self.robot
         if not getattr(r, "_conv_active", False):
             return
