@@ -1,0 +1,18 @@
+[Unit]
+Description=Stella AI Robot
+# Start after the network and the Hailo-10H NPU LLM server are up.
+After=network-online.target hailo-ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=moti_ai
+WorkingDirectory=/home/moti_ai/AIRobot_v2.0
+ExecStart=/home/moti_ai/AIRobot_v2.0/venv/bin/python /home/moti_ai/AIRobot_v2.0/main.py
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+# moti_ai is already in the audio/video groups; systemd applies them.
+
+[Install]
+WantedBy=multi-user.target

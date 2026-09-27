@@ -1,0 +1,12 @@
+[Unit]
+Description=Stella nightly self-check (manifest, Guardian, Scout, morning report)
+After=network-online.target airobot.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=moti_ai
+WorkingDirectory=/home/moti_ai/AIRobot_v2.0
+ExecStart=/home/moti_ai/AIRobot_v2.0/evolution/nightly.sh
+Nice=15
+IOSchedulingClass=idle

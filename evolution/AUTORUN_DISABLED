@@ -1,0 +1,5 @@
+Autonomous evolution is DISABLED by the operator (2026-09-27).
+While this file exists, evolution/nightly.sh exits immediately and nothing runs unattended.
+Nothing in evolution/ ever installs packages or edits code (Scout is report-only; Lab/Builder
+were never built), but the operator wants no self-driven runs at all.
+To re-enable a nightly HEALTH REPORT only: delete this file and add the cron line from evolution/README.md.
