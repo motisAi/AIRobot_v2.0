@@ -25,12 +25,12 @@ TARGET = 12
 MIN_OK = 4
 MAX_SECONDS = 40
 THRESH = 0.60
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parent.parent  # repo root (tool lives in tools/)
 DB_PATH = ROOT / "data" / "faces" / "face_db.pkl"
 IMAGES_DIR = ROOT / "data" / "faces" / "images"
 # "pulse" first: pulseaudio owns the HDMI device, so route through it (direct
 # hardware access returns "Device or resource busy").
-AUDIO_DEVS = ["pulse", "default", "sysdefault:CARD=vc4hdmi0", "plughw:CARD=vc4hdmi0"]
+AUDIO_DEVS = ["plughw:CARD=sndrpigooglevoi", "pulse", "default", "sysdefault:CARD=vc4hdmi0"]  # I2S speaker first
 
 
 def say(text: str):
