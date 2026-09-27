@@ -9,7 +9,7 @@
 > public interface. History lives in `bug_report/` and `docs/decisions/log.md`, not here.
 >
 > Last verified against commit `a2e3229` on 2026-09-26 (live journal, `systemctl show airobot -p NRestarts` = 0
-> since 20:26). Written for the 2026-09-27 deep clean. Items tagged **[planned]** are deep-clean code fixes that
+> since 20:26). Written for the 2026-09-27 deep clean. Items tagged **[done 2026-09-27]** landed that day (dead code 0e01175/ed47922, docs 750d2df, audio hardening 587f965); the few still tagged **[planned]** are
 > are decided but were not yet in `a2e3229` when this was verified; everything else describes the running code.
 
 ---
@@ -94,12 +94,12 @@ code imports. Secrets live in `.env` (mode 600, gitignored): `GROQ_API_KEY`, `GE
 Rules:
 - No other YAML reader. **[planned]** `main.py` still reads the `mqtt` section from raw YAML; it moves to a
   `MqttConfig` dataclass (§14).
-- No JSON fallback. `config/config.json` is removed in the deep clean; **[planned]** a `config.yaml` load failure logs
+- No JSON fallback. `config/config.json` is removed in the deep clean; **[done 2026-09-27]** a `config.yaml` load failure logs
   ERROR with the path and exception and exits with code 2 instead of silently booting the Gonzo-era defaults.
-- Every yaml key maps to a dataclass field **and** is read by some code — **[planned]** `tests/test_config_keys.py`
+- Every yaml key maps to a dataclass field **and** is read by some code — **[done 2026-09-27]** `tests/test_config_keys.py`
   enforces it (14 decoy keys exist today).
 - Dataclass defaults equal the known-good live values (face threshold 0.60 / euclidean / yunet, wake word `stella`,
-  `robot_name` Stella, the current Groq/Gemini model ids) — **[planned]**, today several defaults are stale.
+  `robot_name` Stella, the current Groq/Gemini model ids) — **[done 2026-09-27]**, today several defaults are stale.
 
 | Section | Read by (verified by grep on `*_config` imports) |
 |---|---|
@@ -120,7 +120,7 @@ Rules:
 
 Audio keys that matter (`hardware`): `wake_word_microphone_name: "Auto Focus Camera"`,
 `speech_microphone_name: "USB PnP Sound Device"`, `microphone_rate: 48000`, `speech_microphone_rate: 44100`,
-`audio_output_device: hdmi`, `audio_output_card: null` (auto-detect). **[planned]** `wake_mic_id` / `command_mic_id`
+`audio_output_device: hdmi`, `audio_output_card: null` (auto-detect). **[done 2026-09-27]** `wake_mic_id` / `speech_mic_id`
 (by-id strings) alongside the name keys; the rate keys become the first entry of the probe tuples (§4, invariant I7).
 
 ---
@@ -135,8 +135,8 @@ This section supersedes every other mention of microphones in the repo (README, 
 
 | Role | Device | `/dev/snd/by-id` | ALSA card (id) | PortAudio name | Native rate | Config key |
 |---|---|---|---|---|---|---|
-| **WAKE** | camera built-in mic | `usb-Signo_Camera_WB-400_Auto_Focus_Camera_200901010001-02` → `controlC3` | card 3 (`Camera`) | `Auto Focus Camera: USB Audio (hw:3,0)` | 48000 Hz (no 16 k) | `hardware.wake_word_microphone_name: "Auto Focus Camera"` (**[planned]** `wake_mic_id: usb-Signo_Camera_WB-400_Auto_Focus_Camera*`) |
-| **COMMAND** | dedicated USB dongle | `usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device-00` → `controlC0` | card 0 (`Device`) | `USB PnP Sound Device: Audio (hw:0,0)` | 44100 Hz | `hardware.speech_microphone_name: "USB PnP Sound Device"` (**[planned]** `command_mic_id: usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device*`) |
+| **WAKE** | camera built-in mic | `usb-Signo_Camera_WB-400_Auto_Focus_Camera_200901010001-02` → `controlC3` | card 3 (`Camera`) | `Auto Focus Camera: USB Audio (hw:3,0)` | 48000 Hz (no 16 k) | `hardware.wake_word_microphone_name: "Auto Focus Camera"` (**[done 2026-09-27]** `wake_mic_id: usb-Signo_Camera_WB-400_Auto_Focus_Camera*`) |
+| **COMMAND** | dedicated USB dongle | `usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device-00` → `controlC0` | card 0 (`Device`) | `USB PnP Sound Device: Audio (hw:0,0)` | 44100 Hz | `hardware.speech_microphone_name: "USB PnP Sound Device"` (**[done 2026-09-27]** `speech_mic_id: usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device*`) |
 
 - Cards 1 and 2 (`vc4hdmi0`, `vc4hdmi1`) are playback-only HDMI. HDMI card numbers move across reboots; USB card
   numbers can move after a replug. **PortAudio indices are not ALSA card numbers** — at `a2e3229` the camera mic is
@@ -151,7 +151,7 @@ This section supersedes every other mention of microphones in the repo (README, 
 ### 4.2 Ownership and threads
 
 - **One PyAudio instance** for the process: `parts_used/audio_portaudio.get_pa()`, created once, never terminated.
-  **[planned]** it logs the input-device table once at creation (`idx name rate`); `AudioManager`'s private
+  **[done 2026-09-27]** it logs the input-device table once at creation (`idx name rate`); `AudioManager`'s private
   `pyaudio.PyAudio()` + `terminate()` at boot and `text_to_speech._play_with_pyaudio` are removed. No other file may
   construct `pyaudio.PyAudio()`.
 - **Wake stream**: owned exclusively by the wake-word listener thread (`_vosk_loop`): `_open()`, `stream.read()`,
@@ -163,7 +163,7 @@ This section supersedes every other mention of microphones in the repo (README, 
   deadline** checked between reads (`max(start_timeout, max_seconds) + 5 s`, current `442c8a8` code). **No reader
   thread, ever.** A wedged `stream.read()` is bounded by the two-stage watchdog (§9: 75 s no speech → soft session stop
   → +25 s → service restart), not by a thread.
-- **[planned]** Both open sites wrap the stream in `MicStream` (new, in `audio_portaudio.py`), which records the owner
+- **[done 2026-09-27]** Both open sites wrap the stream in `MicStream` (new, in `audio_portaudio.py`), which records the owner
   thread id, raises `RuntimeError` on `stop_stream()`/`close()` from any other thread, refuses `device_index=None`, and
   asserts the resolved PortAudio name contains the expected `(hw:N,` before opening.
 
@@ -172,12 +172,12 @@ This section supersedes every other mention of microphones in the repo (README, 
 1. Vosk detects "hey stella" on the wake stream (camera mic). Journal: `Wake word detected (method=vosk, confidence=…)`.
 2. `main.py` calls `wake.pause_listening()`: the wake thread closes **its** stream; pause waits up to 2 s for
    `_stream_closed_event`. Journal: `Pausing wake-word listener (conversation) — releasing mic`.
-3. If the wait times out: **[planned]** mark the wake device wedged, log ERROR, do **not** open the command mic, end the
+3. If the wait times out: **[done 2026-09-27]** mark the wake device wedged, log ERROR, do **not** open the command mic, end the
    session, let the watchdog restart. (Today it logs `Timed out waiting for wake-word stream to close` as a WARNING and
    proceeds — that was the 2026-09-26 14:40 failure path under the single-mic layout.)
 4. `capture_utterance()` resolves the command mic at every call (today: by name substring against the PortAudio table;
-   **[planned]** by-id → `controlC0` → `(hw:0,`), opens at its native rate (today the literal tuple
-   `(44100, 48000, 16000)`; **[planned]** `[speech_microphone_rate, 48000, 44100, 16000]` de-duplicated), reads with VAD,
+   **[done 2026-09-27]** by-id → `controlC0` → `(hw:0,`), opens at its native rate (today the literal tuple
+   `(44100, 48000, 16000)`; **[done 2026-09-27]** `[speech_microphone_rate, 48000, 44100, 16000]` de-duplicated), reads with VAD,
    closes in the same thread.
 5. At session end (`manager.py:263` → `main._resume_wake_word_listener()`, the single resume owner) the wake thread
    reopens the camera mic, re-resolving on every attempt with exponential backoff 1 s → 60 s. Journal:
@@ -186,23 +186,23 @@ This section supersedes every other mention of microphones in the repo (README, 
 Because the two roles are on two physical devices, the wake-stream close and the command-stream open never contend for
 the same ALSA device. **That is the property the single-mic detour (`2051a76`) broke, and why it failed** (bug_055).
 
-### 4.4 Invariants (each enforced in code and tested — **[planned]** where marked)
+### 4.4 Invariants (each enforced in code and tested)
 
-- **I1.** wake device ≠ command device (by-id and by `hw:N`) at startup, else exit with a clear error. **[planned]**
+- **I1.** wake device ≠ command device (by-id and by `hw:N`) at startup, else exit with a clear error. **[done 2026-09-27]**
 - **I2.** `input_device_index` is never `None` at `audio.open()`; an unresolved name is an ERROR + backoff, never a
   fall-through to PortAudio `default` (= ALSA `default` = pulse plugin = whichever source PulseAudio favours that day).
   Today `capture_utterance` refuses when `mic_available()` is false, but `mic_available()` keeps a stale index when the
-  name does not resolve, and the wake `_open` reuses `self.device_index` — **[planned]** both become hard refusals.
-- **I3.** A stream is touched only by the thread that opened it (`MicStream` guard raises otherwise). **[planned]**
+  name does not resolve, and the wake `_open` reuses `self.device_index` — **[done 2026-09-27]** both become hard refusals.
+- **I3.** A stream is touched only by the thread that opened it (`MicStream` guard raises otherwise). **[done 2026-09-27]**
   guard; the behaviour is already true on the live path.
 - **I4.** No thread holding a stream is ever abandoned; a join/close timeout is terminal for that device in this process.
-  **[planned]** for `pause_listening()`.
+  **[done 2026-09-27]** for `pause_listening()`.
 - **I5.** Exactly one `Pa_Initialize` per process; the device table is logged once so the journal shows what the app
-  resolves against. **[planned]** (today the only table in the journal is `AudioManager`'s discarded one).
+  resolves against. **[done 2026-09-27]** (today the only table in the journal is `AudioManager`'s discarded one).
 - **I6.** Every capture-capable card (any `/dev/snd/pcmC<n>D*c`) gets its capture gain raised at boot, by card id string
-  not by index. **[planned]** (today `_boost_input_gains` loops over cards `(0, 1)`; card 1 is HDMI, card 3 — the wake
+  not by index. **[done 2026-09-27]** (today `_boost_input_gains` loops over cards `(0, 1)`; card 1 is HDMI, card 3 — the wake
   mic — is never boosted).
-- **I7.** Rates come from config (native-first), not from literal tuples. **[planned]**
+- **I7.** Rates come from config (native-first), not from literal tuples. **[done 2026-09-27]**
 - **I8.** Mic role changes require a bug file, a decision-log entry and a 24 h soak before another audio change.
 
 ### 4.5 Known failure modes and the response to each
@@ -211,7 +211,7 @@ the same ALSA device. **That is the property the single-mic detour (`2051a76`) b
 |---|---|---|
 | Mic busy/absent at boot (PortAudio's frozen snapshot lacks `hw:N`; PortAudio V19.6.0-devel has no `Pa_RefreshDeviceList`) | resolver finds no `(hw:N,` entry | **[planned]** if zero streams are open, ONE serialized re-init under `open_lock()` (terminate + new PyAudio, table re-logged) and retry; otherwise ERROR + backoff. Watchdog gets a *visibility-only* WARNING when the wake listener has had no open stream for > 5 min. Today: needs a service restart (README "known quirks"). |
 | PulseAudio grabbing a mic | Pulse (user session) holds the device | The by-id/`hw:N` path opens the ALSA hw device directly, never the pulse plugin. **[planned]** on "device busy" log which PID holds it (`fuser /dev/snd/pcmC<N>D0c`). |
-| Replug / renumber during transport | card numbers change | by-id symlinks track the device across renumbering; the resolver re-reads them at every open. **[planned]** (today: name substring against the frozen snapshot). |
+| Replug / renumber during transport | card numbers change | by-id symlinks track the device across renumbering; the resolver re-reads them at every open. **[done 2026-09-27]** (today: name substring against the frozen snapshot). |
 | Wedged `stream.read()` | the conversation thread blocks | two-stage watchdog (§9). **This is the only bound. Do not add a reader thread.** |
 
 ### 4.6 What NOT to do
@@ -227,7 +227,7 @@ the same ALSA device. **That is the property the single-mic detour (`2051a76`) b
 - No index-based device selection in config or code; indices change every reboot and replug.
 - Never proceed past `Timed out waiting for wake-word stream to close` into another open.
 
-### 4.7 Changes still needed from the running `a2e3229` code (the **[planned]** items, in order)
+### 4.7 Changes landed on 2026-09-27 (commit 587f965) — kept as the verification checklist
 
 (1) `MicStream` owner guard used in `wake_word._open/_close` and `speech_recognition.capture_utterance`;
 (2) replace both `_resolve_microphone_index` copies and `mic_available()`'s fallback-to-saved-index with
@@ -235,7 +235,7 @@ the same ALSA device. **That is the property the single-mic detour (`2051a76`) b
 (3) remove the `input_device_index=self.device_index` None path — return None/error before open when unresolved;
 (4) make `pause_listening()`'s timeout terminal (wedged flag, no command open, watchdog escalation);
 (5) startup assertion wake ≠ command device;
-(6) config keys `wake_mic_id` / `command_mic_id` alongside the name keys;
+(6) config keys `wake_mic_id` / `speech_mic_id` alongside the name keys;
 (7) rate tuples from config;
 (8) `_boost_input_gains` by capture-node card id;
 (9) log the shared PyAudio device table once and delete `AudioManager`'s private init;
@@ -351,10 +351,10 @@ camera mic ──Vosk──► "hey stella" ──► main.py: pause wake, start
 | camera | frames stale > 15 s | WARNING only (`CameraManager` reopens itself) |
 | hand | serial port vanished / link dead | re-detect `/dev/ttyACM*` / `/dev/ttyUSB*`, `hand.reconnect()` |
 | audio out | TTS device fails to open 2× in a row, never while speaking | re-resolve the HDMI device; backoff 20 s → 300 s when no output exists |
-| wedged audio **[planned]** | `_audio_wedged_at` set for > 10 s (wake-stream close timed out) | Stage 2 restart |
+| wedged audio **[done 2026-09-27]** | `_audio_wedged_at` set for > 10 s (wake-stream close timed out) | Stage 2 restart |
 | wake listener **[planned]** | wake stream `None` for > 300 s while `running` | WARNING once per 10 min, no restart |
 
-- The watchdog docstring still says 120 s; the code says 75 s — **[planned]** docstring fix. The header comment that mics
+- The watchdog docstring still says 120 s; the code says 75 s — **[done 2026-09-27]** docstring fix. The header comment that mics
   "self-heal by re-resolving by name" is only true for devices present in PortAudio's frozen snapshot.
 - systemd: `Restart=on-failure`, `RestartSec=5`. A crash (`code=dumped, status=6/ABRT`) costs ~30 s of blackout
   (wake, vision, guard, Telegram all drop) and resets in-memory guard state — which is why in-process recovery is
@@ -375,7 +375,7 @@ camera mic ──Vosk──► "hey stella" ──► main.py: pause wake, start
 2 min of the journal: error count and fatal patterns — `Traceback`, `malloc_consolidate`,
 `HAILO_OUT_OF_PHYSICAL_DEVICES`) · `hardware` (soft) · `brain` (hailo-ollama answers; `--no-brain`, `--require-hailo`) ·
 `resources` (disk ≥ 2 GB, RAM, `vcgencmd get_throttled`, undervoltage reported loudly).
-**[planned]** a `tests` check runs `pytest tests/ -q` so the new tests (§13) gate every deploy; today Guardian and
+**[done 2026-09-27]** a `tests` check runs every `tests/test_*.py` with the venv python so the new tests (§13) gate every deploy; today Guardian and
 `tests/test_imports.py` both derive their module list from `main.py`, so an orphan module is never checked.
 
 **deploy.sh**: refuses a dirty tree (`git status --porcelain --untracked-files=no`); records HEAD; restarts; Guardian
@@ -471,14 +471,14 @@ land in `evolution/reports/guardian-latest.json` (Guardian), `evolution/reports/
 - [ ] **Imports and syntax of every live module** — `venv/bin/python -m pytest tests/test_imports.py -q`; Guardian
       `check_syntax` + `check_imports` via `deploy/deploy.sh`. Expect: all modules `main.py` imports load, no
       `ImportError`, deploy proceeds past Guardian. *Status: passing (the only test present today).*
-- [ ] **No orphan modules** — `tests/test_no_orphans.py` **[planned]**: every `.py` under `modules/` and `parts_used/`
+- [x] **No orphan modules** — `tests/test_no_orphans.py` **[done 2026-09-27]**: every `.py` under `modules/` and `parts_used/`
       (except `__init__`/README) is imported by another repo file. Expect: passes once `esp32_controller`,
       `server_connection`, `sim7600x_modem` are gone. *Status: not implemented; 3 orphans before the deep clean.*
-- [ ] **Config keys all mapped and read** — `tests/test_config_keys.py` **[planned]**: walk `config.yaml`, assert each
+- [x] **Config keys all mapped and read** — `tests/test_config_keys.py` **[done 2026-09-27]**: walk `config.yaml`, assert each
       key is a dataclass field and its name appears in code outside `settings.py`. *Status: not implemented; 14 decoy keys.*
-- [ ] **PortAudio owner-thread guard** — `tests/test_audio_threading.py` **[planned]** with a fake PyAudio: open a
+- [x] **PortAudio owner-thread guard** — `tests/test_audio_threading.py` **[done 2026-09-27]** with a fake PyAudio: open a
       `MicStream` in thread A, `close()` from thread B → `RuntimeError`; close from A succeeds; `open_input(None)` raises.
-- [ ] **Mic resolution by stable identity** — `tests/test_mic_resolution.py` **[planned]**: mock `/dev/snd/by-id` and a
+- [x] **Mic resolution by stable identity** — `tests/test_mic_resolution.py` **[done 2026-09-27]**: mock `/dev/snd/by-id` and a
       PortAudio table; cases normal / renumbered card / device missing / table without `hw:N`. Expect: the `hw:N`-matching
       index; `None` (never a default) when missing; the re-init path only when zero streams are open.
 - [ ] **Two-mic startup invariant** — after deploy:

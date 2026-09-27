@@ -22,3 +22,5 @@ Add a test when a bug had no test that would have caught it; name it after the b
 (`test_bug_026_hallucination_filter.py`). The invariants these tests protect are listed in
 [docs/architecture/stella-architecture.md §4.4 and §12](../docs/architecture/stella-architecture.md); the live
 checklist (journal greps, bench reproductions) is §13.
+
+As of 587f965 all five test files exist and pass (`test_imports`, `test_no_orphans`, `test_config_keys`, `test_audio_threading`, `test_mic_resolution`); Guardian runs each `tests/test_*.py` on every deploy and fails the deploy on any non-zero exit.

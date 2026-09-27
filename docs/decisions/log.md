@@ -608,3 +608,5 @@ bug_049 still "fixed", a commit citing a non-existent bug_055).
 **Rejected:** deleting `core/robot_brain.py` dead states in this pass (live and dead code interleaved; needs its own
 verification); removing the DeepFace/legacy face-recognition methods beyond the camera path; any change to the mic
 assignment itself.
+
+**2026-09-27 (later) — landed:** the deep-clean code fixes are in: dead code + config hygiene (0e01175, ed47922), docs (750d2df), audio hardening (587f965: MicStream single-owner guard, find_input_index by-id resolver, two-mic startup invariant, wedged-wake escalation, gains by card id, rate tuples from config, tests/test_audio_threading + test_mic_resolution). Journal at first start: `Mic map: wake -> device 2 (hw:3), command -> device 0 (hw:0)`, gains `Device:ok, Camera:ok`.

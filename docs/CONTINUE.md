@@ -1,5 +1,7 @@
 # Continue point — 2026-09-27
 
+> **Update 2026-09-27 (later):** all queued code fixes landed — dead code/hygiene 0e01175 + ed47922, docs 750d2df, audio hardening 587f965 (MicStream owner guard, by-id mic resolver, two-mic startup invariant, wedge escalation, gains by card id). Guardian runs 5 test files on every deploy. Still open: MqttConfig, busy-at-boot re-init, tools/check_audio.py, PSU/fan/INMP441, re-enrol face.
+
 ## Where we are
 - **One architecture document**: [architecture/stella-architecture.md](architecture/stella-architecture.md) replaces the
   two dated docs (now in `architecture/archive/`) and the old `docs/architecture.md`. Read §4 before touching audio,

@@ -27,7 +27,7 @@ live in **`.env`** (never in git).
 | `firmware/` | ESP32 sketches (hand, tests, I²C scan). | [docs/firmware/hand-esp32.md](docs/firmware/hand-esp32.md) |
 | **`evolution/`** | Stella's self‑improvement system: **Guardian** (health + rollback), manifest, Scout, reports. | [evolution/README.md](evolution/README.md) |
 | **`bug_report/`** | One file per bug ever fixed: symptom → root cause → fix → how to verify. **Check here before debugging anything.** | [bug_report/README.md](bug_report/README.md) |
-| `tests/` | Smoke and invariant tests run by Guardian on every deploy (`test_imports`, `test_no_orphans`, `test_config_keys`; audio tests land with the audio hardening). | [tests/README.md](tests/README.md) |
+| `tests/` | Smoke and invariant tests run by Guardian on every deploy (`test_imports`, `test_no_orphans`, `test_config_keys`, `test_audio_threading`, `test_mic_resolution`). | [tests/README.md](tests/README.md) |
 | `tools/` | Operator scripts: enrol the master face, manage faces, check deps, hand control. | [tools/README.md](tools/README.md) |
 | `deploy/` | systemd unit, **`deploy.sh`** (restart → Guardian → auto‑rollback), sudoers/WiFi helpers. | [evolution/README.md](evolution/README.md#deploying-safely) |
 | `docs/` | The single architecture doc, dated decision log, hardware/wiring, briefs, CONTINUE.md. | [docs/README.md](docs/README.md) |
