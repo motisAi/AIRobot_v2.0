@@ -20,6 +20,8 @@ import uuid
 import urllib.parse
 import urllib.request
 
+from config.settings import security_config
+
 logger = logging.getLogger("Telegram")
 
 
@@ -215,6 +217,20 @@ class TelegramBridge:
         return phrase
 
     # -- command handling --------------------------------------------------
+    def _master_name(self) -> str:
+        """The enrolled master's display name (from the face DB), else 'the master'."""
+        try:
+            import pickle
+            from pathlib import Path as _P
+            db = pickle.load(open(_P(__file__).resolve().parent.parent.parent / "data/faces/face_db.pkl", "rb"))
+            mid = security_config.master_user_id
+            v = db.get(mid) if isinstance(db, dict) else None
+            if isinstance(v, dict) and v.get("name"):
+                return v["name"]
+        except Exception:
+            pass
+        return "the master"
+
     def _process(self, text: str):
         low = text.lower().strip()
         brain = self.robot.brain
@@ -325,7 +341,8 @@ class TelegramBridge:
             st = getattr(brain, "state", "?")
             self._send(f"Status — state: {getattr(st, 'name', st)} · "
                        f"guard: {'ON' if brain.guard_mode else 'off'} · "
-                       f"user: {getattr(brain, 'current_user_name', None) or 'unknown'}")
+                       f"master (you): {self._master_name()} · "
+                       f"camera sees: {getattr(brain, 'current_user_name', None) or 'nobody'}")
             return
 
         engine = self.robot.ai_engine
@@ -349,8 +366,12 @@ class TelegramBridge:
             self.robot._remote_master = True   # allow master-only tools from phone
             prev_user = engine._current_user
             try:
-                engine._current_user = getattr(brain, "current_user", None) or "master_001"
-                reply = engine.think(text, context={"user": "Moti (texting from phone)"})
+                # Only the master's chat reaches this bridge, so the texter IS the
+                # master — never inherit whoever the camera last saw (that made her
+                # call Moti "Orr" and recall the wrong person's facts).
+                engine._current_user = security_config.master_user_id
+                mname = self._master_name()
+                reply = engine.think(text, context={"user": f"{mname} (the master, texting from phone)"})
             except Exception as exc:
                 reply = f"Sorry, I hit an error: {exc}"
             finally:
