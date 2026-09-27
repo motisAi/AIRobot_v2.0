@@ -60,3 +60,5 @@
   after the HailoRT runtime repair (matched pyhailort wheel, not PyPI).
 - Remove the legacy brain dialogue pipeline and collapse the four device-control/guard writers into one owner (§14).
 - Evolution v3: Lab (sandbox) + Builder behind `require_operator_approval`.
+
+- **2026-09-27:** autonomous evolution disabled by the operator (cron removed, `evolution/AUTORUN_DISABLED`). Stable snapshot branch: `stable-2026-09-27`.

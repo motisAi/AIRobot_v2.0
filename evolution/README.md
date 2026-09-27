@@ -1,5 +1,7 @@
 # evolution — Stella's self‑improvement system
 
+> **DISABLED (operator decision, 2026-09-27):** no autonomous runs. `evolution/AUTORUN_DISABLED` exists and the cron entry was removed; `nightly.sh` exits immediately while the marker is present. Guardian is still used by `deploy/deploy.sh` on every manual deploy. Nothing here ever installed packages or edited code (Scout is report-only; Lab/Builder were never built).
+
 Goal: Stella knows what she is, checks her own health, looks for ways to get better, and
 tells Moti every morning — using **free models only** (hailo‑ollama → Groq → Gemini; never
 a paid API) and **never changing herself without a safety net**. Design:

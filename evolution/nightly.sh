@@ -8,6 +8,9 @@ LOG=evolution/reports/nightly.log
 mkdir -p evolution/reports
 log() { echo "$(date '+%F %T') $*" | tee -a "$LOG"; }
 
+# --- operator kill-switch: no autonomous runs while this file exists ---------
+if [ -e evolution/AUTORUN_DISABLED ]; then log "skip: autonomous evolution DISABLED by operator (evolution/AUTORUN_DISABLED)"; exit 0; fi
+
 # --- pause conditions -------------------------------------------------------
 # any established SSH connection counts as the operator working (incl. non-interactive scp/ssh from Claude)
 if ss -Htn state established "( sport = :22 )" 2>/dev/null | grep -q .; then log "skip: SSH connection open (operator active)"; exit 0; fi

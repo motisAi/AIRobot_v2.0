@@ -369,6 +369,8 @@ camera mic ──Vosk──► "hey stella" ──► main.py: pause wake, start
 
 ## 10. Evolution and deploy
 
+> **Autonomous evolution is OFF** (operator decision 2026-09-27): `evolution/AUTORUN_DISABLED` is present and the cron entry is removed, so nothing runs unattended. Guardian remains the deploy gate (`deploy/deploy.sh`). Scout/report can be run by hand; they never modify code or packages.
+
 **Guardian** (`evolution/guardian.py`, deterministic, no LLM, writes `evolution/reports/guardian-latest.json`, exit 0/1):
 `syntax` (compileall) · `imports` (every module `main.py` imports, derived by parsing `main.py`) · `config`
 (`RobotConfig` builds from `config.yaml`) · `service` (`--wait` up to 90 s, stays up `--stable` 45 s) · `log` (last
