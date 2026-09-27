@@ -88,6 +88,13 @@ class TextToSpeechModule:
         self.alsa_device = self._resolve_output_device()
         if self.alsa_device:
             self.logger.info("TTS audio output pinned to ALSA device '%s'", self.alsa_device)
+        # Software output volume. The I2S amp (MAX98357A) has fixed hardware gain,
+        # so 'louder/quieter' is done by scaling samples with sox before aplay.
+        try:
+            self.volume = float(getattr(hardware_config, 'tts_output_volume', 1.0) or 1.0)
+        except Exception:
+            self.volume = 1.0
+        self.volume = max(0.15, min(2.5, self.volume))
         
         # State
         self.running = False
@@ -714,6 +721,24 @@ class TextToSpeechModule:
 
         return dev_string(*hit) if hit else None
 
+    def set_volume(self, factor):
+        """Set the software output volume multiplier (0.15..2.5). Returns the new value."""
+        try:
+            factor = float(factor)
+        except Exception:
+            return getattr(self, 'volume', 1.0)
+        self.volume = max(0.15, min(2.5, factor))
+        self.logger.info("TTS voice volume set to %.2f", self.volume)
+        return self.volume
+
+    def adjust_volume(self, ratio):
+        """Multiply the current volume (e.g. 1.3 louder, 0.72 quieter). Returns new value."""
+        try:
+            ratio = float(ratio)
+        except Exception:
+            return getattr(self, 'volume', 1.0)
+        return self.set_volume(getattr(self, 'volume', 1.0) * ratio)
+
     def _play_audio(self, audio_file: str):
         """
         Play audio file
@@ -737,10 +762,16 @@ class TextToSpeechModule:
             # If an explicit output device is configured, aplay -D is the most
             # reliable way to route sound to it (pygame/SDL uses ALSA default).
             if self.alsa_device:
-                import subprocess
+                import subprocess, shutil, shlex
+                vol = getattr(self, 'volume', 1.0)
                 try:
-                    r = subprocess.run(['aplay', '-q', '-D', self.alsa_device, audio_file],
-                                       capture_output=True, timeout=60)
+                    if abs(vol - 1.0) > 0.02 and shutil.which('sox'):
+                        cmd = ('sox ' + shlex.quote(audio_file) + ' -t wav - vol '
+                               + ('%.3f' % vol) + ' | aplay -q -D ' + shlex.quote(self.alsa_device))
+                        r = subprocess.run(cmd, shell=True, capture_output=True, timeout=60)
+                    else:
+                        r = subprocess.run(['aplay', '-q', '-D', self.alsa_device, audio_file],
+                                           capture_output=True, timeout=60)
                 except subprocess.TimeoutExpired:
                     self.logger.warning("aplay timed out on %s", self.alsa_device)
                     return

@@ -287,6 +287,84 @@ class ConversationManager:
         return any(low == p or low.startswith(p + ' ')
                    for p in self.cfg.end_phrases)
 
+    _SLEEP_LINES = [
+        "You're right, I do need to rest. I'm going to sleep now.",
+        "Okay, powering down for a nap. Wake me whenever you need me.",
+        "Mmm, sleepy time. Just say my name and I'll be right back.",
+        "Alright, I'll close my eyes for a bit. Goodnight!",
+        "Resting my circuits. Call me when you want me awake.",
+        "Time for a little robot nap. See you soon.",
+    ]
+
+    def _maybe_sleep(self, text: str) -> bool:
+        """'go to sleep' -> a sleepy line + set brain.sleeping + end the session.
+        Only the wake word wakes her (main._handle_wake_word). Returns True if handled."""
+        t = text.lower().strip()
+        if any(neg in t for neg in ("not ", "n't", "do not", "did not", "never",
+                                    "don't", "didn't", "can't", "cannot", "without")):
+            return False
+        triggers = ("go to sleep", "goto sleep", "go back to sleep", "you can sleep",
+                    "time to sleep", "time for bed", "go to bed", "take a nap",
+                    "have a nap", "get some sleep", "go sleep", "goodnight",
+                    "good night", "sleep now", "get some rest", "go to rest")
+        if not any(k in t for k in triggers):
+            return False
+        import random
+        self._speak(random.choice(self._SLEEP_LINES))
+        try:
+            self.robot.brain.sleeping = True
+        except Exception:
+            pass
+        self.logger.info("Sleep mode ON (asked to sleep) — ending session until wake word")
+        try:
+            self._stop.set()   # loop exits -> finally resumes the wake-word listener
+        except Exception:
+            pass
+        return True
+
+    def _music_playing(self) -> bool:
+        mp = getattr(self.robot, 'music', None)
+        try:
+            return bool(mp and mp.is_playing())
+        except Exception:
+            return False
+
+    def _maybe_volume(self, text: str) -> bool:
+        """Change HER speaking volume ('speak louder' / 'lower your voice' /
+        'set your volume to 60'). Music volume stays in _maybe_music, so bare
+        louder/quieter is only taken for her voice when no music is playing."""
+        import re
+        t = text.lower().strip()
+        tts = self.robot.modules.get('tts')
+        if not tts or not hasattr(tts, 'set_volume'):
+            return False
+        voice_cue = any(k in t for k in ("your voice", "you speak", "your volume",
+                                         "speak ", "talk ", "your sound", "be louder",
+                                         "be quieter"))
+        m = re.search(r"(?:set |make )?(?:your )?(?:voice|volume|sound)\s*(?:to|at)?\s*(\d{1,3})", t)
+        louder = any(k in t for k in ("louder", "speak up", "speak louder", "talk louder",
+                                      "raise your voice", "turn your voice up", "too quiet",
+                                      "can't hear you", "cannot hear you", "i can't hear",
+                                      "volume up"))
+        quieter = any(k in t for k in ("lower your voice", "quieter", "speak softer",
+                                       "speak quieter", "talk quieter", "softer",
+                                       "not so loud", "too loud", "keep it down",
+                                       "turn your voice down", "volume down"))
+        if m and (voice_cue or "volume" in t):
+            pct = max(10, min(200, int(m.group(1))))
+            v = tts.set_volume(pct / 100.0)
+            self._speak(f"Okay, my voice is at {int(round(v * 100))} percent.")
+            return True
+        if louder and (voice_cue or not self._music_playing()):
+            v = tts.adjust_volume(1.3)
+            self._speak(f"Speaking up. Volume is {int(round(v * 100))} percent.")
+            return True
+        if quieter and (voice_cue or not self._music_playing()):
+            v = tts.adjust_volume(0.72)
+            self._speak(f"I'll keep it down. Volume is {int(round(v * 100))} percent.")
+            return True
+        return False
+
     def _handle_utterance(self, text: str):
         engine = self.robot.ai_engine
         brain = self.robot.brain
@@ -303,6 +381,14 @@ class ConversationManager:
         if self._maybe_insult_demo(text):
             return
         if self._maybe_insult(text):
+            return
+
+        # Sleep / nap mode — she dozes off; only the wake word brings her back.
+        if self._maybe_sleep(text):
+            return
+
+        # Her OWN speaking volume ('speak louder' / 'lower your voice').
+        if self._maybe_volume(text):
             return
 
         # Air conditioner (Sensibo) — natural commands.

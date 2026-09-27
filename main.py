@@ -665,6 +665,7 @@ class AIRobot:
             # cloud emotion read before deciding what to say.
             since_welcome = now - getattr(self, '_last_welcome', 0.0)
             if (gap > 90 and since_welcome > 240 and not busy
+                    and not getattr(self.brain, 'sleeping', False)
                     and not getattr(self, '_greeting_inflight', False)):
                 self._greeting_inflight = True
                 self._last_welcome = now
@@ -915,6 +916,21 @@ class AIRobot:
         """Handle wake word detection — start a multi-turn conversation session."""
         if getattr(self, 'conversation', None) and self.conversation.active:
             return  # already conversing
+        brain = getattr(self, 'brain', None)
+        if brain is not None and getattr(brain, 'sleeping', False):
+            import random
+            wake_lines = [
+                "Woww, that was a good sleep! I'm back.",
+                "Mmm, I'm awake! What did I miss?",
+                "Oh! You called me. Feeling refreshed and ready.",
+                "Yawn... okay, I'm wide awake now. How can I help?",
+                "That nap was lovely. I'm all yours.",
+                "Rise and shine for me! I'm up and listening.",
+            ]
+            brain.sleeping = False
+            self.logger.info("Wake word — waking from sleep")
+            self.conversation.start_session(opener=random.choice(wake_lines))
+            return
         self.logger.info("Wake word detected — starting conversation session")
         # The ConversationManager pauses the wake mic, greets, and runs the
         # command-mic dialogue loop until the conversation ends.

@@ -146,6 +146,7 @@ class RobotBrain:
         self.authenticated = False
         self.master_mode = False
         self.guard_mode = False   # home-guard/security mode (master toggles it)
+        self.sleeping = False     # nap mode: only the wake word wakes her (main._handle_wake_word)
         
         # Timers and counters
         self.idle_timer = 0
