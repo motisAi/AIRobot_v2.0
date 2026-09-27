@@ -183,6 +183,9 @@ hardware:
   speech_microphone_name: "USB PnP Sound Device"    # COMMAND mic (dongle). Must differ from the wake mic (bug_055)
   microphone_rate: 48000         # wake mic native rate (tried first, then 44100/16000; the camera mic has no 16 k)
   speech_microphone_rate: 44100  # command mic native rate (tried first, then 48000/16000)
+  # Stable identity for the two mics (/dev/snd/by-id globs) — resolved on every open.
+  wake_mic_id: "usb-Signo_Camera_WB-400_Auto_Focus_Camera*"        # -> ALSA card 'Camera'
+  speech_mic_id: "usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device*" # -> ALSA card 'Device'
 
   # --- audio OUTPUT (where Stella speaks) ---
   # Sound goes to the HDMI monitor. The HDMI cards are vc4hdmi0 / vc4hdmi1 (cards 1 and 2 today;

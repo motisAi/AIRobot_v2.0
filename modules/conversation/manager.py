@@ -157,7 +157,10 @@ class ConversationManager:
         except Exception:
             pass
         try:
-            self.robot._pause_wake_word_listener(reason="conversation")
+            if self.robot._pause_wake_word_listener(reason="conversation") is False:
+                # Wake stream wedged: never open the command mic on top of it (bug_055).
+                self.logger.error("Wake mic did not release — ending session without capture")
+                return
         except Exception:
             pass
 

@@ -45,7 +45,7 @@ class HardwareWatchdog:
     def _loop(self):
         self._stop.wait(self.interval)   # let startup settle
         while not self._stop.is_set():
-            for check in (self._check_camera, self._check_hand, self._check_audio_out, self._check_stuck_conversation):
+            for check in (self._check_camera, self._check_hand, self._check_audio_out, self._check_stuck_conversation, self._check_wedged_audio):
                 try:
                     check()
                 except Exception as exc:
@@ -53,6 +53,39 @@ class HardwareWatchdog:
             self._stop.wait(self.interval)
 
     # -- stuck conversation (mic hang) ------------------------------------
+    def _check_wedged_audio(self):
+        """A wake stream that would not close (pause timed out) is terminal for that
+        device in this process: soft-stop the session, then restart the service if
+        it stays wedged (architecture §4.3). Never touch the stream from here."""
+        r = self.robot
+        t = float(getattr(r, "_audio_wedged_at", 0.0) or 0.0)
+        wk = getattr(r, "modules", {}).get("wake_word") if hasattr(r, "modules") else None
+        if not t or not getattr(wk, "stream_wedged", False):
+            self._wedge_soft_at = 0.0
+            return
+        age = time.monotonic() - t
+        if age < 10.0:
+            return
+        soft = getattr(self, "_wedge_soft_at", 0.0)
+        if not soft:
+            logger.error("Audio wedged for %.0fs — soft-stopping the conversation", age)
+            self._wedge_soft_at = time.monotonic()
+            conv = getattr(r, "conversation", None)
+            try:
+                if conv is not None:
+                    conv.stop()
+            except Exception as exc:
+                logger.error("wedge soft stop failed: %s", exc)
+            return
+        if time.monotonic() - soft > 25.0:
+            logger.error("Audio still wedged after soft stop — restarting service")
+            self._wedge_soft_at = 0.0
+            import subprocess
+            try:
+                subprocess.Popen(["sudo", "-n", "systemctl", "restart", "airobot"])
+            except Exception as exc:
+                logger.error("watchdog restart failed: %s", exc)
+
     def _check_stuck_conversation(self):
         """If a conversation is active but nothing has been heard/said for 75s the
         mic capture has probably stalled. Stage 1 soft-stops the session; only if

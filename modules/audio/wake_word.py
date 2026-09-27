@@ -159,18 +159,27 @@ class WakeWordModule:
                 pass
             self.porcupine = None
 
-    def pause_listening(self, reason: str = "dialogue") -> None:
-        """Temporarily pause detection and release the microphone."""
+    def pause_listening(self, reason: str = "dialogue") -> bool:
+        """Temporarily pause detection and release the microphone.
 
+        Returns False if the wake stream did not close in time: that device is
+        WEDGED for this process. The caller must NOT open the command mic and
+        should end the session; the watchdog escalates (architecture §4.3).
+        """
         self.logger.info("Pausing wake-word listener (%s) — releasing mic", reason)
         self.listen_event.clear()
-        # Wait for the stream to actually close before returning
         if not self._stream_closed_event.wait(timeout=2.0):
-            self.logger.warning("Timed out waiting for wake-word stream to close")
+            self.stream_wedged = True
+            self.logger.error("Wake-word stream did not close within 2s — device wedged; "
+                              "not proceeding (bug_055)")
+            return False
+        self.stream_wedged = False
+        return True
 
     def resume_listening(self) -> None:
         """Resume passive listening (stream will reopen in the loop)."""
 
+        self.stream_wedged = False
         self._stream_closed_event.clear()
         self.listen_event.set()
         self.logger.info("Wake-word listener resumed")
@@ -217,14 +226,18 @@ class WakeWordModule:
                 explicit_index=hardware_config.wake_word_device_index)
             if idx is not None:
                 self.device_index = idx
-            # 48k first: the camera mic doesn't support 16k and would spam
-            # paInvalidSampleRate. We resample to 16k for Vosk anyway.
-            for rate in (48000, 44100, 16000):
+            if self.device_index is None:
+                # Never open index None (= ALSA 'default' = PulseAudio's pick).
+                audio = None
+                return False
+            # Native rate first (config), then the others; the camera mic has no 16k.
+            # The stream is opened, read and closed by THIS thread only (bug_028/054).
+            from parts_used.audio_portaudio import open_input
+            rates = list(dict.fromkeys([int(getattr(hardware_config, "microphone_rate", 48000) or 48000),
+                                        48000, 44100, 16000]))
+            for rate in rates:
                 try:
-                    stream = audio.open(
-                        format=pyaudio.paInt16, channels=1, rate=rate, input=True,
-                        frames_per_buffer=4096, input_device_index=self.device_index,
-                    )
+                    stream = open_input(self.device_index, rate, 4096, label="wake")
                     actual_rate = rate
                     self.logger.info("Vosk wake mic open at %d Hz (device %s)",
                                      rate, self.device_index)
@@ -414,6 +427,9 @@ class WakeWordModule:
 
     def _energy_loop(self) -> None:
         """Fallback RMS/VAD detector used when Porcupine is unavailable."""
+        if self.device_index is None:
+            self.logger.error("Wake mic unresolved — energy detector will not open 'default'")
+            return
 
         if pyaudio is None:
             self.logger.error("PyAudio not installed; cannot run fallback detector")
@@ -552,28 +568,11 @@ class WakeWordModule:
         )
 
     def _resolve_microphone_index(self, name_hint: Optional[str], explicit_index: Optional[int]) -> Optional[int]:
-        """Return the ALSA/PortAudio device index that best matches ``name_hint``."""
-
+        """Resolve the wake mic by stable identity (by-id -> hw:N), then name (architecture §4)."""
         if explicit_index is not None:
             return explicit_index
-
-        if not name_hint:
-            return None
-
-        from parts_used.audio_portaudio import get_pa
-        audio = get_pa()          # shared instance — do NOT terminate it
-        if audio is None:
-            return None
-        try:
-            for idx in range(audio.get_device_count()):
-                info = audio.get_device_info_by_index(idx)
-                device_name = info.get('name', '').lower()
-                if name_hint.lower() in device_name:
-                    return idx
-        except Exception as exc:
-            self.logger.warning(f"Failed to enumerate audio devices: {exc}")
-
-        return None
+        from parts_used.audio_devices import find_input_index
+        return find_input_index(getattr(hardware_config, "wake_mic_id", None), name_hint)
 
     @staticmethod
     def _calculate_rms(frame: bytes) -> float:

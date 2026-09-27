@@ -84,7 +84,6 @@ from core.robot_brain import RobotBrain, RobotEvent
 
 # Shared hardware managers
 from parts_used.camera_usb import CameraManager
-from parts_used.audio_devices import AudioManager
 
 # Vision modules
 from modules.vision.face_recognition import FaceRecognitionModule
@@ -160,7 +159,6 @@ class AIRobot:
         
         # Shared hardware managers
         self.camera_manager = CameraManager()
-        self.audio_manager = AudioManager()
         
         # AI subsystems
         self.ai_engine = AIEngine()
@@ -969,10 +967,17 @@ class AIRobot:
         if not wake_module:
             return
         try:
-            wake_module.pause_listening(reason=reason)
+            ok = wake_module.pause_listening(reason=reason)
             self.keyword_listener_paused = True
+            if ok is False:
+                # Wake stream wedged: do NOT open the command mic; let the watchdog escalate.
+                self._audio_wedged_at = time.monotonic()
+                return False
+            self._audio_wedged_at = 0.0
+            return True
         except Exception as exc:
             self.logger.error(f"Failed to pause wake-word listener: {exc}")
+        return True
     
     def _resume_wake_word_listener(self):
         """Resume passive wake-word listening once dialogue concludes."""
@@ -994,6 +999,24 @@ class AIRobot:
         except Exception as exc:
             self.logger.error(f"Failed to resume wake-word listener: {exc}")
     
+    def _check_two_mic_invariant(self):
+        """Wake and command mics must resolve to DIFFERENT physical devices."""
+        from parts_used.audio_devices import same_device, hw_card_of
+        wk = self.modules.get('wake_word')
+        sp = self.modules.get('speech_recognition')
+        w = getattr(wk, 'device_index', None) if wk else None
+        c = getattr(sp, 'device_index', None) if sp else None
+        self.logger.info("Mic map: wake -> device %s (hw:%s), command -> device %s (hw:%s)",
+                         w, hw_card_of(w), c, hw_card_of(c))
+        if w is None or c is None:
+            self.logger.error("A configured mic is UNRESOLVED (wake=%s, command=%s) — it will not open "
+                              "'default'; check the by-id names in config.yaml", w, c)
+            return
+        if same_device(w, c):
+            self.logger.error("wake and command mics resolve to the SAME device (%s) — single-mic "
+                              "handoff is unsupported (bug_055). Refusing to start.", w)
+            raise SystemExit(3)
+
     def _boost_input_gains(self):
         """Raise USB microphone capture gain to a usable level.
 
@@ -1002,15 +1025,27 @@ class AIRobot:
         input cards (best-effort — ignored if the control doesn't exist). Runs
         every startup so it survives reboots without needing 'alsactl store'.
         """
-        import subprocess
-        for card in (0, 1):
+        import glob, subprocess
+        from pathlib import Path as _P
+        done = []
+        for cdir in sorted(glob.glob("/proc/asound/card[0-9]*")):
+            n = cdir.rsplit("card", 1)[-1]
+            if not glob.glob(f"/dev/snd/pcmC{n}D*c"):
+                continue                      # playback-only card (HDMI)
+            try:
+                cid = _P(cdir, "id").read_text().strip()
+            except OSError:
+                continue
+            ok = False
             for ctrl in ("Mic", "Capture"):
                 try:
-                    subprocess.run(["amixer", "-c", str(card), "sset", ctrl, "100%", "cap"],
-                                   capture_output=True, timeout=5)
+                    r = subprocess.run(["amixer", "-D", f"hw:CARD={cid}", "sset", ctrl, "100%", "cap"],
+                                       capture_output=True, timeout=5)
+                    ok = ok or r.returncode == 0
                 except Exception:
                     pass
-        self.logger.info("Microphone capture gains set to max")
+            done.append(f"{cid}:{'ok' if ok else 'no-control'}")
+        self.logger.info("Microphone capture gains set to max by card id: %s", ", ".join(done) or "none")
 
     def start_modules(self):
         """Start all initialized modules"""
@@ -1018,6 +1053,8 @@ class AIRobot:
 
         # Ensure USB mics are at usable capture gain (fixes empty transcripts).
         self._boost_input_gains()
+        # Two mics, two devices (architecture §4, bug_055): refuse a single-mic layout.
+        self._check_two_mic_invariant()
 
         # Start vision modules (they subscribe to shared camera)
         if 'face_recognition' in self.modules:
@@ -1323,8 +1360,6 @@ class AIRobot:
             self.logger.error(f"✗ Error stopping Camera Manager: {e}")
         
         try:
-            for role in list(self.audio_manager._leases.keys()):
-                self.audio_manager.release(role)
             self.logger.info("✓ Audio Manager released")
         except Exception as e:
             self.logger.error(f"✗ Error releasing Audio Manager: {e}")

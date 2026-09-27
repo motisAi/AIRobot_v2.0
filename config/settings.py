@@ -180,8 +180,12 @@ class HardwareConfig:
     microphone_phrase_time_limit: float = 5.0
     wake_word_microphone_name: Optional[str] = "Auto Focus Camera"
     speech_microphone_name: Optional[str] = "USB PnP Sound Device"
-    wake_word_device_index: Optional[int] = None  # resolved by name at runtime
-    speech_device_index: Optional[int] = None  # resolved by name at runtime
+    wake_word_device_index: Optional[int] = None  # resolved at runtime (never pin an index)
+    speech_device_index: Optional[int] = None  # resolved at runtime (never pin an index)
+    # Stable identity (/dev/snd/by-id globs) — preferred over the names above; resolver:
+    # parts_used.audio_devices.find_input_index (architecture §4). Two mics, two devices.
+    wake_mic_id: Optional[str] = "usb-Signo_Camera_WB-400_Auto_Focus_Camera*"
+    speech_mic_id: Optional[str] = "usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device*"
     speech_microphone_rate: int = 44100  # USB PnP Sound Device supports 44100Hz
 
     # Audio OUTPUT (where the robot speaks). Change this to move sound from the
@@ -694,6 +698,14 @@ class RobotConfig:
         }
     
     def validate(self) -> bool:
+        # Two-mic rule (bug_055): wake and command must be two different devices.
+        try:
+            hw = self.hardware
+            if hw.wake_word_microphone_name and hw.wake_word_microphone_name == hw.speech_microphone_name:
+                logging.warning("wake and command mics are configured to the SAME device (%s) — "
+                                "single-mic handoff is unsupported (bug_055)", hw.wake_word_microphone_name)
+        except Exception:
+            pass
         """
         Validate configuration settings
         

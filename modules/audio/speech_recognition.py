@@ -152,17 +152,22 @@ class SpeechRecognitionModule:
         # Open the command mic; prefer 16k, else 44.1k and resample per-frame.
         stream = None
         rate = TARGET
-        # A NAMED mic that is absent must not fall through to PortAudio 'default'
-        # (that would silently capture the wrong device / a loopback).
-        if self.device_name and self.device_index is None and not self.mic_available():
-            self.logger.error("Command mic '%s' not available — skipping capture", self.device_name)
+        # Resolve by stable identity on every capture; NEVER fall through to
+        # PortAudio 'default' (= PulseAudio's pick). Unresolved => no capture.
+        if self.device_index is None:
+            self.device_index = self._resolve_microphone_index()
+        if self.device_index is None:
+            self.logger.error("Command mic '%s' unresolved — not opening 'default' (architecture §4)",
+                              self.device_name)
             return None
-        # Native rate first (USB PnP mic is 44.1k) to avoid paInvalidSampleRate spam.
-        for r in (44100, 48000, 16000):
+        # Native rate first (config), then the others. This stream is opened, read
+        # and closed by THIS thread only — never a reader thread (bug_028/bug_054).
+        from parts_used.audio_portaudio import open_input
+        rates = list(dict.fromkeys([int(getattr(hardware_config, "speech_microphone_rate", 44100) or 44100),
+                                    44100, 48000, 16000]))
+        for r in rates:
             try:
-                stream = audio.open(format=pyaudio.paInt16, channels=1, rate=r,
-                                    input=True, frames_per_buffer=int(r * frame_ms / 1000),
-                                    input_device_index=self.device_index)
+                stream = open_input(self.device_index, r, int(r * frame_ms / 1000), label="command")
                 rate = r
                 break
             except Exception:
@@ -522,27 +527,11 @@ class SpeechRecognitionModule:
             self.whisper_instance = None
 
     def _resolve_microphone_index(self) -> Optional[int]:
-        """Resolve the microphone index using the configured hint."""
-
+        """Resolve the command mic by stable identity (by-id -> hw:N), then name (architecture §4)."""
         if self.device_index is not None:
             return self.device_index
-
-        if not self.device_name:
-            return None
-
-        from parts_used.audio_portaudio import get_pa
-        audio = get_pa()          # shared instance — do NOT terminate it
-        if audio is None:
-            return None
-        try:
-            for idx in range(audio.get_device_count()):
-                info = audio.get_device_info_by_index(idx)
-                if self.device_name.lower() in info.get('name', '').lower():
-                    return idx
-        except Exception as exc:
-            self.logger.warning(f"Could not enumerate microphones: {exc}")
-
-        return None
+        from parts_used.audio_devices import find_input_index
+        return find_input_index(getattr(hardware_config, "speech_mic_id", None), self.device_name)
 
     # ------------------------------------------------------------------
     def _emit_success(self, text: str) -> None:

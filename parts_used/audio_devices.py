@@ -59,153 +59,97 @@ class AudioDevice:
         return f"AudioDevice({self.index}, '{self.name}', {'/'.join(direction)})"
 
 
-class AudioManager:
-    """Enumerates audio devices and hands out exclusive leases per role."""
+# ---------------------------------------------------------------------------
+# The ONE mic resolver (architecture §4). Stable identity first: /dev/snd/by-id
+# -> controlC<N> (ALSA card) -> the PortAudio entry whose name carries "(hw:N,".
+# Falls back to a name substring; NEVER returns a 'default' — None means "not
+# found", and callers must log + back off instead of opening index None.
+# `by_id_root` and `pa` are injectable so tests run without hardware.
+# ---------------------------------------------------------------------------
+import glob as _glob
+import os as _os
+import re as _re
 
-    # Standard roles
-    ROLE_WAKE_WORD = "wake_word"
-    ROLE_DIALOGUE = "dialogue"
-    ROLE_PLAYBACK = "playback"
 
-    def __init__(self):
-        self.logger = logging.getLogger(self.__class__.__name__)
-
-        self._devices: List[AudioDevice] = []
-        self._input_devices: List[AudioDevice] = []
-        self._output_devices: List[AudioDevice] = []
-
-        # role -> (device_index, owner_name)
-        self._leases: Dict[str, Tuple[int, str]] = {}
-        self._lock = threading.Lock()
-
-        self._enumerate_devices()
-        self._log_device_map()
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-    def acquire(self, role: str, owner: str,
-                preferred_name: Optional[str] = None,
-                preferred_index: Optional[int] = None) -> Optional[int]:
-        """Acquire exclusive access to a microphone for *role*.
-
-        Args:
-            role: One of ROLE_WAKE_WORD, ROLE_DIALOGUE, ROLE_PLAYBACK.
-            owner: Human-readable module name for logging.
-            preferred_name: Substring to match against device names.
-            preferred_index: Explicit device index (takes priority).
-
-        Returns:
-            Device index on success, None if no suitable device is available.
-        """
-        with self._lock:
-            if role in self._leases:
-                idx, prev_owner = self._leases[role]
-                self.logger.warning("Role '%s' already acquired by '%s' (device %d)",
-                                    role, prev_owner, idx)
-                return idx
-
-            # Determine pool
-            if role == self.ROLE_PLAYBACK:
-                pool = self._output_devices
-            else:
-                pool = self._input_devices
-
-            device = self._resolve_device(pool, preferred_name, preferred_index)
-            if device is None:
-                self.logger.error("No audio device available for role '%s'", role)
-                return None
-
-            # Check for hardware conflict — same physical device used by another role
-            for other_role, (other_idx, other_owner) in self._leases.items():
-                if other_idx == device.index and other_role != role:
-                    self.logger.warning(
-                        "Device %d ('%s') already used by role '%s' (%s). "
-                        "This WILL cause audio conflicts. Assign separate devices "
-                        "in config/settings.py or .env.",
-                        device.index, device.name, other_role, other_owner,
-                    )
-
-            self._leases[role] = (device.index, owner)
-            self.logger.info("Audio device %d ('%s') acquired for role '%s' by '%s'",
-                             device.index, device.name, role, owner)
-            return device.index
-
-    def release(self, role: str) -> None:
-        """Release a previously acquired device."""
-        with self._lock:
-            removed = self._leases.pop(role, None)
-            if removed:
-                self.logger.info("Released audio device for role '%s'", role)
-
-    def get_device_index(self, role: str) -> Optional[int]:
-        """Return the device index for an already-acquired role."""
-        with self._lock:
-            entry = self._leases.get(role)
-            return entry[0] if entry else None
-
-    def list_input_devices(self) -> List[AudioDevice]:
-        """Return all detected input devices."""
-        return list(self._input_devices)
-
-    def list_output_devices(self) -> List[AudioDevice]:
-        """Return all detected output devices."""
-        return list(self._output_devices)
-
-    # ------------------------------------------------------------------
-    # Internals
-    # ------------------------------------------------------------------
-    def _enumerate_devices(self) -> None:
-        """Scan PortAudio for available devices."""
-        if not PYAUDIO_AVAILABLE:
-            self.logger.warning("PyAudio not installed — audio device enumeration skipped")
-            return
-
-        pa = pyaudio.PyAudio()
+def resolve_alsa_card(by_id_glob, by_id_root: str = "/dev/snd/by-id"):
+    """ALSA card number for a /dev/snd/by-id glob (e.g. 'usb-C-Media_*'), or None."""
+    if not by_id_glob:
+        return None
+    for p in sorted(_glob.glob(_os.path.join(by_id_root, by_id_glob))):
         try:
-            count = pa.get_device_count()
-            for idx in range(count):
-                try:
-                    info = pa.get_device_info_by_index(idx)
-                    dev = AudioDevice(idx, info)
-                    self._devices.append(dev)
-                    if dev.is_input:
-                        self._input_devices.append(dev)
-                    if dev.is_output:
-                        self._output_devices.append(dev)
-                except Exception:
-                    continue
-        finally:
-            pa.terminate()
+            target = _os.readlink(p)
+        except OSError:
+            continue
+        mm = _re.search(r"controlC(\d+)", target)
+        if mm:
+            return int(mm.group(1))
+    return None
 
-    def _resolve_device(self, pool: List[AudioDevice],
-                        name_hint: Optional[str],
-                        explicit_index: Optional[int]) -> Optional[AudioDevice]:
-        """Pick a device from *pool* using the provided hints."""
-        if not pool:
-            return None
 
-        # Explicit index wins
-        if explicit_index is not None:
-            for dev in pool:
-                if dev.index == explicit_index:
-                    return dev
+def _input_table(pa):
+    rows = []
+    try:
+        count = pa.get_device_count()
+    except Exception:
+        return rows
+    for i in range(count):
+        try:
+            d = pa.get_device_info_by_index(i)
+        except Exception:
+            continue
+        if int(d.get("maxInputChannels", 0) or 0) > 0:
+            rows.append((i, str(d.get("name", ""))))
+    return rows
 
-        # Name substring match
-        if name_hint:
-            hint_lower = name_hint.lower()
-            for dev in pool:
-                if hint_lower in dev.name.lower():
-                    return dev
 
-        # Fallback: first available in pool
-        return pool[0]
+def find_input_index(by_id_glob, name_hint, *, by_id_root: str = "/dev/snd/by-id", pa=None):
+    """PortAudio input index for a mic identified by by-id glob (preferred) or name.
 
-    def _log_device_map(self) -> None:
-        """Log the discovered audio topology for debugging."""
-        if not self._devices:
-            self.logger.warning("No audio devices detected")
-            return
-        self.logger.info("Detected %d audio device(s):", len(self._devices))
-        for dev in self._devices:
-            self.logger.info("  %s", dev)
+    Returns None when the mic cannot be found (caller: ERROR + backoff, never
+    open 'default'). Name fallback is kept permissive on purpose so the current
+    working setup cannot regress if a PortAudio name lacks the '(hw:N,' suffix.
+    """
+    if pa is None:
+        from parts_used.audio_portaudio import get_pa
+        pa = get_pa()
+    if pa is None:
+        return None
+    inputs = _input_table(pa)
+    card = resolve_alsa_card(by_id_glob, by_id_root)
+    if card is not None:
+        for i, nm in inputs:
+            if f"(hw:{card}," in nm:
+                return i
+    if name_hint:
+        h = str(name_hint).lower()
+        for i, nm in inputs:
+            if h in nm.lower():
+                return i
+    return None
+
+
+def hw_card_of(index, pa=None):
+    """ALSA card number parsed from a PortAudio device name, or None."""
+    if index is None:
+        return None
+    if pa is None:
+        from parts_used.audio_portaudio import get_pa
+        pa = get_pa()
+    if pa is None:
+        return None
+    try:
+        nm = str(pa.get_device_info_by_index(index).get("name", ""))
+    except Exception:
+        return None
+    mm = _re.search(r"\(hw:(\d+),", nm)
+    return int(mm.group(1)) if mm else None
+
+
+def same_device(idx_a, idx_b, pa=None) -> bool:
+    """True if two resolved indices are the same physical mic (same index or same ALSA card)."""
+    if idx_a is None or idx_b is None:
+        return False
+    if idx_a == idx_b:
+        return True
+    a, b = hw_card_of(idx_a, pa), hw_card_of(idx_b, pa)
+    return a is not None and a == b
