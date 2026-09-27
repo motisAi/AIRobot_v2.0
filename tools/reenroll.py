@@ -79,6 +79,15 @@ def biggest_encoding(frame):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser(description="Enrol/re-enrol one face into the shared DB (keeps everyone else).")
+    ap.add_argument("--name", default=NAME)
+    ap.add_argument("--id", dest="pid", default=MASTER_ID)
+    ap.add_argument("--no-master", dest="master", action="store_false")
+    ap.set_defaults(master=True)
+    a = ap.parse_args()
+    name, target_id, is_master = a.name, a.pid, a.master
+    print(f"Enrolling: name={name} id={target_id} master={is_master}", flush=True)
     idx = find_cam()
     cap = open_cam(idx)
     if not cap.isOpened():
@@ -120,11 +129,12 @@ def main():
         return 2
 
     now_iso = datetime.now().isoformat()
-    entry = {MASTER_ID: {
-        "id": MASTER_ID, "name": NAME,
+    entry = {target_id: {
+        "id": target_id, "name": name,
         "embeddings": [e.tolist() for e in embs],
         "first_seen": now_iso, "last_seen": now_iso,
-        "interaction_count": 0, "is_master": True, "permissions": ["all"],
+        "interaction_count": 0, "is_master": is_master,
+        "permissions": ["all"] if is_master else ["basic"],
         "metadata": {"enrolled_via": "reenroll.py", "samples": len(embs),
                      "enrolled_at": now_iso, "needs_encoding": False},
     }}
@@ -132,9 +142,7 @@ def main():
     if DB_PATH.exists():
         try:
             db = pickle.load(open(DB_PATH, "rb"))
-            db = {k: v for k, v in db.items()
-                  if not (v.get("is_master", False) if isinstance(v, dict)
-                          else getattr(v, "is_master", False))}
+            db = {k: v for k, v in db.items() if k != target_id}   # replace only this person; keep everyone else
         except Exception:
             db = {}
     db.update(entry)
@@ -142,7 +150,7 @@ def main():
     try:
         IMAGES_DIR.mkdir(parents=True, exist_ok=True)
         for i, img in enumerate(frames[:5]):
-            cv2.imwrite(str(IMAGES_DIR / f"{MASTER_ID}_{i}.jpg"), img)
+            cv2.imwrite(str(IMAGES_DIR / f"{target_id}_{i}.jpg"), img)
     except Exception:
         pass
 
