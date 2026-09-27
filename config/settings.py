@@ -179,14 +179,14 @@ class HardwareConfig:
     microphone_timeout: float = 0.8
     microphone_phrase_time_limit: float = 5.0
     wake_word_microphone_name: Optional[str] = "Auto Focus Camera"
-    speech_microphone_name: Optional[str] = "USB PnP Sound Device"
+    speech_microphone_name: Optional[str] = "voicehat"
     wake_word_device_index: Optional[int] = None  # resolved at runtime (never pin an index)
     speech_device_index: Optional[int] = None  # resolved at runtime (never pin an index)
     # Stable identity (/dev/snd/by-id globs) — preferred over the names above; resolver:
     # parts_used.audio_devices.find_input_index (architecture §4). Two mics, two devices.
     wake_mic_id: Optional[str] = "usb-Signo_Camera_WB-400_Auto_Focus_Camera*"
-    speech_mic_id: Optional[str] = "usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device*"
-    speech_microphone_rate: int = 44100  # USB PnP Sound Device supports 44100Hz
+    speech_mic_id: Optional[str] = ""
+    speech_microphone_rate: int = 48000  # I2S HAT native rate
 
     # Audio OUTPUT (where the robot speaks). Change this to move sound from the
     # HDMI monitor to a speaker plugged into the Pi.
@@ -195,9 +195,9 @@ class HardwareConfig:
     #                        "analog"-> 3.5mm/I2S DAC hat
     #                        "auto"  -> first non-HDMI device, else HDMI
     #                        "default" -> ALSA default device
-    audio_output_device: str = "hdmi"
+    audio_output_device: str = "auto"
     audio_output_card: Optional[int] = None   # explicit ALSA card index (overrides device)
-    audio_output_name: Optional[str] = None    # match output device by name substring
+    audio_output_name: Optional[str] = "voicehat"  # I2S HAT amp (match by name)
     tts_output_volume: float = 1.0             # 0.0 - 1.0
 
     # ESP32 Serial Communication

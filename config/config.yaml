@@ -180,24 +180,24 @@ hardware:
   # Resolved by name (by-id resolver coming); card numbers and PortAudio indices are NOT stable — never pin an index.
   # Full spec: docs/architecture/stella-architecture.md section 4.
   wake_word_microphone_name: "Auto Focus Camera"   # WAKE mic (camera). Do not move to the USB PnP dongle: AGC/poor pickup, Vosk mistranscribes (bug_053)
-  speech_microphone_name: "USB PnP Sound Device"    # COMMAND mic (dongle). Must differ from the wake mic (bug_055)
+  speech_microphone_name: "voicehat"                 # COMMAND mic = I2S HAT (2x INMP441, card snd_rpi_googlevoicehat). Differs from wake (bug_055)
   microphone_rate: 48000         # wake mic native rate (tried first, then 44100/16000; the camera mic has no 16 k)
-  speech_microphone_rate: 44100  # command mic native rate (tried first, then 48000/16000)
+  speech_microphone_rate: 48000  # I2S HAT native rate (tried first, then 44100/16000)
   # Stable identity for the two mics (/dev/snd/by-id globs) — resolved on every open.
   wake_mic_id: "usb-Signo_Camera_WB-400_Auto_Focus_Camera*"        # -> ALSA card 'Camera'
-  speech_mic_id: "usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device*" # -> ALSA card 'Device'
+  speech_mic_id: ""   # I2S HAT has no /dev/snd/by-id link; resolved by name ("voicehat")
 
   # --- audio OUTPUT (where Stella speaks) ---
   # Sound goes to the HDMI monitor. The HDMI cards are vc4hdmi0 / vc4hdmi1 (cards 1 and 2 today;
   # card 0 is the USB PnP mic and card 3 is the camera mic — HDMI card numbers move across reboots, so they
   # are auto-detected). To use a USB speaker later: set audio_output_device to "usb" and
   # audio_output_card to null (it will auto-detect the USB card).
-  audio_output_device: "hdmi"    # hdmi | usb | analog | auto | default
+  audio_output_device: "auto"    # hdmi | usb | analog | auto | default  (auto + name below = the I2S HAT speaker)
   # Leave card null: HDMI card numbers change across reboots, so Stella now
   # auto-detects which HDMI port the monitor is on. Set a name like "vc4hdmi0"
   # to pin a specific port, or a card index to force one.
   audio_output_card: null        # null = auto-detect the live HDMI port
-  audio_output_name: null        # or pin by name, e.g. "vc4hdmi0" / "USB"
+  audio_output_name: "voicehat"  # I2S HAT amp (MAX98357A) on card snd_rpi_googlevoicehat; set null to fall back to HDMI
   tts_output_volume: 1.0
 
   # --- Hailo-10H AI accelerator ---

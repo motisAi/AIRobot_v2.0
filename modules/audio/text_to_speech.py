@@ -656,7 +656,7 @@ class TextToSpeechModule:
         def dev_string(idx, card_id, desc):
             if 'hdmi' in card_id.lower() or 'hdmi' in desc:
                 return f"sysdefault:CARD={card_id}"
-            return f"plughw:{idx},0"
+            return f"plughw:CARD={card_id},0"   # by stable card id, not index (renumber-proof)
 
         # 1) Explicit card index.
         if card is not None:
