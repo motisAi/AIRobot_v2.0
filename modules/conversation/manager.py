@@ -402,11 +402,12 @@ class ConversationManager:
                     "action": {"type": "string", "enum": ["on", "off"]}},
                     "required": ["target", "action"]}}},
             {"type": "function", "function": {
-                "name": "set_ac", "description": "Control the air conditioner. Use for ANY comfort/temperature intent, e.g. 'it's hot', 'I'm cold/freezing', 'cool it down', 'make it warmer', 'too warm in here', 'set the AC to 22', 'turn on/off the AC'. Provide any of: power; temperature (16-30 C); mode: cool (=cold), heat (=warm/hot), fan, dry, auto. Master only.",
+                "name": "set_ac", "description": "Control the air conditioner. Use for ANY comfort/temperature/fan intent, e.g. 'it's hot', 'I'm cold', 'cool it down', 'make it warmer', 'put it on heat/fan/cool', 'set the AC to 22', 'raise/lower the fan speed', 'turn on/off the AC'. Provide any of: power; temperature (16-30 C); mode: cool (=cold), heat (=warm/hot), fan, dry, auto; fan_level: quiet/low/medium/high/auto (raise fan -> high, lower fan -> low). Master only.",
                 "parameters": {"type": "object", "properties": {
                     "power": {"type": "string", "enum": ["on", "off"]},
                     "temperature": {"type": "integer", "description": "16 to 30 Celsius"},
-                    "mode": {"type": "string", "enum": ["cool", "heat", "fan", "dry", "auto"]}}}}},
+                    "mode": {"type": "string", "enum": ["cool", "heat", "fan", "dry", "auto"]},
+                    "fan_level": {"type": "string", "enum": ["quiet", "low", "medium", "high", "auto"]}}}}},
             {"type": "function", "function": {
                 "name": "set_reminder", "description": "Set a reminder to be announced after some minutes.",
                 "parameters": {"type": "object", "properties": {
@@ -456,6 +457,9 @@ class ConversationManager:
                     "action": {"type": "string", "enum": ["drive", "stop"]},
                     "forward": {"type": "number"}, "turn": {"type": "number"}},
                     "required": ["action"]}}})
+        tools.append({"type": "function", "function": {
+            "name": "get_status", "description": "Report the current status of the home: guard/security mode (on/off), the air conditioner (on/off, mode, temperature, fan speed), and any smart lights/plugs. Use when asked 'is guard on?', 'is the AC on?', 'what mode is the AC?', 'is the light on?', 'what is the status?'.",
+            "parameters": {"type": "object", "properties": {}}}})
         engine.register_tools(tools, self._agent_dispatch)
 
     def _agent_dispatch(self, name: str, args: dict):
@@ -498,8 +502,9 @@ class ConversationManager:
                 if not (s and getattr(s, "enabled", False)):
                     return "the air conditioner isn't available"
                 power = args.get("power"); temp = args.get("temperature"); mode = args.get("mode")
+                fan = args.get("fan_level")
                 ok = s.set(power=(None if power is None else power == "on"),
-                           temperature=temp, mode=mode)
+                           temperature=temp, mode=mode, fan_level=fan)
                 if not ok:
                     return "couldn't reach the air conditioner"
                 bits = []
@@ -510,7 +515,36 @@ class ConversationManager:
                     bits.append(f"{temp} degrees")
                 if power:
                     bits.append("on" if power == "on" else "off")
+                if fan:
+                    bits.append(f"fan {fan}")
                 return "AC: " + (", ".join(bits) if bits else "done")
+            if name == "get_status":
+                b = self.robot.brain
+                parts = [f"Guard mode: {'ON' if getattr(b, 'guard_mode', False) else 'off'}"]
+                s = getattr(self.robot, 'sensibo', None)
+                if s and getattr(s, 'enabled', False):
+                    st = s.state() or {}
+                    if st:
+                        d = 'AC: ' + ('on' if st.get('on') else 'off')
+                        if st.get('on'):
+                            d += f", {st.get('mode', '?')}"
+                            if st.get('targetTemperature') is not None and st.get('mode') not in ('fan', 'dry'):
+                                d += f" {st['targetTemperature']}C"
+                            if st.get('fanLevel'):
+                                d += f", fan {st['fanLevel']}"
+                        parts.append(d)
+                for attr in ('tuya', 'mqtt'):
+                    dev = getattr(self.robot, attr, None)
+                    if dev and hasattr(dev, 'list_devices') and hasattr(dev, 'get_state'):
+                        for nm in (dev.list_devices() or []):
+                            try:
+                                parts.append(f"{nm}: {dev.get_state(nm)}")
+                            except Exception:
+                                pass
+                who = getattr(b, 'current_user_name', None)
+                if who:
+                    parts.append(f"I currently see {who}")
+                return "; ".join(parts)
             if name == "set_reminder":
                 rem = getattr(self.robot, "reminders", None)
                 if not rem:

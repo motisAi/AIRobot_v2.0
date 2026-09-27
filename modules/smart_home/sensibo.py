@@ -119,12 +119,15 @@ class Sensibo:
         pod = self._resolve(room)
         return bool(pod) and self._safe(pod, {"on": True, "mode": mode})
 
-    def set(self, power=None, temperature=None, mode=None, room: str | None = None) -> bool:
+    def set(self, power=None, temperature=None, mode=None, fan_level=None, room: str | None = None) -> bool:
         """Combined change in ONE API call (rate-limit friendly)."""
         pod = self._resolve(room)
         if not pod:
             return False
         changes: dict = {}
+        if fan_level is not None:
+            changes["fanLevel"] = str(fan_level)
+            changes["on"] = True
         if mode is not None:
             changes["mode"] = mode
             changes["on"] = True
