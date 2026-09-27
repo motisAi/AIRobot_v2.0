@@ -96,10 +96,10 @@ def main():
 
     say("Let's set up face recognition. Please look straight at my camera.")
     prompts = [(0, "Look straight at me."),
-               (3, "Great. Now turn your head a little to the left."),
-               (6, "Now a little to the right."),
-               (9, "Now tilt your head up a bit."),
-               (11, "Almost done. Look straight at me again.")]
+               (3, "Great. Please come a little closer, keep looking at me."),
+               (6, "Now lean back a bit, still facing me."),
+               (9, "Now look at me from where you usually stand."),
+               (11, "Almost done. Look right at me and hold still.")]
     spoken = set()
     embs, frames = [], []
     t0 = time.time()
@@ -127,6 +127,23 @@ def main():
     if len(embs) < MIN_OK:
         say("Sorry, I could not see your face clearly. Please try again with more light on your face.")
         return 2
+
+    # Drop outlier embeddings: keep the coherent core near the medoid so one bad
+    # frame (a side/tilt shot that encodes poorly) can't sit near another person
+    # and cause mix-ups. Never prune below MIN_OK.
+    if len(embs) >= 5:
+        P = [np.array(e) for e in embs]
+        best, mi = 1e9, 0
+        for i, x in enumerate(P):
+            tot = sum(np.linalg.norm(x - y) for y in P)
+            if tot < best:
+                best, mi = tot, i
+        m = P[mi]
+        keep = [i for i, x in enumerate(P) if np.linalg.norm(x - m) <= 0.45]
+        if len(keep) >= MIN_OK and len(keep) < len(embs):
+            print(f"kept {len(keep)}/{len(embs)} coherent embeddings (dropped outliers)", flush=True)
+            embs = [embs[i] for i in keep]
+            frames = [frames[i] for i in keep]
 
     now_iso = datetime.now().isoformat()
     entry = {target_id: {
