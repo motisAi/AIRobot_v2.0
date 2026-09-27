@@ -89,6 +89,11 @@ class FaceRecognitionModule:
         self.backend = model_config.face_backend
         self.distance_metric = model_config.face_distance_metric
         self.threshold = model_config.face_recognition_threshold
+        # Accept a match outright when this confident; otherwise require the
+        # winner to beat the runner-up by match_margin, else -> unknown
+        # (prevents Moti/Orr flip-flop when both land near the threshold).
+        self.confident_distance = 0.50
+        self.match_margin = 0.08
         
         # Face database
         self.known_faces: Dict[str, Face] = {}
@@ -437,21 +442,31 @@ class FaceRecognitionModule:
             face_encoding = None
             if FACE_RECOGNITION_AVAILABLE:
                 if full_frame is not None and face_area is not None:
-                    # Use full frame + face location (required by dlib backend)
                     x, y, w, h = face_area
-                    # Expand the (tight) detector box toward the looser geometry
-                    # dlib/HOG enrolls with, so YuNet crops encode consistently
-                    # with the enrolled embeddings (else distance drifts to ~0.6).
                     fh, fw = full_frame.shape[:2]
-                    px = int(w * 0.20)
-                    top = max(0, y - int(h * 0.35)); bot = min(fh, y + h + int(h * 0.15))
-                    left = max(0, x - px); right = min(fw, x + w + px)
-                    # face_recognition uses (top, right, bottom, left) format
-                    face_locations = [(top, right, bot, left)]
                     rgb_frame = cv2.cvtColor(full_frame, cv2.COLOR_BGR2RGB)
-                    face_encoding = face_recognition_lib.face_encodings(
-                        rgb_frame, face_locations
-                    )
+                    # Primary: let dlib's OWN detector find+align the face inside a
+                    # generously padded crop -- the SAME path enrolment uses
+                    # (reenroll.py -> face_encodings(full_frame)). Matching alignment
+                    # keeps runtime distances near the enrolled self-distance (~0.2)
+                    # instead of drifting to ~0.55 and colliding between people.
+                    pady = int(h * 0.6); padx = int(w * 0.6)
+                    ctop = max(0, y - pady); cbot = min(fh, y + h + pady)
+                    cleft = max(0, x - padx); cright = min(fw, x + w + padx)
+                    crop = rgb_frame[ctop:cbot, cleft:cright]
+                    face_encoding = []
+                    try:
+                        if crop.size:
+                            face_encoding = face_recognition_lib.face_encodings(crop)
+                    except Exception:
+                        face_encoding = []
+                    if not face_encoding:
+                        # Fallback: force the (expanded) YuNet box on the full frame.
+                        ex = int(w * 0.20)
+                        top = max(0, y - int(h * 0.35)); bot = min(fh, y + h + int(h * 0.15))
+                        left = max(0, x - ex); right = min(fw, x + w + ex)
+                        face_encoding = face_recognition_lib.face_encodings(
+                            rgb_frame, [(top, right, bot, left)])
                 else:
                     # Fallback: try with cropped face image
                     rgb_face = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
@@ -469,35 +484,44 @@ class FaceRecognitionModule:
             else:
                 embedding = face_encoding[0]
             
-            # Compare with known faces
-            best_match = None
-            best_distance = float('inf')
-            
+            # Compare with known faces: best distance PER PERSON, then a margin
+            # gate so two people who both land near the threshold don't flip-flop
+            # (that made her call Moti "Orr"). If the top two are too close she
+            # returns unknown instead of guessing.
+            per_person = {}
             for person_id, face_data in self.known_faces.items():
+                dmin = float('inf')
                 for known_embedding in face_data.embeddings:
-                    # Calculate distance
                     if self.distance_metric == 'cosine':
                         distance = 1 - np.dot(embedding, known_embedding) / (
                             np.linalg.norm(embedding) * np.linalg.norm(known_embedding)
                         )
-                    elif self.distance_metric == 'euclidean':
+                    else:  # euclidean / euclidean_l2
                         distance = np.linalg.norm(embedding - known_embedding)
-                    else:  # euclidean_l2
-                        distance = np.linalg.norm(embedding - known_embedding)
-                    
-                    if distance < best_distance:
-                        best_distance = distance
-                        best_match = person_id
+                    if distance < dmin:
+                        dmin = distance
+                per_person[person_id] = dmin
             
-            # Check threshold
+            if not per_person:
+                return ('unknown', 0.0)
+            
+            ranked = sorted(per_person.items(), key=lambda kv: kv[1])
+            best_match, best_distance = ranked[0]
+            second_id, second_distance = ranked[1] if len(ranked) > 1 else (None, float('inf'))
+            
             if best_distance < self.threshold:
-                similarity = max(0.0, 1.0 - best_distance)
-                
-                # Update last seen
-                self.known_faces[best_match].last_seen = datetime.now()
-                self.known_faces[best_match].interaction_count += 1
-                
-                return (best_match, similarity)
+                margin = second_distance - best_distance
+                if best_distance <= self.confident_distance or margin >= self.match_margin:
+                    similarity = max(0.0, 1.0 - best_distance)
+                    self.known_faces[best_match].last_seen = datetime.now()
+                    self.known_faces[best_match].interaction_count += 1
+                    self.logger.debug("match %s d=%.3f (runner-up %s d=%.3f)",
+                                      best_match, best_distance, second_id, second_distance)
+                    return (best_match, similarity)
+                self.logger.info(
+                    "Face ambiguous: %s d=%.2f vs %s d=%.2f (margin<%.2f) -> unknown",
+                    best_match, best_distance, second_id, second_distance, self.match_margin)
+                return ('unknown', 0.0)
             
         except Exception as e:
             self.logger.error(f"Face recognition error: {e}")
