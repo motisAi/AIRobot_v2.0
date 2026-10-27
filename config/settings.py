@@ -170,6 +170,9 @@ class HardwareConfig:
     # Swap R/B if picamera2 colours look inverted (RGB888 is normally BGR-ordered
     # and OpenCV-ready, so this stays False unless a test frame proves otherwise).
     camera_swap_rb: bool = False
+    # Horizontal field of view of the lens (Camera Module 3 Wide ~102°). Used for
+    # the face-size distance estimate; set ~66 for the standard (non-wide) module.
+    camera_hfov_deg: float = 102.0
     # Image controls (None = leave the camera's default). Bump brightness/gain
     # for low light; keep auto_exposure = 3 (auto) so it adapts.
     camera_auto_exposure: Optional[int] = 3   # 3 = auto/aperture-priority, 1 = manual

@@ -59,6 +59,69 @@ class Face:
     metadata: Dict[str, Any] = None
     
 
+def encode_face_from_frame(frame_bgr: np.ndarray, box, target_face_px: int = 200,
+                           max_scale: float = 3.0):
+    """ONE face-encoding pipeline for recognition AND enrolment (tools/reenroll.py
+    uses it too), so stored embeddings match what runtime produces.
+
+    box = (x, y, w, h) from the detector. Takes a generously padded crop and —
+    because the 120° lens makes faces small in pixels — upscales it so the face
+    is ~target_face_px wide before dlib detects/aligns/encodes (its landmarks
+    degrade below ~140 px). Falls back to forcing the detector box if dlib's own
+    detector finds nothing in the crop. Returns a 128-d embedding or None.
+    """
+    if not FACE_RECOGNITION_AVAILABLE or frame_bgr is None or box is None:
+        return None
+    x, y, w, h = (int(v) for v in box)
+    if w <= 0 or h <= 0:
+        return None
+    fh, fw = frame_bgr.shape[:2]
+    pady, padx = int(h * 0.6), int(w * 0.6)
+    ctop, cbot = max(0, y - pady), min(fh, y + h + pady)
+    cleft, cright = max(0, x - padx), min(fw, x + w + padx)
+    crop = frame_bgr[ctop:cbot, cleft:cright]
+    if crop.size == 0:
+        return None
+    scale = 1.0
+    if w < target_face_px:
+        scale = min(max_scale, float(target_face_px) / float(w))
+    if scale > 1.05:
+        crop = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+    try:
+        encs = face_recognition_lib.face_encodings(rgb)
+    except Exception:
+        encs = []
+    if not encs:
+        # Force the (expanded) detector box, mapped into the scaled crop.
+        bx, by = (x - cleft) * scale, (y - ctop) * scale
+        bw, bh = w * scale, h * scale
+        ch, cw = rgb.shape[:2]
+        top = int(max(0, by - 0.35 * bh)); bot = int(min(ch, by + bh + 0.15 * bh))
+        left = int(max(0, bx - 0.20 * bw)); right = int(min(cw, bx + bw + 0.20 * bw))
+        if bot - top > 10 and right - left > 10:
+            try:
+                encs = face_recognition_lib.face_encodings(rgb, [(top, right, bot, left)])
+            except Exception:
+                encs = []
+    return encs[0] if encs else None
+
+
+def estimate_distance_m(face_w_px: float, frame_w_px: int, hfov_deg: float = 102.0,
+                        face_width_m: float = 0.16) -> float:
+    """Rough camera-to-face distance from the face box width (pinhole model).
+    Average adult face ~0.16 m wide; the Camera Module 3 Wide has ~102° HFOV.
+    Good to roughly ±20 % — enough for near/far behaviour, head/eye convergence
+    and a sanity check on real depth sensors later."""
+    try:
+        if face_w_px <= 0 or frame_w_px <= 0:
+            return 0.0
+        f_px = (frame_w_px / 2.0) / float(np.tan(np.radians(hfov_deg / 2.0)))
+        return round(float(face_width_m * f_px / face_w_px), 2)
+    except Exception:
+        return 0.0
+
+
 class FaceRecognitionModule:
     """
     Face recognition system using DeepFace and face_recognition.
@@ -94,6 +157,9 @@ class FaceRecognitionModule:
         # (prevents Moti/Orr flip-flop when both land near the threshold).
         self.confident_distance = 0.50
         self.match_margin = 0.08
+        # Upscale small faces to ~this width before encoding (120° wide lens).
+        self.target_face_px = 200
+        self.camera_hfov_deg = float(getattr(hardware_config, 'camera_hfov_deg', 102.0))
         
         # Face database
         self.known_faces: Dict[str, Face] = {}
@@ -254,6 +320,10 @@ class FaceRecognitionModule:
                     'name': self._get_person_name(person_id),
                     'location': face_area,
                     'confidence': similarity,
+                    # Rough range from face size (pinhole model) — feeds the
+                    # eyes/head later and is a sanity check for real depth.
+                    'distance_m': estimate_distance_m(
+                        face_area[2], frame.shape[1], self.camera_hfov_deg),
                     'timestamp': time.time()
                 }
                 
@@ -272,7 +342,9 @@ class FaceRecognitionModule:
                     emit_key = person_id if person_id != 'unknown' else 'unknown'
                     if emit_key not in last_emit or (now - last_emit[emit_key]) > 10:
                         last_emit[emit_key] = now
-                        self.logger.info(f"Face detected: {result['name']} (id={person_id}, sim={similarity:.2f})")
+                        self.logger.info(
+                            f"Face detected: {result['name']} (id={person_id}, "
+                            f"sim={similarity:.2f}, w={face_area[2]}px, ~{result['distance_m']:.1f} m)")
                         self.brain.emit_event(RobotEvent(
                             type='face_detected',
                             source='face_recognition',
@@ -280,7 +352,10 @@ class FaceRecognitionModule:
                                 'face_id': person_id,
                                 'name': result['name'],
                                 'confidence': similarity,
-                                'is_master': self._is_master(person_id)
+                                'is_master': self._is_master(person_id),
+                                'location': face_area,
+                                'frame_size': (frame.shape[1], frame.shape[0]),
+                                'distance_m': result['distance_m'],
                             },
                             priority=4
                         ))
@@ -438,41 +513,23 @@ class FaceRecognitionModule:
             return ('unknown', 0.0)
         
         try:
-            # Get face embedding using face_recognition for speed
-            face_encoding = None
+            # ONE encoding pipeline shared with enrolment and tools/reenroll.py
+            # (encode_face_from_frame): padded crop, upscaled when the face is
+            # small (120° lens), then dlib detect+align+encode. Matching the
+            # enrolment path keeps runtime distances near the enrolled
+            # self-distance (~0.2) instead of drifting toward the threshold.
+            embedding = None
             if FACE_RECOGNITION_AVAILABLE:
                 if full_frame is not None and face_area is not None:
-                    x, y, w, h = face_area
-                    fh, fw = full_frame.shape[:2]
-                    rgb_frame = cv2.cvtColor(full_frame, cv2.COLOR_BGR2RGB)
-                    # Primary: let dlib's OWN detector find+align the face inside a
-                    # generously padded crop -- the SAME path enrolment uses
-                    # (reenroll.py -> face_encodings(full_frame)). Matching alignment
-                    # keeps runtime distances near the enrolled self-distance (~0.2)
-                    # instead of drifting to ~0.55 and colliding between people.
-                    pady = int(h * 0.6); padx = int(w * 0.6)
-                    ctop = max(0, y - pady); cbot = min(fh, y + h + pady)
-                    cleft = max(0, x - padx); cright = min(fw, x + w + padx)
-                    crop = rgb_frame[ctop:cbot, cleft:cright]
-                    face_encoding = []
-                    try:
-                        if crop.size:
-                            face_encoding = face_recognition_lib.face_encodings(crop)
-                    except Exception:
-                        face_encoding = []
-                    if not face_encoding:
-                        # Fallback: force the (expanded) YuNet box on the full frame.
-                        ex = int(w * 0.20)
-                        top = max(0, y - int(h * 0.35)); bot = min(fh, y + h + int(h * 0.15))
-                        left = max(0, x - ex); right = min(fw, x + w + ex)
-                        face_encoding = face_recognition_lib.face_encodings(
-                            rgb_frame, [(top, right, bot, left)])
+                    embedding = encode_face_from_frame(
+                        full_frame, face_area, self.target_face_px)
                 else:
-                    # Fallback: try with cropped face image
+                    # Fallback: try with the bare cropped face image
                     rgb_face = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
-                    face_encoding = face_recognition_lib.face_encodings(rgb_face)
-            
-            if not face_encoding:
+                    encs = face_recognition_lib.face_encodings(rgb_face)
+                    embedding = encs[0] if encs else None
+
+            if embedding is None:
                 if not DEEPFACE_AVAILABLE:
                     return ('unknown', 0.0)
                 # Fallback to DeepFace
@@ -481,8 +538,6 @@ class FaceRecognitionModule:
                     model_name=self.model_name,
                     enforce_detection=False
                 )[0]['embedding']
-            else:
-                embedding = face_encoding[0]
             
             # Compare with known faces: best distance PER PERSON, then a margin
             # gate so two people who both land near the threshold don't flip-flop
@@ -574,16 +629,12 @@ class FaceRecognitionModule:
             try:
                 if not FACE_RECOGNITION_AVAILABLE:
                     break
-                frame_img, (x, y, w, h) = sample
-                fh, fw = frame_img.shape[:2]
-                px = int(w * 0.20)
-                top = max(0, y - int(h * 0.35)); bot = min(fh, y + h + int(h * 0.15))
-                left = max(0, x - px); right = min(fw, x + w + px)
-                rgb = cv2.cvtColor(frame_img, cv2.COLOR_BGR2RGB)
-                # face_recognition location format: (top, right, bottom, left)
-                enc = face_recognition_lib.face_encodings(rgb, [(top, right, bot, left)])
-                if enc:
-                    embeddings.append(enc[0])
+                frame_img, box = sample
+                # Same pipeline as recognition (and tools/reenroll.py), so the
+                # stored embeddings match what runtime produces.
+                enc = encode_face_from_frame(frame_img, box, self.target_face_px)
+                if enc is not None:
+                    embeddings.append(enc)
             except Exception as e:
                 self.logger.error(f"Failed to process sample: {e}")
         

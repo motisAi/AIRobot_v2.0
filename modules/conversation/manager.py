@@ -170,8 +170,13 @@ class ConversationManager:
             # so we greet correctly and save memory to the right person.
             self._resolve_identity()
 
-            # Unknown visitor -> ask their name and enroll a face.
-            if not getattr(brain, 'authenticated', False) and behavior_config.learn_new_faces:
+            # Unknown visitor -> ask their name and enroll a face. Only when an
+            # UNRECOGNISED face was actually seen moments ago: a wake-word session
+            # while the master is merely out of frame / too far to match must not
+            # turn into "we haven't met" (that asked phantom names after the
+            # camera change). Nobody unknown in view -> plain greeting below.
+            if (not getattr(brain, 'authenticated', False) and behavior_config.learn_new_faces
+                    and self._unknown_face_recent()):
                 self._speak(behavior_config.unknown_person_response)
                 answer = speech.capture_utterance(cfg.idle_timeout, cfg.end_silence, cfg.max_utterance)
                 if answer:
@@ -1374,6 +1379,15 @@ class ConversationManager:
             self._speak(f"Okay, I would have {spoken} the {target}, "
                         f"but no microcontroller is connected yet.")
 
+    def _unknown_face_recent(self, window_s: float = 30.0) -> bool:
+        """True if the face module reported an unrecognised face within window_s
+        (main.py stamps `_unknown_last_time` on every 'unknown' detection)."""
+        try:
+            last = float(getattr(self.robot, '_unknown_last_time', 0.0) or 0.0)
+        except Exception:
+            last = 0.0
+        return last > 0.0 and (time.time() - last) < window_s
+
     def _enroll_name(self, text: str):
         name = text.strip()
         for prefix in ('my name is', 'i am', "i'm", 'call me', 'it is', "it's",
@@ -1385,7 +1399,17 @@ class ConversationManager:
         # Reject garbage transcriptions (a name is 1-3 alphabetic words).
         words = name.split()
         # Whisper no-speech artefacts must never become a user's name.
-        _junk = {"foreign", "hey", "stella", "thank you", "thanks", "you", "so", "oh", "um", "uh"}
+        # ...and ordinary filler / acknowledgement / command words that STT hears
+        # when someone hesitates ("Okay", "Next" became 'people' once). EN + HE.
+        _junk = {"foreign", "hey", "stella", "thank you", "thanks", "you", "so", "oh", "um", "uh",
+                 "okay", "ok", "next", "yes", "no", "yeah", "yep", "nope", "stop", "wait",
+                 "hello", "hi", "what", "nothing", "cancel", "sorry", "please", "never mind",
+                 "nevermind", "hmm", "good", "fine", "sure", "right", "alright", "done", "again",
+                 "repeat", "who", "why", "maybe", "later", "bye", "goodbye", "nobody", "none",
+                 "skip", "pause", "continue", "back", "help", "test", "testing", "one", "two",
+                 "three", "the", "and", "not", "me", "it", "that", "this",
+                 "כן", "לא", "אוקיי", "אוקי", "בסדר", "רגע", "שלום", "תודה", "מה", "סליחה",
+                 "לא יודע", "די", "עצור", "הבא", "כלום", "אולי", "בבקשה", "ביי", "להתראות"}
         if name.lower() in _junk or any(len(w) < 2 for w in words):
             self.logger.info("Rejected junk name: %r", name)
             self._speak("Sorry, I didn't catch your name clearly. We can try again another time.")

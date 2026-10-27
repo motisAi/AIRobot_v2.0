@@ -170,6 +170,7 @@ hardware:
   camera_hflip: true
   camera_vflip: true
   camera_swap_rb: false          # set true only if a test frame shows swapped R/B
+  camera_hfov_deg: 102.0         # Module 3 Wide horizontal FOV -> face-size distance estimate
   # Image controls for low light. Leave null to keep the camera's defaults.
   # For a dim room, try camera_gain: 150 and/or camera_brightness: 60.
   camera_auto_exposure: 3        # 3 = auto (adapts to light), 1 = manual
