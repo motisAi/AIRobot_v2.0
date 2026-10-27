@@ -161,9 +161,15 @@ navigation:
 # ------------------------------------------------------------------ hardware
 hardware:
   # --- camera ---
-  camera_index: 0                # /dev/video0 (the USB camera)
-  camera_resolution: [640, 480]
+  # backend: auto = Pi CSI Module 3 via picamera2/libcamera first, else USB webcam (opencv).
+  camera_backend: "auto"         # auto | picamera2 | opencv
+  camera_index: 0                # /dev/video0 (USB/UVC fallback only)
+  camera_resolution: [1280, 720]
   camera_fps: 30
+  # Module 3 reports Rotation 180 (mounted upside-down) -> flip in software.
+  camera_hflip: true
+  camera_vflip: true
+  camera_swap_rb: false          # set true only if a test frame shows swapped R/B
   # Image controls for low light. Leave null to keep the camera's defaults.
   # For a dim room, try camera_gain: 150 and/or camera_brightness: 60.
   camera_auto_exposure: 3        # 3 = auto (adapts to light), 1 = manual

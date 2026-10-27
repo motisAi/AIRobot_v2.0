@@ -5,9 +5,16 @@ detection, environment mapping) share a single video stream without
 conflicts.  Subscribers register a callback and receive frames at the
 configured rate.
 
+Two capture backends, one public API:
+ - **picamera2** (libcamera) for the Pi CSI Camera Module 3 — preferred.
+ - **OpenCV** ``cv2.VideoCapture`` for a USB/UVC webcam — fallback.
+
+``camera_backend`` in config selects: ``auto`` (CSI first, else USB),
+``picamera2`` (force CSI) or ``opencv`` (force USB).
+
 Design goals:
- - One ``cv2.VideoCapture`` instance, one capture thread.
- - Frame distribution via subscriber callbacks on a dedicated thread pool.
+ - One capture source, one capture thread.
+ - Frame distribution via subscriber callbacks.
  - Thread-safe start / stop / subscribe / unsubscribe.
  - Graceful fallback when no camera is connected.
 """
@@ -21,7 +28,20 @@ import time
 from collections import OrderedDict
 from typing import Callable, Dict, Optional, Tuple
 
+import numpy as np
+
 from config.settings import hardware_config, system_config
+
+# picamera2 / libcamera are only present on the Pi with the CSI stack installed.
+try:
+    from picamera2 import Picamera2
+    from libcamera import Transform, controls as libcontrols
+    _PICAMERA2_AVAILABLE = True
+except Exception:  # pragma: no cover - absent on dev machines / USB-only setups
+    Picamera2 = None
+    Transform = None
+    libcontrols = None
+    _PICAMERA2_AVAILABLE = False
 
 FrameCallback = Callable[["Frame"], None]
 
@@ -45,12 +65,20 @@ class CameraManager:
         self.logger = logging.getLogger(self.__class__.__name__)
 
         self.camera_index: int = hardware_config.camera_index
-        self.resolution: Tuple[int, int] = hardware_config.camera_resolution
+        self.resolution: Tuple[int, int] = tuple(hardware_config.camera_resolution)
         self.fps: int = hardware_config.camera_fps
         self.buffer_size: int = hardware_config.camera_buffer_size
         self.frame_skip: int = system_config.frame_skip
 
+        # Backend selection + CSI orientation/colour options.
+        self.backend: str = getattr(hardware_config, "camera_backend", "auto")
+        self.hflip: bool = bool(getattr(hardware_config, "camera_hflip", False))
+        self.vflip: bool = bool(getattr(hardware_config, "camera_vflip", False))
+        self.swap_rb: bool = bool(getattr(hardware_config, "camera_swap_rb", False))
+
+        self._mode: Optional[str] = None          # 'picamera2' | 'opencv'
         self._cap: Optional[cv2.VideoCapture] = None
+        self._picam2 = None
         self._running = False
         self._capture_thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
@@ -67,15 +95,113 @@ class CameraManager:
     # Lifecycle
     # ------------------------------------------------------------------
     # Video nodes that are NOT plain cv2-readable cameras (Pi CSI pipeline +
-    # ISP + hardware codec). We must skip these when probing.
+    # ISP + hardware codec). We must skip these when probing for a USB webcam.
     _SKIP_NODE_HINTS = ("rp1-cfe", "pispbe", "rpivid", "codec", "isp")
 
+    def start(self) -> bool:
+        """Open the camera (CSI via picamera2, else USB via OpenCV) and start the
+        capture thread.  Returns True on success."""
+        with self._lock:
+            if self._running:
+                return True
+
+            # 1) Pi CSI camera via picamera2 (preferred)
+            if self._mode is None and self.backend in ("auto", "picamera2") \
+                    and _PICAMERA2_AVAILABLE:
+                if self._start_picamera2():
+                    self._mode = "picamera2"
+            elif self.backend == "picamera2" and not _PICAMERA2_AVAILABLE:
+                self.logger.error("camera_backend=picamera2 but picamera2 is not "
+                                  "installed.")
+
+            # 2) USB/UVC webcam via OpenCV (fallback)
+            if self._mode is None and self.backend in ("auto", "opencv"):
+                cap = None
+                for idx in self._candidate_indices():
+                    cap = self._open_index(idx)
+                    if cap is not None:
+                        if idx != self.camera_index:
+                            self.logger.info("USB camera auto-detected at index %d "
+                                             "(configured was %d)", idx, self.camera_index)
+                        self.camera_index = idx
+                        break
+                if cap is not None:
+                    self._cap = cap
+                    self._mode = "opencv"
+
+            if self._mode is None:
+                self.logger.error("No camera available (CSI via picamera2 nor USB "
+                                  "via OpenCV).")
+                return False
+
+            self._running = True
+            self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
+            self._capture_thread.start()
+            self.logger.info("Camera started (mode=%s, res=%s, fps=%d)",
+                             self._mode, self.resolution, self.fps)
+            return True
+
+    # ---- picamera2 (CSI) backend ----
+    def _start_picamera2(self) -> bool:
+        """Configure + start the CSI Camera Module via picamera2. Returns True on
+        success (leaves self._picam2 set), False to let the USB path try."""
+        picam2 = None
+        try:
+            picam2 = Picamera2()
+            w, h = int(self.resolution[0]), int(self.resolution[1])
+            transform = Transform(hflip=1 if self.hflip else 0,
+                                  vflip=1 if self.vflip else 0)
+            # RGB888 in picamera2 is byte-ordered BGR -> directly OpenCV-ready.
+            config = picam2.create_video_configuration(
+                main={"size": (w, h), "format": "RGB888"},
+                transform=transform,
+                buffer_count=4,
+            )
+            picam2.configure(config)
+            # Continuous autofocus (IMX708 Module 3 has an AF actuator). Best
+            # effort — older libcamera/sensors may not support it.
+            try:
+                picam2.set_controls({"AfMode": libcontrols.AfModeEnum.Continuous})
+            except Exception as exc:
+                self.logger.info("Continuous AF not set (%s) — using default focus", exc)
+            picam2.start()
+            time.sleep(0.5)
+            picam2.capture_array()  # warm read (raises if the pipeline is unhappy)
+            self._picam2 = picam2
+            self.logger.info("picamera2 CSI camera started (%dx%d, hflip=%s, vflip=%s)",
+                             w, h, self.hflip, self.vflip)
+            return True
+        except Exception as exc:
+            self.logger.warning("picamera2 start failed (%s) — falling back to USB", exc)
+            try:
+                if picam2 is not None:
+                    picam2.close()
+            except Exception:
+                pass
+            self._picam2 = None
+            return False
+
+    def _read_picamera2(self):
+        """Grab one BGR frame from picamera2, or None on failure."""
+        try:
+            image = self._picam2.capture_array()  # HxWx3, BGR (RGB888 byte order)
+        except Exception as exc:
+            self.logger.warning("picamera2 read failed: %s", exc)
+            return None
+        if self.swap_rb:
+            image = image[:, :, ::-1]
+        # Ensure a contiguous 3-channel BGR uint8 array for downstream OpenCV.
+        if image.ndim == 3 and image.shape[2] == 4:
+            image = image[:, :, :3]
+        return np.ascontiguousarray(image)
+
+    # ---- OpenCV (USB) backend ----
     def _candidate_indices(self):
         """Order camera indices to try: real USB/UVC webcams (found by name in
         /sys) first, then the configured index, then a numeric fallback. The Pi
         CSI / ISP nodes (rp1-cfe / pispbe / ...) are EXCLUDED entirely — opening
-        them spams "csi2_chN node link is not enabled" to the console and they are
-        not cv2-readable anyway. Detecting by name survives node renumbering."""
+        them spams "csi2_chN node link is not enabled" and they are not
+        cv2-readable. Detecting by name survives node renumbering."""
         import os, re
         usb, skip = [], set()
         try:
@@ -126,42 +252,10 @@ class CameraManager:
         cap.release()
         return None
 
-    def start(self) -> bool:
-        """Open the camera and start the capture thread.
-
-        Returns True if the camera opened successfully.
-        """
-        with self._lock:
-            if self._running:
-                return True
-
-            cap = None
-            for idx in self._candidate_indices():
-                cap = self._open_index(idx)
-                if cap is not None:
-                    if idx != self.camera_index:
-                        self.logger.info("Camera auto-detected at index %d "
-                                         "(configured was %d)", idx, self.camera_index)
-                    self.camera_index = idx
-                    break
-            if cap is None:
-                self.logger.error("No readable camera found (tried CSI/USB nodes). "
-                                  "Is the USB webcam plugged in?")
-                return False
-
-            self._cap = cap
-            self._running = True
-
-            self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
-            self._capture_thread.start()
-            self.logger.info("Camera started (index=%d, res=%s, fps=%d)",
-                             self.camera_index, self.resolution, self.fps)
-            return True
-
     def _apply_camera_controls(self, cap) -> None:
-        """Apply image controls (brightness/gain/exposure/etc.) from config.
-        Only sets values that are configured (non-None) so we don't override
-        good camera defaults."""
+        """Apply image controls (brightness/gain/exposure/etc.) from config to a
+        USB camera. Only sets values that are configured (non-None) so we don't
+        override good camera defaults."""
         try:
             hc = hardware_config
             mapping = [
@@ -176,8 +270,6 @@ class CameraManager:
                 if val is not None:
                     cap.set(prop, float(val))
                     applied.append((prop, val))
-            # Auto white-balance ON so colours are reported accurately (helps the
-            # vision model), and auto-exposure adapts to the room light.
             try:
                 cap.set(cv2.CAP_PROP_AUTO_WB, 1.0)
                 if getattr(hc, 'camera_auto_exposure', None) is None:
@@ -198,6 +290,13 @@ class CameraManager:
             if self._cap:
                 self._cap.release()
                 self._cap = None
+            if self._picam2 is not None:
+                try:
+                    self._picam2.stop()
+                    self._picam2.close()
+                except Exception:
+                    pass
+                self._picam2 = None
         self.logger.info("Camera stopped")
 
     @property
@@ -226,20 +325,30 @@ class CameraManager:
     # Internals
     # ------------------------------------------------------------------
     def _capture_loop(self) -> None:
-        """Read frames and distribute to subscribers."""
+        """Read frames (from whichever backend is active) and distribute them."""
         while self._running:
             try:
-                if not self._cap or not self._cap.isOpened():
-                    self.logger.warning("Camera disconnected — attempting reopen")
-                    time.sleep(2.0)
-                    self._reopen()
-                    continue
-
-                ok, image = self._cap.read()
-                if not ok:
-                    self.logger.warning("Frame read failed")
-                    time.sleep(0.05)
-                    continue
+                if self._mode == "picamera2":
+                    if self._picam2 is None:
+                        self.logger.warning("CSI camera lost — attempting reopen")
+                        time.sleep(2.0)
+                        self._reopen()
+                        continue
+                    image = self._read_picamera2()
+                    if image is None:
+                        time.sleep(0.05)
+                        continue
+                else:  # opencv
+                    if not self._cap or not self._cap.isOpened():
+                        self.logger.warning("Camera disconnected — attempting reopen")
+                        time.sleep(2.0)
+                        self._reopen()
+                        continue
+                    ok, image = self._cap.read()
+                    if not ok or image is None:
+                        self.logger.warning("Frame read failed")
+                        time.sleep(0.05)
+                        continue
 
                 self._frame_index += 1
                 frame = Frame(
@@ -265,9 +374,23 @@ class CameraManager:
                 time.sleep(0.1)
 
     def _reopen(self) -> None:
-        """Try to reopen the camera after a disconnect (re-probing indices, since
-        a USB re-enumeration may have moved the node)."""
+        """Try to reopen the active camera after a disconnect."""
         with self._lock:
+            if self._mode == "picamera2":
+                if self._picam2 is not None:
+                    try:
+                        self._picam2.stop()
+                        self._picam2.close()
+                    except Exception:
+                        pass
+                    self._picam2 = None
+                if self._start_picamera2():
+                    self.logger.info("CSI camera reopened successfully")
+                    return
+                self.logger.warning("CSI camera reopen failed — will retry")
+                return
+
+            # opencv path (USB re-enumeration may have moved the node)
             if self._cap:
                 self._cap.release()
                 self._cap = None

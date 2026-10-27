@@ -155,11 +155,21 @@ class HardwareConfig:
     """Hardware interface configurations"""
     
     # Camera Settings
-    camera_index: int = 0  # 0 for /dev/video0
+    camera_index: int = 0  # 0 for /dev/video0 (USB/UVC fallback path)
     camera_resolution: tuple = (640, 480)
     camera_fps: int = 30
     camera_buffer_size: int = 1
     camera_format: str = "MJPEG"
+    # Capture backend. "auto" uses the Pi CSI camera via picamera2 (libcamera)
+    # when present, otherwise a USB/UVC webcam via OpenCV. Force with
+    # "picamera2" or "opencv".
+    camera_backend: str = "auto"        # auto | picamera2 | opencv
+    # Orientation for the CSI (picamera2) path. 180deg mount = both True.
+    camera_hflip: bool = False
+    camera_vflip: bool = False
+    # Swap R/B if picamera2 colours look inverted (RGB888 is normally BGR-ordered
+    # and OpenCV-ready, so this stays False unless a test frame proves otherwise).
+    camera_swap_rb: bool = False
     # Image controls (None = leave the camera's default). Bump brightness/gain
     # for low light; keep auto_exposure = 3 (auto) so it adapts.
     camera_auto_exposure: Optional[int] = 3   # 3 = auto/aperture-priority, 1 = manual
