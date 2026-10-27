@@ -181,16 +181,19 @@ hardware:
   camera_low_light_boost: true
 
   # --- microphones: TWO mics, TWO roles, TWO different devices (never one shared mic — bug_055) ---
-  # WAKE    = the camera's built-in mic  "Auto Focus Camera"  (ALSA card id 'Camera', by-id usb-Signo_Camera_WB-400_Auto_Focus_Camera*, native 48 kHz)
-  # COMMAND = the USB dongle            "USB PnP Sound Device" (ALSA card id 'Device', by-id usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device*, native 44.1 kHz)
+  # WAKE    = the USB dongle "USB PnP Sound Device" (ALSA card id 'Device', by-id usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device*, native 44.1 kHz)
+  #           TEMPORARY (2026-10-27): the previous wake mic was the USB camera's built-in mic, removed when the
+  #           CSI Camera Module 3 (no mic) replaced it. Known trade-off (bug_053): the dongle has AGC / weaker
+  #           pickup for wake-word spotting. Swap in a 2nd INMP441 when it arrives.
+  # COMMAND = the I2S HAT "voicehat" (2x INMP441, card snd_rpi_googlevoicehat, native 48 kHz)
   # Resolved by name (by-id resolver coming); card numbers and PortAudio indices are NOT stable — never pin an index.
   # Full spec: docs/architecture/stella-architecture.md section 4.
-  wake_word_microphone_name: "Auto Focus Camera"   # WAKE mic (camera). Do not move to the USB PnP dongle: AGC/poor pickup, Vosk mistranscribes (bug_053)
+  wake_word_microphone_name: "USB PnP Sound Device"  # WAKE mic = USB dongle (temporary until a 2nd INMP441)
   speech_microphone_name: "voicehat"                 # COMMAND mic = I2S HAT (2x INMP441, card snd_rpi_googlevoicehat). Differs from wake (bug_055)
-  microphone_rate: 48000         # wake mic native rate (tried first, then 44100/16000; the camera mic has no 16 k)
+  microphone_rate: 44100         # wake mic native rate (USB dongle = 44.1 kHz); other rates are tried as fallback
   speech_microphone_rate: 48000  # I2S HAT native rate (tried first, then 44100/16000)
   # Stable identity for the two mics (/dev/snd/by-id globs) — resolved on every open.
-  wake_mic_id: "usb-Signo_Camera_WB-400_Auto_Focus_Camera*"        # -> ALSA card 'Camera'
+  wake_mic_id: "usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device*"   # -> ALSA card 'Device' (card 1 today)
   speech_mic_id: ""   # I2S HAT has no /dev/snd/by-id link; resolved by name ("voicehat")
 
   # --- audio OUTPUT (where Stella speaks) ---
