@@ -166,7 +166,11 @@ hardware:
   camera_index: 0                # /dev/video0 (USB/UVC fallback only)
   camera_resolution: [1280, 720]
   camera_fps: 30
-  # Module 3 reports Rotation 180 (mounted upside-down) -> flip in software.
+  # Module 3 is mounted upside-down in the head -> flip in software (both flips
+  # = 180 deg). Re-mounted the camera? Run tools/camera_orientation_check.py with
+  # someone in front of it: if 180 wins, toggle BOTH flips; if 90/270 wins the
+  # module is sideways — re-mount it. (2026-10-31: she was upside-down after a
+  # re-mount and saw nobody; neither detector finds an inverted face.)
   camera_hflip: true
   camera_vflip: true
   camera_swap_rb: false          # set true only if a test frame shows swapped R/B
@@ -222,6 +226,10 @@ model:
   # stranger look identical to the master. Lower threshold = stricter.
   face_distance_metric: "euclidean"
   face_recognition_threshold: 0.60
+  # Liveness (anti-photo): MediaPipe FaceMesh blink check on the biggest face,
+  # own thread at ~15 fps on the face crop (modules/vision/liveness.py).
+  liveness_enabled: true
+  liveness_fps: 15
   # Object detection: runs on the CPU via OpenCV-DNN (data/models/yolov8n.onnx). The Hailo NPU serves only the offline LLM.
   object_model: "yolov8n"
   object_confidence_threshold: 0.5
@@ -287,6 +295,16 @@ security:
   # reliable way to disarm by VOICE is a secret phrase; Telegram always works.
   guard_require_master_to_disarm: true   # false = anyone present can say "guard off"
   guard_disarm_phrase: ""        # set a secret word, e.g. "sunflower" -> "guard off sunflower"
+  # --- Liveness (anti-photo) ---
+  # A printed or phone photo of the master is recognised exactly like the real
+  # face, so master privileges, guard disarm, the welcome and face enrolment wait
+  # for proof of life: a BLINK seen by the liveness monitor (model.liveness_enabled).
+  # Limitation: a video on a screen still blinks — needs depth (LiDAR) / a texture
+  # model later. Set liveness_required: false to switch the gate off.
+  liveness_required: true
+  liveness_blink_window_s: 30    # a blink within this window = live
+  liveness_decide_after_s: 15    # face watched this long with no blink = not live (photo)
+  liveness_enroll_wait_s: 8      # enrolment waits this long for a blink, then refuses
   # Seconds Stella keeps trusting who she saw (so she doesn't ask your name again
   # 8s after glancing at you). Higher bridges sparse face detection.
   identity_memory_seconds: 60

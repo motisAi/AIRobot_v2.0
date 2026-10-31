@@ -98,7 +98,11 @@ class ModelConfig:
     face_distance_metric: str = "euclidean"  # dlib embeddings need euclidean (~0.6)
     face_recognition_threshold: float = 0.60  # distance <= 0.60 = match
     face_detection_confidence: float = 0.7
-    
+    # Liveness (anti-photo) monitor: MediaPipe FaceMesh blink check on the
+    # largest face (modules/vision/liveness.py). Policy lives in SecurityConfig.
+    liveness_enabled: bool = True
+    liveness_fps: int = 15
+
     # Object Detection Settings (YOLO with Hailo)
     object_model: str = "yolov8n"  # Nano version for speed
     object_confidence_threshold: float = 0.5
@@ -333,6 +337,15 @@ class SecurityConfig:
     # last time she saw that face. Short = she forgets you between glances (and
     # asks your name again); longer bridges the gaps in sparse face detection.
     identity_memory_seconds: float = 60.0
+
+    # Liveness (anti-photo). A printed/phone photo of the master is recognised
+    # exactly like the real face, so privileges, guard disarm, welcomes and
+    # enrolment wait for proof of life: a blink seen by the liveness monitor.
+    # A video on a screen still passes (needs depth/LiDAR or a texture model).
+    liveness_required: bool = True
+    liveness_blink_window_s: float = 30.0   # a blink within this window = live
+    liveness_decide_after_s: float = 15.0   # tracked this long with no blink = not live
+    liveness_enroll_wait_s: float = 8.0     # learn_face waits this long for a blink
 
 
 @dataclass

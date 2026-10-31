@@ -187,9 +187,12 @@ class FaceRecognitionModule:
         self.frame_queue = queue.Queue(maxsize=10)
         self.result_queue = queue.Queue()
         
-        # Performance optimization
+        # Frame pacing: the shared CameraManager ALREADY delivers only every
+        # system_config.frame_skip-th frame to subscribers, so we process every
+        # frame we are given. (Skipping again here meant 1 frame in 64 — one
+        # look every ~3.5 s — which made her slow to notice anyone.)
         self.frame_skip_counter = 0
-        self.frame_skip = system_config.frame_skip
+        self.frame_skip = 1
         
         # Face tracking
         self.tracked_faces = {}
@@ -199,7 +202,11 @@ class FaceRecognitionModule:
         self.learning_mode = False
         self.learning_face_id = None
         self.learning_samples = []
-        
+
+        # Liveness (anti-photo) monitor — created in start(); None = unavailable.
+        self.liveness = None
+        self.last_learn_reason = ''   # '' | 'not_live' | 'no_samples' | 'no_embeddings'
+
 
     def start(self):
         """Start face recognition system"""
@@ -213,7 +220,23 @@ class FaceRecognitionModule:
             return False
         self.camera_manager.subscribe("face_recognition", self._on_shared_frame)
         self.logger.info("Face recognition subscribed to shared camera")
-        
+
+        # Liveness monitor: FaceMesh blink check on the biggest face, in its own
+        # thread at ~15 fps (we only look every Nth frame — too slow for blinks).
+        if getattr(model_config, 'liveness_enabled', True):
+            try:
+                from modules.vision.liveness import LivenessMonitor
+                mon = LivenessMonitor(
+                    self.camera_manager,
+                    fps=getattr(model_config, 'liveness_fps', 15),
+                    blink_window_s=getattr(security_config, 'liveness_blink_window_s', 20.0),
+                    decide_after_s=getattr(security_config, 'liveness_decide_after_s', 12.0),
+                    logger=logging.getLogger("Liveness"))
+                self.liveness = mon if mon.start() else None
+            except Exception as exc:
+                self.logger.warning("Liveness monitor unavailable: %s", exc)
+                self.liveness = None
+
         # Start recognition thread (processes frames from queue)
         self.recognition_thread = threading.Thread(target=self._recognition_loop)
         self.recognition_thread.daemon = True
@@ -237,7 +260,12 @@ class FaceRecognitionModule:
         # Unsubscribe from shared camera
         if self.camera_manager:
             self.camera_manager.unsubscribe("face_recognition")
-        
+        if self.liveness is not None:
+            try:
+                self.liveness.stop()
+            except Exception:
+                pass
+
         # Wait for the recognition thread
         if self.recognition_thread:
             self.recognition_thread.join(timeout=2.0)
@@ -291,29 +319,42 @@ class FaceRecognitionModule:
         self.processing = True
 
         try:
-            # Brighten dark frames so faces are detectable/recognisable in low
-            # light (adaptive — well-lit frames pass through unchanged).
-            frame = self._enhance_low_light(frame)
+            # Brighten dark frames for DETECTION only (adaptive gamma; well-lit
+            # frames pass through unchanged). Encoding uses the untouched frame
+            # so runtime embeddings match enrolment: tools/reenroll.py encodes
+            # raw frames, and a gamma-lifted face encodes measurably differently
+            # (enrolment self-test 0.11 became 0.45-0.50 live, and the lift
+            # depends on the *background* brightness, not the face).
+            det_frame = self._enhance_low_light(frame)
             # Detect faces
-            faces = self._detect_faces(frame)
+            faces = self._detect_faces(det_frame)
             
             if not faces:
                 self.face_locations = []
                 self.face_names = []
                 self.processing = False
                 return
-            
+
+            # Seed the liveness monitor with the biggest face so its FaceMesh
+            # crop follows the person between our (every Nth frame) detections.
+            if self.liveness is not None:
+                big = max(faces, key=lambda f: f['area'][2] * f['area'][3])
+                self.liveness.set_face_box(big['area'])
+
             # Recognize faces
             recognized_faces = []
-            
+
             for face_data in faces:
                 face_region = face_data['face']
                 face_area = face_data['area']
                 confidence = face_data.get('confidence', 0)
-                
+
                 # Recognize face (pass full frame + location for face_recognition lib)
                 person_id, similarity = self._recognize_face(face_region, frame, face_area)
-                
+                # True = blinked recently, False = watched 12 s without a blink
+                # (photo), None = undecided / monitor off. Consumers gate on it.
+                live = self.liveness.is_live(face_area) if self.liveness is not None else None
+
                 # Create result
                 result = {
                     'id': person_id,
@@ -324,6 +365,7 @@ class FaceRecognitionModule:
                     # eyes/head later and is a sanity check for real depth.
                     'distance_m': estimate_distance_m(
                         face_area[2], frame.shape[1], self.camera_hfov_deg),
+                    'live': live,
                     'timestamp': time.time()
                 }
                 
@@ -344,7 +386,8 @@ class FaceRecognitionModule:
                         last_emit[emit_key] = now
                         self.logger.info(
                             f"Face detected: {result['name']} (id={person_id}, "
-                            f"sim={similarity:.2f}, w={face_area[2]}px, ~{result['distance_m']:.1f} m)")
+                            f"sim={similarity:.2f}, w={face_area[2]}px, ~{result['distance_m']:.1f} m, "
+                            f"live={'yes' if live else ('NO' if live is False else '?')})")
                         self.brain.emit_event(RobotEvent(
                             type='face_detected',
                             source='face_recognition',
@@ -356,6 +399,8 @@ class FaceRecognitionModule:
                                 'location': face_area,
                                 'frame_size': (frame.shape[1], frame.shape[0]),
                                 'distance_m': result['distance_m'],
+                                'live': live,
+                                'liveness_active': bool(self.liveness is not None and self.liveness.running),
                             },
                             priority=4
                         ))
@@ -595,7 +640,18 @@ class FaceRecognitionModule:
             bool: True if successful
         """
         self.logger.info(f"Learning face for {name}")
-        
+        self.last_learn_reason = ''
+
+        # Anti-photo: never enrol a face that does not blink. Returns as soon as
+        # the liveness monitor has seen a blink (usually within a few seconds).
+        if self.liveness is not None and getattr(security_config, 'liveness_required', True):
+            wait = float(getattr(security_config, 'liveness_enroll_wait_s', 8.0))
+            if not self.liveness.wait_for_blink(wait):
+                self.last_learn_reason = 'not_live'
+                self.logger.warning("learn_face(%s): no blink seen in %.0fs — not enrolling "
+                                    "(a photo, or nobody in front of the camera)", name, wait)
+                return False
+
         # Enter learning mode
         self.learning_mode = True
         self.learning_face_id = f"person_{int(time.time())}"
@@ -620,6 +676,7 @@ class FaceRecognitionModule:
             self.logger.warning("Not enough face samples (%d, need %d) — likely "
                                 "poor lighting or no face in view",
                                 len(self.learning_samples), min_needed)
+            self.last_learn_reason = 'no_samples'
             return False
         
         # Process samples — each is (full_frame, (x, y, w, h))
@@ -640,6 +697,7 @@ class FaceRecognitionModule:
         
         if not embeddings:
             self.logger.error("No valid embeddings extracted")
+            self.last_learn_reason = 'no_embeddings'
             return False
         
         # Create face entry
@@ -1013,8 +1071,8 @@ class FaceRecognitionModule:
         self.logger.info("Continuous capture enabled")
     
     def disable_continuous_capture(self):
-        """Disable continuous capture mode"""
-        self.frame_skip = system_config.frame_skip
+        """Disable continuous capture mode (the CameraManager does the skipping)"""
+        self.frame_skip = 1
         self.logger.info("Continuous capture disabled")
     
     def shutdown(self):

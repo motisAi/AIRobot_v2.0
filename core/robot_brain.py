@@ -1042,8 +1042,26 @@ class RobotBrain:
         confidence = data.get('confidence', 0)
         is_master = data.get('is_master', False)
         name = data.get('name', 'unknown')
-        
+
         now = time.time()
+
+        # Liveness gate: a recognised face that has not blinked yet — or never
+        # does (a photo) — gets no identity and no privileges. The face module
+        # sends live=True/False/None plus liveness_active; with the monitor off
+        # the gate stays open so a missing mediapipe can never lock the master out.
+        live = data.get('live')
+        require_live = bool(data.get('liveness_active')) and \
+            getattr(security_config, 'liveness_required', True)
+        if require_live and face_id and face_id != 'unknown' and live is not True:
+            gate_log = getattr(self, '_live_gate_log', None)
+            if gate_log is None:
+                gate_log = self._live_gate_log = {}
+            if now - gate_log.get(face_id, 0.0) > 30:
+                gate_log[face_id] = now
+                self.logger.info("%s recognised but not confirmed live (%s) — no identity/privileges yet",
+                                 name, 'no blink yet' if live is None else 'never blinks: photo?')
+            return
+
         # Cooldown: don't greet the same face within 30 seconds
         last_greet = getattr(self, '_face_greet_times', {})
         if not hasattr(self, '_face_greet_times'):

@@ -390,6 +390,15 @@ class WebDashboard:
             state = getattr(self.brain, "state", "unknown")
             data["state"] = state.name if hasattr(state, 'name') else str(state)
             data["current_user"] = getattr(self.brain, "current_user", None)
+            # Liveness (blink) monitor state — curl :5000/api/status to tune it.
+            try:
+                mods = getattr(self.brain, "modules", {}) or {}
+                face = mods.get("face_recognition") or mods.get("vision")   # brain keys it 'vision'
+                mon = getattr(face, "liveness", None)
+                if mon is not None:
+                    data["liveness"] = mon.status()
+            except Exception:
+                pass
 
         # Detected objects (from object_detection module if available)
         objects = []

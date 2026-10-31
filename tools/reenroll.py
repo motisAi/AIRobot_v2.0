@@ -111,9 +111,30 @@ class FrameSource:
             pass
 
 
+YUNET_MODEL = ROOT / "data" / "models" / "face_detection_yunet_2023mar.onnx"
+_yunet = None  # (detector, (w, h)) — created lazily, re-created if the frame size changes
+
+
 def biggest_face_box(frame_bgr):
-    """dlib HOG on a downscaled copy (fast), mapped back to full-res (x, y, w, h)."""
+    """Biggest face as (x, y, w, h) using the SAME detector the service runs
+    (YuNet DNN, score >= 0.7). dlib's HOG detector missed faces on backlit /
+    steep-angle frames where YuNet did not, so enrolment and runtime now agree
+    on *where* the face is as well as how it is encoded. Falls back to dlib HOG
+    on a 640-wide copy only if the model file is missing."""
+    global _yunet
     h, w = frame_bgr.shape[:2]
+    if YUNET_MODEL.exists():
+        if _yunet is None or _yunet[1] != (w, h):
+            _yunet = (cv2.FaceDetectorYN.create(str(YUNET_MODEL), "", (w, h), 0.7, 0.3, 50), (w, h))
+        _, dets = _yunet[0].detect(frame_bgr)
+        if dets is None or len(dets) == 0:
+            return None
+        d = max(dets, key=lambda r: float(r[2]) * float(r[3]))
+        x, y, bw, bh = (int(v) for v in d[:4])
+        x, y = max(0, x), max(0, y)
+        bw, bh = min(bw, w - x), min(bh, h - y)
+        return (x, y, bw, bh) if bw > 0 and bh > 0 else None
+    # ---- fallback: dlib HOG on a downscaled copy, mapped back to full-res ----
     scale = 640.0 / max(w, 1)
     small = cv2.resize(frame_bgr, None, fx=scale, fy=scale) if scale < 1.0 else frame_bgr
     rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
@@ -159,6 +180,8 @@ def main():
     embs, frames, widths = [], [], []
     t0 = time.time()
     last = 0.0
+    n_frames = n_faces = 0
+    next_report = 5.0
     while len(embs) < TARGET and (time.time() - t0) < MAX_SECONDS:
         for n, txt in prompts:
             if len(embs) >= n and n not in spoken:
@@ -168,11 +191,18 @@ def main():
         if frame is None:
             time.sleep(0.05)
             continue
+        n_frames += 1
         now = time.time()
+        if now - t0 >= next_report:   # progress so a silent failure is diagnosable
+            print(f"t={now - t0:4.1f}s frames={n_frames} faces_seen={n_faces} "
+                  f"captured={len(embs)} frame={frame.shape[1]}x{frame.shape[0]}", flush=True)
+            next_report += 5.0
         if now - last < 0.6:
             time.sleep(0.05)
             continue
         enc, box = biggest_encoding(frame)
+        if box is not None:
+            n_faces += 1
         if enc is not None:
             embs.append(np.asarray(enc))
             frames.append(frame.copy())
@@ -182,26 +212,31 @@ def main():
 
     if len(embs) < MIN_OK:
         src.close()
-        say("Sorry, I could not see your face clearly. Please try again with more light on your face.")
+        print(f"FAILED: frames={n_frames} faces_seen={n_faces} captured={len(embs)} (need {MIN_OK})", flush=True)
+        if n_faces == 0:
+            say("Sorry, I could not find a face at all. Please check that my camera is upright and pointing at you.")
+        else:
+            say("Sorry, I could not see your face clearly. Please try again with more light on your face.")
         return 2
 
-    # Drop outlier embeddings: keep the coherent core near the medoid so one bad
-    # frame (a side/tilt shot that encodes poorly) can't sit near another person
-    # and cause mix-ups. Never prune below MIN_OK.
-    if len(embs) >= 5:
-        P = embs
-        best, mi = 1e9, 0
-        for i, x in enumerate(P):
-            tot = sum(np.linalg.norm(x - y) for y in P)
-            if tot < best:
-                best, mi = tot, i
-        m = P[mi]
-        keep = [i for i, x in enumerate(P) if np.linalg.norm(x - m) <= 0.45]
-        if len(keep) >= MIN_OK and len(keep) < len(embs):
-            print(f"kept {len(keep)}/{len(embs)} coherent embeddings (dropped outliers)", flush=True)
+    # Drop only ISOLATED embeddings (no neighbour within 0.45): a side/tilt shot
+    # that encodes poorly and could sit near another person. Keep every real
+    # cluster: close-up and far samples of the same face legitimately sit >0.45
+    # apart in dlib space (far faces are upscaled), and the old "medoid core"
+    # rule dropped the whole close-up cluster, which made her weak at 0.4 m.
+    if len(embs) > MIN_OK:
+        P = np.stack(embs)
+        D = np.linalg.norm(P[:, None, :] - P[None, :, :], axis=2)
+        np.fill_diagonal(D, np.inf)
+        nn = D.min(axis=1)
+        keep = [i for i in range(len(embs)) if nn[i] <= 0.45]
+        if MIN_OK <= len(keep) < len(embs):
+            dropped = [(widths[i], round(float(nn[i]), 2)) for i in range(len(embs)) if i not in keep]
+            print(f"kept {len(keep)}/{len(embs)} embeddings; dropped isolated (px, nearest): {dropped}", flush=True)
             embs = [embs[i] for i in keep]
             frames = [frames[i] for i in keep]
             widths = [widths[i] for i in keep]
+    print(f"samples kept: {len(embs)}  face px: {sorted(widths)}", flush=True)
 
     now_iso = datetime.now().isoformat()
     entry = {target_id: {
@@ -213,7 +248,8 @@ def main():
         "metadata": {"enrolled_via": "reenroll.py", "samples": len(embs),
                      "enrolled_at": now_iso, "needs_encoding": False,
                      "camera": "picamera2" if src.cm is not None else "cv2",
-                     "face_px_min_max": [min(widths), max(widths)] if widths else None},
+                     "face_px_min_max": [min(widths), max(widths)] if widths else None,
+                     "face_px": sorted(widths)},
     }}
     db = {}
     if DB_PATH.exists():

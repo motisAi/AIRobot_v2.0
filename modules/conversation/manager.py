@@ -1428,8 +1428,8 @@ class ConversationManager:
         # Tell them to hold still, THEN capture face samples (so they stay in
         # frame during the ~10s collection), then confirm honestly.
         face = self.robot.modules.get('face_recognition')
-        self._speak(f"Nice to meet you, {name}. Please look at me for a few "
-                    f"seconds so I can remember your face.")
+        self._speak(f"Nice to meet you, {name}. Please look at me and blink naturally "
+                    f"for a few seconds so I can remember your face.")
         learned = False
         try:
             if face and hasattr(face, 'learn_face'):
@@ -1438,6 +1438,15 @@ class ConversationManager:
             self.logger.warning("face enroll failed: %s", exc)
         if learned:
             self._speak(f"Got it, {name}. I'll recognise you next time.")
+        elif getattr(face, 'last_learn_reason', '') == 'not_live':
+            # No blink seen: a photo, or nobody actually in front of her. Take
+            # back the identity we granted on the name alone.
+            brain.authenticated = False
+            brain.current_user_name = None
+            if self.robot.ai_engine:
+                self.robot.ai_engine._current_user = None
+            self._speak(f"Sorry {name}, I couldn't confirm a real person in front of me, "
+                        f"so I won't save a face this time. Let's try again when you're here.")
         else:
             self._speak(f"I've got your name, {name}, but I couldn't get a clear "
                         f"look at your face — it may be too dark. I'll try again later.")

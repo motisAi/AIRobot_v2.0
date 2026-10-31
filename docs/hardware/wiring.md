@@ -48,7 +48,7 @@ Camera Module 3 Wide NoIR (IMX708, 120° FOV, AF actuator dw9807) ──ribbon�
 | Item | Detail |
 |------|--------|
 | Sensor | `imx708_wide_noir` — **no IR-cut filter** (great in low light / with IR illumination; daylight colours skew warm). Tuning file `imx708_wide_noir.json` auto-selected |
-| Mount | reports **Rotation 180** → `camera_hflip: true`, `camera_vflip: true` (verified right-side-up) |
+| Mount | module sits **upside-down** in the head → `camera_hflip: true`, `camera_vflip: true` (= 180°). **After ANY re-mount run `venv/bin/python tools/camera_orientation_check.py`** with someone in front of her: on 2026-10-31 she came back inverted after a re-mount and saw nobody (neither YuNet nor dlib finds an upside-down face); turning the module 180° fixed it |
 | Driver stack | kernel `imx708` + `rp1_cfe` + `pisp_be`; userspace **libcamera 0.7 built from Raspberry Pi's fork into `/usr/local`** (Ubuntu's apt libcamera cannot drive it); `picamera2 0.3.38` in the venv (optional DRM/Qt previews guarded) |
 | In code | `parts_used/camera_usb.py` `CameraManager`, backend `picamera2`, 1280×720 BGR frames, continuous AF; USB/OpenCV path kept as fallback (`camera_backend: auto`) |
 | Config | `hardware.camera_backend`, `camera_resolution`, `camera_hflip/vflip`, `camera_swap_rb` (false — colours verified) |
@@ -184,6 +184,7 @@ Power: ~100–200 mA from the Pi's USB is fine for the eyes alone.
 
 ## 8. Change log
 
+- **2026-10-31** — Camera found inverted after a re-mount (both face detectors blind) → module turned 180°; `tools/camera_orientation_check.py` and `tools/face_diag.py` added. Master re-enrolled with the CSI camera (`tools/reenroll.py`, 14 samples, faces 104–391 px). Liveness (blink) gate added (`modules/vision/liveness.py`): a photo no longer unlocks master mode, the guard or enrolment.
 - **2026-10-27** — USB webcam removed → Camera Module 3 Wide NoIR on CSI (libcamera from source). Wake mic → USB PnP dongle (temporary). Fan on J17 enabled. Home WiFi switched to "Arik hadash at moti" with static IP + wpa retry fix. Eyes (ESP32-C3 + dual GC9D01) pinout finalised; GPIO8/9 reserved for the PCA9685.
 - **2026-09-26** — audio/service/camera verification (USB era).
 - **2026-08-15** — hand wiring verified; classic ESP32 replaced by ESP32-S3 after a short.

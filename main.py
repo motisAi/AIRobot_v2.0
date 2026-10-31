@@ -624,13 +624,36 @@ class AIRobot:
     
     def _note_unknown(self, now: float) -> int:
         """Windowed streak of unrecognised-face detections, shared by the guard and
-        greet paths. Resets if the previous unknown was >4 s ago, so a one-frame
-        phantom (a face-like patch on a wall) never reaches the confirm threshold."""
-        if now - getattr(self, '_unknown_last_time', 0.0) > 4.0:
+        greet paths. The face module emits at most ONE 'unknown' event per 10 s,
+        so the streak must survive that spacing: it resets only if the previous
+        unknown was >35 s ago (three events ~10 s apart = a stranger who has
+        really been standing there ~30 s; a one-frame phantom never gets there).
+        A 4 s reset here could never reach 3 and silently disabled this path."""
+        if now - getattr(self, '_unknown_last_time', 0.0) > 35.0:
             self._unknown_streak = 0
         self._unknown_last_time = now
         self._unknown_streak = getattr(self, '_unknown_streak', 0) + 1
         return self._unknown_streak
+
+    def _not_live(self, face_data) -> bool:
+        """True when the liveness monitor is active, liveness is required and
+        this face has not proven live (no blink yet, or never — a photo).
+        A photo of the master must not welcome him, disarm the guard or
+        authenticate; a photo of a stranger must not start an enrolment."""
+        if not face_data.get('liveness_active'):
+            return False
+        if not getattr(security_config, 'liveness_required', True):
+            return False
+        live = face_data.get('live')
+        if live is True:
+            return False
+        now = time.time()
+        if now - getattr(self, '_live_gate_logged', 0.0) > 30:
+            self._live_gate_logged = now
+            self.logger.info("%s seen but not confirmed live (%s) — holding welcome/guard/auth",
+                             face_data.get('name', '?'),
+                             'no blink yet' if live is None else 'never blinks: photo?')
+        return True
 
     def _handle_face_detected(self, event: RobotEvent):
         """Handle face detection event"""
@@ -640,6 +663,8 @@ class AIRobot:
 
         # Authenticate if master
         if face_data.get('is_master'):
+            if self._not_live(face_data):
+                return
             self._unknown_streak = 0
             now = time.time()
             gap = now - getattr(self, '_last_master_seen', 0.0)
@@ -705,6 +730,10 @@ class AIRobot:
         # LISTEN (command mic) to their name and enroll them. A passive spoken
         # prompt alone has no listener in this architecture.
         if face_id == 'unknown' and behavior_config.learn_new_faces:
+            # A face that never blinks (photo, painting, screen saver) is not a
+            # visitor to greet and enrol.
+            if face_data.get('liveness_active') and face_data.get('live') is False:
+                return
             conv = getattr(self, 'conversation', None)
             if conv is not None and not conv.active:
                 now = time.time()
