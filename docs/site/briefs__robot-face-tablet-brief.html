@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robot Face Subsystem — Build Brief (for Claude Code)</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="robot-face-subsystem-build-brief-for-claude-code">Robot Face Subsystem — Build Brief (for Claude Code)</h1>
+<h2 id="0-read-this-first">0. Read this first</h2>
+<p>This document describes adding a <strong>tablet-based animated face + display subsystem</strong> to an
+<strong>already working</strong> AI robot. The existing system is mature. <strong>Do not rebuild, refactor, or
+"improve" any working subsystem.</strong> The face is a new, isolated module that plugs in through a
+single clean boundary (a WebSocket bridge on the Pi) and adds a small number of emitter calls
+at existing event points.</p>
+<p>Before writing integration code, <strong>inspect the existing repository</strong> to find the real hook
+points (where emotions/states change, where TTS is triggered, where Hailo face-detection
+coordinates are produced, where the watchdog registers monitored components). Ask me for the
+relevant files if they are not obvious. Assume nothing about internal names.</p>
+<hr>
+<h2 id="1-existing-system-context-do-not-modify">1. Existing system (context — DO NOT MODIFY)</h2>
+<ul>
+<li><strong>Compute:</strong> Raspberry Pi 5 + Hailo-10 AI accelerator. Ubuntu Server 24.04, headless, SSH.</li>
+<li><strong>Language:</strong> Python. Multi-threaded design.</li>
+<li><strong>Vision (Hailo):</strong> face recognition, object detection, color detection — all working.</li>
+<li><strong>Audio in:</strong> 2 microphones + 1 camera (one mic mounted on the camera).</li>
+<li>Mic A → wake-word, own thread.</li>
+<li>Mic B → conversation/STT, own thread.</li>
+<li><strong>Actuation:</strong> robotic arm via <strong>ESP32</strong>, mimics operator hand movements on command. Working.</li>
+<li><strong>Comms:</strong> Telegram bot — sends and receives commands.</li>
+<li><strong>Reliability:</strong> a <strong>watchdog</strong> that detects hardware faults, including WiFi loss, and can
+  prompt the operator offline (after scanning networks) for where to reconnect.</li>
+</ul>
+<p><strong>Non-goals (explicitly out of scope):</strong>
+- No changes to wake-word thread, conversation thread, Hailo pipeline, ESP32 arm control,
+  Telegram logic, or watchdog internals — <strong>except</strong> two additive touches:
+  1. add the tablet as a new <strong>monitored node</strong> in the watchdog, and
+  2. call the face <strong>emitter</strong> API at points where emotion/gaze/speech already change.</p>
+<hr>
+<h2 id="2-new-hardware-the-face-tablet">2. New hardware: the face tablet</h2>
+<ul>
+<li><strong>Device:</strong> Teclast P30T (model TLC005).</li>
+<li><strong>SoC:</strong> Allwinner A523, 8× Cortex-A55 @ 1.8 GHz. <strong>GPU: Mali-G57 MC1 (single core).</strong></li>
+<li><strong>RAM: 4 GB real.</strong> (Vendor "10/15 GB" is virtual RAM — ignore it.)</li>
+<li><strong>Display: 10.1" IPS, 1280×800</strong>, Android 14, TDDI fully-laminated.</li>
+<li><strong>Battery:</strong> 6000 mAh (acts as a built-in UPS for the face).</li>
+<li><strong>Radios:</strong> WiFi 2.4/5 GHz + BT 5.4. <strong>No cellular</strong> (keep any SIM7600 remote channel on the robot side, not the tablet).</li>
+<li><strong>Mics:</strong> dual mic with ANS + AEC (good). <strong>Front camera: 2 MP (weak).</strong></li>
+</ul>
+<h3 id="hard-constraints-this-imposes-on-the-tablet-app">Hard constraints this imposes on the tablet app</h3>
+<ul>
+<li><strong>2D Canvas only.</strong> No WebGL/3D, no heavy engines. Mali-G57 MC1 + 4 GB RAM is modest.</li>
+<li>Target <strong>30 fps sustained</strong>; degrade gracefully if thermals throttle.</li>
+<li><strong>Vanilla JS or a tiny lib.</strong> No React/Vue/Angular, no large bundles. Keep DOM tiny.</li>
+<li>Use a single <code>&lt;canvas&gt;</code> + <code>requestAnimationFrame</code>. Avoid per-frame allocations.</li>
+<li><strong>Face-position tracking does NOT use the tablet camera</strong> (too weak). Gaze targets are
+  computed on the Pi from Hailo and streamed to the tablet.</li>
+</ul>
+<hr>
+<h2 id="3-architecture">3. Architecture</h2>
+<pre><code>                         WiFi / LAN
+  ┌──────────────────────┐   WebSocket (ws://)   ┌───────────────────────────┐
+  │  Raspberry Pi 5       │◄─────────────────────►│  Tablet (P30T)            │
+  │  + Hailo-10           │                       │  Kiosk web app = FACE     │
+  │  Python orchestrator  │   Pi = server         │  Canvas 2D: eyes/mouth/   │
+  │  (existing)           │   Tablet = client     │  brows, gaze, lip-sync    │
+  │                       │                       │  + optional audio (ph.2)  │
+  │  + face_bridge (NEW)  │                       └───────────────────────────┘
+  └──────────┬────────────┘
+             │ UART/USB
+             ▼
+        ESP32 → robotic arm + (future) sensors
+</code></pre>
+<p><strong>Role split</strong>
+- <strong>Pi = brain.</strong> All AI, STT/TTS, decisions, gaze source (Hailo), arm control, watchdog,
+  Telegram — unchanged. Emits high-level face commands.
+- <strong>Tablet = face + screen.</strong> Pure renderer. Receives commands, draws expressions, tracks a
+  gaze target, animates the mouth from a viseme/amplitude stream, reports lightweight telemetry.</p>
+<p><strong>Why serve the web app FROM the Pi:</strong> to avoid https/ws mixed-content headaches, the Pi
+serves the static face app over <strong>plain HTTP</strong> on the LAN, and the tablet opens it in kiosk.
+The app then talks <code>ws://&lt;pi-host&gt;:&lt;port&gt;</code> <strong>same-origin</strong> — no mixed-content restriction,
+no TLS to manage on a LAN device. (Alternative: package the app locally on the tablet and
+point it at the Pi IP; same-origin HTTP is simpler.)</p>
+<hr>
+<h2 id="4-communication-protocol-websocket-json-messages">4. Communication protocol (WebSocket, JSON messages)</h2>
+<p>One WS connection. Messages are line-delimited JSON objects with a <code>type</code> field.
+Keep it small and forward-compatible (unknown fields ignored, unknown types logged &amp; dropped).</p>
+<h3 id="41-pi-tablet-commands-to-the-face">4.1 Pi → Tablet (commands to the face)</h3>
+<table>
+<thead>
+<tr>
+<th>type</th>
+<th>fields</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>emotion</code></td>
+<td><code>value</code> (enum), <code>intensity</code> 0–1, <code>transition_ms</code> (opt)</td>
+<td>set expression preset</td>
+</tr>
+<tr>
+<td><code>look_at</code></td>
+<td><code>x</code> −1..1, <code>y</code> −1..1</td>
+<td>gaze target (normalized; from Hailo)</td>
+</tr>
+<tr>
+<td><code>gaze_mode</code></td>
+<td><code>value</code>: <code>track</code>|<code>idle</code>|<code>center</code>|<code>scan</code></td>
+<td>how eyes behave when no explicit target</td>
+</tr>
+<tr>
+<td><code>speak_start</code></td>
+<td><code>duration_ms</code> (opt), <code>text</code> (opt caption)</td>
+<td>begin talking animation</td>
+</tr>
+<tr>
+<td><code>viseme</code></td>
+<td><code>level</code> 0–1</td>
+<td>streamed mouth-openness frame (~30–60/s)</td>
+</tr>
+<tr>
+<td><code>speak_end</code></td>
+<td>—</td>
+<td>stop talking, close mouth</td>
+</tr>
+<tr>
+<td><code>blink</code></td>
+<td>—</td>
+<td>manual blink (tablet also auto-blinks)</td>
+</tr>
+<tr>
+<td><code>state</code></td>
+<td><code>listening</code> bool, <code>wake_detected</code> bool, <code>busy</code> bool, ...</td>
+<td>ambient status → subtle cues</td>
+</tr>
+<tr>
+<td><code>display</code></td>
+<td><code>mode</code>: <code>face</code>|<code>camera_view</code>|<code>info</code>|<code>qr</code>, <code>payload</code> obj</td>
+<td>switch what the screen shows (ph.2 for non-face)</td>
+</tr>
+<tr>
+<td><code>ping</code></td>
+<td><code>ts</code></td>
+<td>heartbeat</td>
+</tr>
+</tbody>
+</table>
+<p><code>emotion.value</code> enum: <code>neutral</code>, <code>happy</code>, <code>curious</code>, <code>thinking</code>, <code>listening</code>, <code>confused</code>,
+<code>sad</code>, <code>alert</code>, <code>sleep</code>, <code>offline</code>.</p>
+<h3 id="42-tablet-pi-telemetry-events">4.2 Tablet → Pi (telemetry / events)</h3>
+<table>
+<thead>
+<tr>
+<th>type</th>
+<th>fields</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hello</code></td>
+<td><code>device</code>, <code>app_version</code>, <code>screen</code>:[w,h]</td>
+<td>on connect</td>
+</tr>
+<tr>
+<td><code>pong</code></td>
+<td><code>ts</code></td>
+<td>heartbeat reply</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td><code>battery</code> 0–100, <code>charging</code> bool, <code>fps</code>, <code>heap_mb</code> (opt)</td>
+<td>periodic (e.g. every 5 s)</td>
+</tr>
+<tr>
+<td><code>touch</code></td>
+<td><code>region</code> (e.g. <code>left_eye</code>,<code>menu</code>), <code>x</code>, <code>y</code></td>
+<td>user tapped the face</td>
+</tr>
+<tr>
+<td><code>imu</code></td>
+<td><code>accel</code>:[x,y,z], <code>gyro</code>:[x,y,z], <code>ts</code></td>
+<td>phase 2: motion/orientation/fall</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td><code>code</code>, <code>msg</code></td>
+<td>app-side error</td>
+</tr>
+</tbody>
+</table>
+<h3 id="43-heartbeat-resilience-mirror-the-existing-watchdog-philosophy">4.3 Heartbeat &amp; resilience (mirror the existing watchdog philosophy)</h3>
+<ul>
+<li>Pi sends <code>ping</code> every ~3 s; tablet replies <code>pong</code>. Missing N pongs ⇒ Pi watchdog marks the
+  <strong>face node</strong> unhealthy (new monitored component, additive).</li>
+<li>Tablet auto-reconnects with backoff; while disconnected it shows the <code>offline</code> emotion so the
+  robot visibly "knows" it lost its face.</li>
+<li>Tablet <code>status.battery</code> low ⇒ Pi can raise a normal watchdog/Telegram alert.</li>
+</ul>
+<hr>
+<h2 id="5-pi-side-face_bridge-module-new-additive">5. Pi side — <code>face_bridge</code> module (NEW, additive)</h2>
+<pre><code>face_bridge/
+  __init__.py
+  server.py     # asyncio WebSocket server, runs in its OWN thread
+  emitter.py    # FaceBridge: thread-safe API the existing orchestrator calls
+  visemes.py    # compute amplitude envelope from a TTS audio buffer
+  http_static.py# tiny static file server for the tablet web app (LAN, HTTP)
+</code></pre>
+<p><strong>Threading model (respect existing design):</strong> run the asyncio WS server in a dedicated thread.
+The orchestrator (in its own threads) calls a <strong>thread-safe</strong> <code>FaceBridge</code> API that pushes
+messages onto an <code>asyncio.Queue</code> via <code>call_soon_threadsafe</code>. No blocking of existing threads.</p>
+<p><strong>Emitter API the orchestrator calls (the entire integration surface):</strong></p>
+<pre><code class="language-python">face = FaceBridge(host=&quot;0.0.0.0&quot;, ws_port=8765, http_port=8080)
+face.start()                      # starts WS + static HTTP server threads
+
+face.set_emotion(&quot;curious&quot;, intensity=0.8)   # at existing state-change points
+face.look_at(x, y)                            # feed normalized Hailo face coords
+face.gaze_mode(&quot;track&quot;)                       # or &quot;idle&quot;/&quot;scan&quot; when no face seen
+face.set_state(listening=True, wake_detected=False)
+
+# lip-sync: wrap the existing TTS playback
+with face.speaking(text=&quot;Hello&quot;, audio_pcm=pcm_bytes, sample_rate=22050):
+    play_audio(pcm_bytes)         # existing playback; visemes stream automatically
+</code></pre>
+<p><strong><code>visemes.py</code>:</strong> compute a smoothed RMS envelope from the TTS PCM buffer, emit <code>viseme</code>
+frames at ~40 fps between <code>speak_start</code>/<code>speak_end</code>. (Envelope-driven mouth is the v1 approach;
+true phoneme visemes are optional later.)</p>
+<p><strong>Integration points to find in the existing repo (ask if unclear):</strong>
+1. where emotion/robot mood is decided → <code>set_emotion</code>
+2. where Hailo yields the primary face bbox/center → normalize to −1..1 → <code>look_at</code> / <code>gaze_mode</code>
+3. where TTS audio is produced and played → wrap with <code>face.speaking(...)</code>
+4. where the watchdog registers monitored components → add the face node + heartbeat status</p>
+<hr>
+<h2 id="6-tablet-side-kiosk-web-app-new">6. Tablet side — kiosk web app (NEW)</h2>
+<pre><code>face-app/
+  index.html
+  css/face.css
+  js/
+    main.js          # boot, canvas + RAF loop, wiring
+    ws.js            # connect, reconnect w/ backoff, heartbeat, message dispatch
+    face.js          # draw eyes, brows, mouth; owns the render loop
+    expressions.js   # emotion presets (eye shape, brow angle, color, mouth curve)
+    gaze.js          # smooth look_at interpolation; idle micro-saccades; scan mode
+    visemes.js       # mouth openness from viseme level, with attack/decay smoothing
+    diagnostics.js   # fps meter, battery (navigator.getBattery), status reporter
+  assets/
+</code></pre>
+<p><strong>Rendering guidance</strong>
+- Single canvas sized to devicePixelRatio-aware 1280×800; clear + redraw per frame.
+- Eyes: parametric (pupil position, lid openness, shape morph per emotion). Pupils lerp toward
+  the gaze target; add subtle idle drift + occasional micro-saccades so it never looks frozen.
+- Auto-blink every 3–6 s (randomized), faster when <code>listening</code>.
+- Mouth: openness driven by latest <code>viseme.level</code>, smoothed (fast attack, slower decay);
+  fully closed on <code>speak_end</code>/silence.
+- Emotion transitions: interpolate parameters over <code>transition_ms</code> (default ~250 ms).
+- <strong>Perf:</strong> no per-frame object allocation; precompute gradients; cap DPR if fps drops;
+  pause rendering when <code>display.mode !== "face"</code> if a static screen is shown.</p>
+<p><strong>Connection behavior</strong>
+- On load: <code>hello</code>. Reconnect with exponential backoff (cap ~5 s). Reply to <code>ping</code> with <code>pong</code>.
+- On disconnect: show <code>offline</code> emotion (e.g., dimmed, half-lidded eyes) so the loss is visible.
+- Send <code>status</code> every ~5 s (battery, charging, fps).</p>
+<hr>
+<h2 id="7-kiosk-setup-on-the-p30t-android-14">7. Kiosk setup on the P30T (Android 14)</h2>
+<ul>
+<li>Keep screen awake: prevent sleep (kiosk app setting or <code>WakeLock</code>); set display timeout to never while docked/charging.</li>
+<li>Fullscreen, no nav/status bar, disable gestures. Recommended: <strong>Fully Kiosk Browser</strong>
+  (autostart on boot, load URL, keep-awake, motion/PIR options). Alternative: Chrome PWA fullscreen.</li>
+<li><strong>URL:</strong> point kiosk at <code>http://&lt;pi-host&gt;:8080/</code> (app served by the Pi). App opens
+  <code>ws://&lt;pi-host&gt;:8765</code> same-origin.</li>
+<li>Autostart the kiosk app on boot; auto-reload the page on crash.</li>
+<li>Mount the tablet as the robot's face; keep it on a charger (battery = UPS, but avoid full drain).</li>
+</ul>
+<hr>
+<h2 id="8-build-order-milestones-acceptance-criteria">8. Build order (milestones + acceptance criteria)</h2>
+<ul>
+<li><strong>M0 — Link up.</strong> Pi serves the app; tablet loads it in kiosk; WS connects; heartbeat + auto-
+  reconnect. A static face renders.
+  <em>Accept:</em> reboot the tablet → face returns and reconnects within ~10 s; kill/restore WiFi →
+  recovers automatically; Pi logs the face node up/down.</li>
+<li><strong>M1 — Expressions.</strong> All emotion presets render with smooth transitions; auto-blink + idle
+  micro-movements.
+  <em>Accept:</em> a Pi test script cycles every emotion; 30 fps sustained; transitions look smooth.</li>
+<li><strong>M2 — Gaze.</strong> Pi forwards Hailo face center → eyes track; <code>idle</code>/<code>scan</code> when no face.
+  <em>Accept:</em> operator moves in front of the robot → eyes follow with low perceived lag; smooth,
+  no jitter; graceful idle when the face leaves frame.</li>
+<li><strong>M3 — Lip-sync.</strong> <code>speak_start</code> → <code>viseme</code> stream → <code>speak_end</code>; mouth moves with speech and
+  closes on silence.
+  <em>Accept:</em> spoken output looks synced; mouth doesn't move during silence.</li>
+<li><strong>M4 — Resilience + telemetry.</strong> Battery/fps <code>status</code> to Pi; <code>offline</code> face on disconnect;
+  face node integrated into the watchdog; <code>touch</code> events delivered.
+  <em>Accept:</em> pull WiFi → tablet shows offline face, Pi watchdog flags the node, both recover;
+  low battery raises a normal alert.</li>
+</ul>
+<h3 id="phase-2-later-optional">Phase 2 (later, optional)</h3>
+<ul>
+<li>Move <strong>TTS audio playback to the tablet</strong> (sound comes from the face → better AV-sync). Pi
+  sends audio + timing; tablet plays and lip-syncs locally.</li>
+<li><strong>IMU telemetry</strong> (<code>imu</code>) as another sensor into the watchdog: detect pushed/moved/fallen.</li>
+<li><strong>Display modes:</strong> <code>camera_view</code> (show what Hailo sees), <code>info</code> dashboard, <code>qr</code> for quick setup.</li>
+<li><strong>Telegram → face</strong>: trigger expressions/messages on the face via existing Telegram commands
+  (trivial once the emitter exists).</li>
+</ul>
+<hr>
+<h2 id="9-assumptions-decisions-override-any-of-these">9. Assumptions &amp; decisions (OVERRIDE ANY OF THESE)</h2>
+<ol>
+<li><strong>Transport = WebSocket</strong>, Pi = server, tablet = client, JSON messages. <em>(Alt: MQTT if you
+   already run a broker — say so and I'll swap the bridge.)</em></li>
+<li><strong>Gaze source = Hailo on the Pi</strong>, not the tablet's 2 MP camera.</li>
+<li><strong>Lip-sync = amplitude envelope</strong> streamed from the Pi; <strong>audio stays on the Pi in v1</strong>.</li>
+<li><strong>Face style = expressive robot eyes in 2D Canvas.</strong> <em>(Alt: anime/large-eye style — one flag.)</em></li>
+<li><strong>App served over HTTP from the Pi</strong>, <code>ws://</code> same-origin (no TLS on the LAN).</li>
+<li><strong>Pi orchestrator = Python, threaded</strong>; the bridge runs asyncio in its own thread with a
+   thread-safe emitter — no changes to existing threads.</li>
+<li>Tablet app = <strong>vanilla JS + Canvas 2D</strong>, 30 fps target, no heavy frameworks.</li>
+</ol>
+<p>If any of these is wrong for your setup, change it here before implementation — everything
+downstream (module layout, protocol) follows from these choices.</p>
+</div>
+</body>
+</html>

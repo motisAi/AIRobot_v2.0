@@ -1,0 +1,590 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hardware — Wiring &amp; Connection Map (canonical)</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="hardware-wiring-connection-map-canonical">Hardware — Wiring &amp; Connection Map (canonical)</h1>
+<p><em>The single source of truth for every physical connection on Stella: ports, pins, buses,
+power and the config keys that depend on them. Update it whenever something is plugged in,
+moved or rewired. Other docs (<code>bom.md</code>, <code>../schematics/system-overview.md</code>,
+<code>../firmware/hand-esp32.md</code>, the briefs) describe parts and data-flow; <strong>wiring lives here</strong>.</em></p>
+<p>Last verified: camera, mics, fan, eyes pinout, network on <strong>2026-10-27</strong>; hand on 2026-08-15.
+Items marked <strong>⚠ verify</strong> were taken from datasheets/overlays, not measured on the robot.</p>
+<hr>
+<h2 id="1-compute-host">1. Compute / host</h2>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SBC</td>
+<td>Raspberry Pi 5 (4 GB)</td>
+</tr>
+<tr>
+<td>AI accelerator</td>
+<td>Hailo-10H NPU on PCIe/M.2 (<code>/dev/hailo0</code>, <code>h10-hailort 5.1.1</code>) — offline LLM only; vision runs on the CPU</td>
+</tr>
+<tr>
+<td>OS</td>
+<td>Ubuntu Server 24.04 (noble, py3.12), headless. <strong>Note:</strong> apt sources also carry the Raspberry Pi Debian repos — never let apt cross-grade core libs (see <code>../briefs/stella-camera-setup-ubuntu.md</code>)</td>
+</tr>
+<tr>
+<td>Python</td>
+<td>venv <code>~/AIRobot_v2.0/venv</code> (<code>include-system-site-packages = true</code>, plus <code>zz_usrlocal_dist.pth</code> for the from-source libcamera bindings)</td>
+</tr>
+<tr>
+<td>Service</td>
+<td>systemd <code>airobot</code> (Restart=on-failure, RestartSec=5)</td>
+</tr>
+<tr>
+<td>Access</td>
+<td>user <code>moti_ai</code>; mDNS <code>motiai.local</code>; laptop ssh alias <strong><code>stella</code></strong> (IPv4 pinned). Old alias <code>rpi5</code> points at a dead IP</td>
+</tr>
+<tr>
+<td>Cooling</td>
+<td>4-wire fan on the <strong>J17 fan header</strong> (5V / GND / PWM / TACH). Controller enabled with <code>dtparam=cooling_fan=on</code> in <code>/boot/firmware/config.txt</code> (+ <code>pwm-fan</code> in modules-load). ~2950 RPM at state 1/4; fan is <strong>off below ~50 °C by design</strong></td>
+</tr>
+<tr>
+<td>PSU</td>
+<td>USB-C, official 27 W recommended (brown-outs seen with weaker supplies)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="pi-5-pin-port-allocation">Pi 5 pin / port allocation</h3>
+<table>
+<thead>
+<tr>
+<th>Pi 5 resource</th>
+<th>Used by</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>CSI camera connector</strong> (CAM/DISP ⚠ verify which of the two)</td>
+<td>Camera Module 3 <strong>Wide NoIR</strong></td>
+<td>see §2</td>
+</tr>
+<tr>
+<td><strong>I²S / PCM</strong> GPIO18 (BCLK) · GPIO19 (LRCLK/WS) · GPIO20 (DIN) · GPIO21 (DOUT)</td>
+<td>I²S audio HAT (2× INMP441 + MAX98357A)</td>
+<td>overlay <code>googlevoicehat-soundcard</code>; see §3</td>
+</tr>
+<tr>
+<td>GPIO16 ⚠ verify</td>
+<td>MAX98357A <strong>SD_MODE</strong> (amp enable) if driven by the overlay</td>
+<td>otherwise tie SD_MODE high</td>
+</tr>
+<tr>
+<td><strong>J17</strong> 4-pin fan header</td>
+<td>cooling fan</td>
+<td>see above</td>
+</tr>
+<tr>
+<td>PCIe (M.2 HAT)</td>
+<td>Hailo-10H</td>
+<td>do not disturb</td>
+</tr>
+<tr>
+<td><code>dtparam=i2c_arm=on</code>, <code>dtparam=spi=on</code></td>
+<td>nothing on the Pi side today</td>
+<td><strong>The PCA9685 is NOT on the Pi</strong> — it hangs off the hand's ESP32 (§4)</td>
+</tr>
+<tr>
+<td>USB-A (×4)</td>
+<td>ESP32-S3 hand (<code>/dev/ttyACM0</code>), USB PnP mic dongle, RobotNet WiFi dongle, ESP32-C3 eyes (new)</td>
+<td>see §4, §3, §6, §5</td>
+</tr>
+<tr>
+<td>HDMI</td>
+<td>optional monitor; HDMI audio is only the fallback output</td>
+<td></td>
+</tr>
+<tr>
+<td><code>eth0</code></td>
+<td>unused (no carrier) — plugging Ethernet in has caused brown-outs on weak PSUs</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="2-camera-raspberry-pi-camera-module-3-wide-noir-csi">2. Camera — Raspberry Pi Camera Module 3 Wide NoIR (CSI)</h2>
+<pre><code>Camera Module 3 Wide NoIR (IMX708, 120° FOV, AF actuator dw9807) ──ribbon──&gt; Pi 5 CSI (CAM/DISP ⚠ verify 0/1)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sensor</td>
+<td><code>imx708_wide_noir</code> — <strong>no IR-cut filter</strong> (great in low light / with IR illumination; daylight colours skew warm). Tuning file <code>imx708_wide_noir.json</code> auto-selected</td>
+</tr>
+<tr>
+<td>Mount</td>
+<td>module sits <strong>upside-down</strong> in the head → <code>camera_hflip: true</code>, <code>camera_vflip: true</code> (= 180°). <strong>After ANY re-mount run <code>venv/bin/python tools/camera_orientation_check.py</code></strong> with someone in front of her: on 2026-10-31 she came back inverted after a re-mount and saw nobody (neither YuNet nor dlib finds an upside-down face); turning the module 180° fixed it</td>
+</tr>
+<tr>
+<td>Driver stack</td>
+<td>kernel <code>imx708</code> + <code>rp1_cfe</code> + <code>pisp_be</code>; userspace <strong>libcamera 0.7 built from Raspberry Pi's fork into <code>/usr/local</code></strong> (Ubuntu's apt libcamera cannot drive it); <code>picamera2 0.3.38</code> in the venv (optional DRM/Qt previews guarded)</td>
+</tr>
+<tr>
+<td>In code</td>
+<td><code>parts_used/camera_usb.py</code> <code>CameraManager</code>, backend <code>picamera2</code>, 1280×720 BGR frames, continuous AF; USB/OpenCV path kept as fallback (<code>camera_backend: auto</code>)</td>
+</tr>
+<tr>
+<td>Config</td>
+<td><code>hardware.camera_backend</code>, <code>camera_resolution</code>, <code>camera_hflip/vflip</code>, <code>camera_swap_rb</code> (false — colours verified)</td>
+</tr>
+<tr>
+<td>Has a mic?</td>
+<td><strong>No.</strong> The old USB webcam's built-in mic was the wake mic; see §3</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="3-audio-i2s-hat-command-mic-speaker-and-usb-mic-wake">3. Audio — I²S HAT (command mic + speaker) and USB mic (wake)</h2>
+<p>Two mics, two roles, <strong>two physical devices</strong> (bug_055 — never share one mic for both roles).
+Roles are canonical in <code>../architecture/stella-architecture.md §4</code>; the physical map is here.</p>
+<h3 id="i2s-hat-2-inmp441-microphones-max98357a-amplifier-voicehat">I²S HAT — 2× INMP441 microphones + MAX98357A amplifier ("voicehat")</h3>
+<p>ALSA card <code>snd_rpi_googlevoicehat</code> (overlay <code>dtoverlay=googlevoicehat-soundcard</code>). Role: <strong>COMMAND mic</strong> (STT) and <strong>speaker</strong> (TTS).</p>
+<table>
+<thead>
+<tr>
+<th>HAT part</th>
+<th>Pin</th>
+<th>Pi 5 pin (BCM)</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>INMP441 (both)</td>
+<td>VDD</td>
+<td>3V3</td>
+<td></td>
+</tr>
+<tr>
+<td>INMP441 (both)</td>
+<td>GND</td>
+<td>GND</td>
+<td></td>
+</tr>
+<tr>
+<td>INMP441 (both)</td>
+<td>SCK</td>
+<td><strong>GPIO18</strong> (PCM_CLK / BCLK)</td>
+<td>shared</td>
+</tr>
+<tr>
+<td>INMP441 (both)</td>
+<td>WS</td>
+<td><strong>GPIO19</strong> (PCM_FS / LRCLK)</td>
+<td>shared</td>
+</tr>
+<tr>
+<td>INMP441 (both)</td>
+<td>SD</td>
+<td><strong>GPIO20</strong> (PCM_DIN)</td>
+<td>both mics share the data line</td>
+</tr>
+<tr>
+<td>INMP441 #1</td>
+<td>L/R</td>
+<td>GND</td>
+<td>= left channel</td>
+</tr>
+<tr>
+<td>INMP441 #2</td>
+<td>L/R</td>
+<td>3V3</td>
+<td>= right channel (⚠ verify which is which on your board)</td>
+</tr>
+<tr>
+<td>MAX98357A</td>
+<td>VIN</td>
+<td>5V</td>
+<td></td>
+</tr>
+<tr>
+<td>MAX98357A</td>
+<td>GND</td>
+<td>GND</td>
+<td></td>
+</tr>
+<tr>
+<td>MAX98357A</td>
+<td>BCLK</td>
+<td><strong>GPIO18</strong></td>
+<td>shared with the mics</td>
+</tr>
+<tr>
+<td>MAX98357A</td>
+<td>LRC</td>
+<td><strong>GPIO19</strong></td>
+<td>shared</td>
+</tr>
+<tr>
+<td>MAX98357A</td>
+<td>DIN</td>
+<td><strong>GPIO21</strong> (PCM_DOUT)</td>
+<td></td>
+</tr>
+<tr>
+<td>MAX98357A</td>
+<td>SD_MODE</td>
+<td>GPIO16 ⚠ verify / or tied high</td>
+<td>overlay-driven enable</td>
+</tr>
+<tr>
+<td>MAX98357A</td>
+<td>GAIN</td>
+<td>per build</td>
+<td></td>
+</tr>
+<tr>
+<td>Speaker</td>
+<td>+ / −</td>
+<td>amp output</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Config: <code>hardware.speech_microphone_name: "voicehat"</code>, <code>speech_microphone_rate: 48000</code>,
+<code>audio_output_name: "voicehat"</code>, <code>audio_output_device: "auto"</code>.</p>
+<h3 id="usb-mic-dongle-wake-word-temporary">USB mic dongle — WAKE word (temporary)</h3>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Device</td>
+<td>"USB PnP Sound Device" (C-Media), ALSA card id <code>Device</code>, by-id <code>usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device*</code>, native 44.1 kHz</td>
+</tr>
+<tr>
+<td>Role</td>
+<td><strong>WAKE</strong> mic (Vosk "stella"/"hey stella") — stand-in since the camera mic went away; weak far-field pickup / AGC (bug_053). Replace with a 2nd INMP441 when it arrives</td>
+</tr>
+<tr>
+<td>Config</td>
+<td><code>hardware.wake_word_microphone_name: "USB PnP Sound Device"</code>, <code>wake_mic_id: "usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device*"</code>, <code>microphone_rate: 44100</code></td>
+</tr>
+</tbody>
+</table>
+<p>Audio out fallback: HDMI (<code>vc4hdmi0/1</code>, auto-detected) when <code>audio_output_name</code> is null.</p>
+<hr>
+<h2 id="4-robotic-hand-esp32-s3-pca9685-unchanged">4. Robotic hand — ESP32-S3 + PCA9685 (unchanged)</h2>
+<pre><code>Pi 5 ──USB (CH343)──&gt; ESP32-S3-WROOM-1 ──I2C 0x40──&gt; PCA9685 ──PWM ~50 Hz──&gt; 5× finger servos
+                                                        ▲ V+ from a SEPARATE 5–6 V supply, common GND
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Link</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Pi → ESP32-S3</td>
+<td>USB serial <code>/dev/ttyACM0</code>, <strong>115200</strong>, newline ASCII (<code>firmware/hand/hand.ino</code>, driver <code>parts_used/esp32_hand.py</code>)</td>
+</tr>
+<tr>
+<td>ESP32-S3 → PCA9685</td>
+<td>I²C addr <strong>0x40</strong>, <strong>SDA = GPIO 8, SCL = GPIO 9</strong> (on the S3)</td>
+</tr>
+<tr>
+<td>PCA9685 power</td>
+<td>logic VCC from ESP32 3V3; <strong>servo V+ from an external 5–6 V supply, never the Pi</strong>; common ground</td>
+</tr>
+<tr>
+<td>Channels</td>
+<td>0 pinky · 1 ring · 2 middle · 3 index · 4 thumb (open <code>{1500,1500,1500,1500,2000}</code> · closed <code>{2600,2600,2600,2600,500}</code> µs)</td>
+</tr>
+<tr>
+<td>Boot</td>
+<td>homes to a closed fist (~2.5 s). Stop <code>airobot</code> before reflashing (it holds the port)</td>
+</tr>
+</tbody>
+</table>
+<p>Protocol and gotchas: <code>../firmware/hand-esp32.md</code>.</p>
+<hr>
+<h2 id="5-hand-eyes-one-esp32-s3-corrected-2026-10-31">5. Hand + Eyes — ONE ESP32-S3 (corrected 2026-10-31)</h2>
+<p>The hand and the eyes are <strong>the same ESP32-S3</strong> (not a separate C3 — that was wrong).
+One board drives the PCA9685 (hand) over I²C <strong>and</strong> the two GC9D01 eye LCDs over SPI.</p>
+<pre><code>Pi 5 ──USB 115200──&gt; ESP32-S3 ──I2C  (GPIO8 SDA / GPIO9 SCL)──&gt; PCA9685 @0x40 ──&gt; 5 hand servos
+                              └──SPI (DIN4/CLK7/DC10)──────────&gt; 2× GC9D01 160×160 eyes
+</code></pre>
+<p>The S3 DevKit has <strong>two type-C ports</strong>: a native-USB one (<code>usb-Espressif_*</code>) and a CH343
+UART one (<code>usb-1a86_*</code>, GPIO43/44). We drive everything over <strong>one</strong> of them; the firmware's
+<code>CDC_ON_BOOT</code> picks which (<code>0</code> = CH343/UART0, <code>1</code> = native-USB CDC). Current build: CH343
+(the hand flashes and runs reliably there). MAC 30:ED:A0:BD:2E:64.</p>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Module pin</th>
+<th>ESP32-S3 GPIO</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Hand I²C</td>
+<td>SDA</td>
+<td><strong>GPIO8</strong></td>
+<td>PCA9685 @0x40 (scan also shows 0x70 all-call)</td>
+</tr>
+<tr>
+<td>Hand I²C</td>
+<td>SCL</td>
+<td><strong>GPIO9</strong></td>
+<td></td>
+</tr>
+<tr>
+<td>Eyes SPI</td>
+<td>DIN/SDA</td>
+<td><strong>GPIO4</strong></td>
+<td><code>TFT_MOSI 4</code> (shared)</td>
+</tr>
+<tr>
+<td>Eyes SPI</td>
+<td>CLK/SCL</td>
+<td><strong>GPIO7</strong></td>
+<td><code>TFT_SCLK 7</code> (shared)</td>
+</tr>
+<tr>
+<td>Eyes</td>
+<td>DC</td>
+<td><strong>GPIO10</strong></td>
+<td><code>TFT_DC 10</code> — off 8/9 so the PCA keeps them</td>
+</tr>
+<tr>
+<td>Eyes</td>
+<td>RST1 (left)</td>
+<td><strong>GPIO11</strong></td>
+<td><code>TFT_RST 11</code> — NOT GPIO0 (S3 boot-strap → boot loop)</td>
+</tr>
+<tr>
+<td>Eyes</td>
+<td>RST2 (right)</td>
+<td><strong>GPIO5</strong></td>
+<td><code>TFT2_RST 5</code></td>
+</tr>
+<tr>
+<td>Eyes</td>
+<td>CS1 (left)</td>
+<td><strong>GPIO2</strong></td>
+<td>sketch toggles CS (<code>TFT_CS -1</code>)</td>
+</tr>
+<tr>
+<td>Eyes</td>
+<td>CS2 (right)</td>
+<td><strong>GPIO6</strong></td>
+<td></td>
+</tr>
+<tr>
+<td>Eyes</td>
+<td>BL1 (left)</td>
+<td><strong>GPIO1</strong></td>
+<td>HIGH = on</td>
+</tr>
+<tr>
+<td>Eyes</td>
+<td>BL2 (right)</td>
+<td><strong>GPIO3</strong></td>
+<td>HIGH = on</td>
+</tr>
+<tr>
+<td>Power</td>
+<td>VCC</td>
+<td><strong>3V3</strong></td>
+<td>module is 3.3V/5V; logic 3.3V. Use a GOOD 3V3 pin — a dead one read 2.6 V and nothing lit</td>
+</tr>
+<tr>
+<td>Power</td>
+<td>GND</td>
+<td>GND</td>
+<td>shared</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>Pin trade-off:</strong> eyes DC/RST1 sit on GPIO10/11 so the PCA9685 keeps GPIO8/9. The <em>other</em>
+option is Waveshare's reference DC=9/RST1=8 with the PCA I²C moved to <strong>GPIO12/13</strong> (ESP32 I²C
+remaps to any free pin). Pick one; don't let the eyes and the PCA share 8/9.</p>
+</blockquote>
+<p><strong>Firmware:</strong> <code>firmware/stella_s3/stella_s3.ino</code> = combined hand + eyes, one serial line, routed by
+first char (lowercase words → hand; <code>G/B/C/E/P</code> → eyes). Hand protocol: <code>fist|open|hello|middle|
+point|peace|thumbs|count N|set 11111|f/m/s &lt;ch&gt; …|speed|off|pos</code>. Eyes: <code>G x y</code>·<code>B</code>·<code>C</code>·<code>E n</code>·<code>P n</code>.
+Vendored display driver at <code>firmware/libraries/TFT_eSPI</code>. Build/flash recipe: <code>firmware/README.md</code>.</p>
+<blockquote>
+<p>⚠ <strong>Must build with arduino-esp32 2.0.x</strong> (PlatformIO <code>platform = espressif32@6.5.0</code>, or Arduino IDE
+ESP32 core <strong>2.0.x</strong>). On arduino-esp32 <strong>3.x</strong> the vendored TFT_eSPI 2.5.0 crashes in <code>tft.init()</code>
+(<code>begin_tft_write</code>, StoreProhibited) and boot-loops — which looked just like "dim blue, no image."
+Flash from a PC with <strong>esptool 5.x</strong> (4.5.1 fails the baud change over the S3 USB-serial/JTAG).</p>
+<p>⚠ <strong>Status 2026-10-31:</strong> hand WORKS (PCA on 8/9, homes to fist). Eyes not yet confirmed lit — the
+boot-loop crash above masked everything; retest after the arduino-2.x rebuild (the panels/wiring may
+be fine). The user also planned to swap this S3 in case it is damaged (it has a dead 3V3 pin + prior short).</p>
+</blockquote>
+<p>Pi side: <code>modules/vision/eye_tracker.py</code> (<code>EyeController</code>), hand <code>parts_used/esp32_hand.py</code>; one shared
+serial link when both are enabled (<code>config hardware.eyes_*</code>, <code>hand.serial_port</code>).</p>
+<p>Power: ~100–200 mA from the Pi's USB is fine for the eyes alone.</p>
+<hr>
+<h2 id="6-network">6. Network</h2>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Home WiFi client</td>
+<td>onboard radio (MAC <code>88:a2:9e:ab:1a:d9</code>), name <strong><code>wlan0</code> or <code>wlan1</code></strong> depending on boot order (bug_052). SSID <strong>"Arik hadash at moti"</strong> (old "Arik -2.4G-ext" kept as fallback). Netplan gives it a <strong>static 10.100.102.133/24</strong>, gw 10.100.102.1, DNS 10.100.102.1 + 1.1.1.1 (the extender does not relay DHCP) and keeps <code>dhcp4: true</code>. wpa units have a retry drop-in (<code>/etc/systemd/system/netplan-wpa-wlan{0,1}.service.d/</code>)</td>
+</tr>
+<tr>
+<td>RobotNet AP</td>
+<td>TP-Link Archer T2U Plus (RTL8821AU, <code>8821au</code> DKMS) = <code>wlx984827df22bb</code>, <strong>10.0.0.1/24</strong>, not managed by netplan — <strong>never touch</strong>; it is also the <strong>recovery path</strong> (laptop → RobotNet → <code>ssh moti_ai@10.0.0.1</code>)</td>
+</tr>
+<tr>
+<td>mDNS</td>
+<td><code>motiai.local</code> (avahi) — on the laptop use IPv4 (<code>ssh -4</code>) or the <code>stella</code> alias</td>
+</tr>
+<tr>
+<td>Ports</td>
+<td>dashboard <code>:5000</code>, face bridge <code>:8080</code> (ws <code>/ws</code>), hailo-ollama <code>:8000</code>, mosquitto <code>:1883</code></td>
+</tr>
+<tr>
+<td>Router to-do</td>
+<td>add a DHCP reservation <code>88:a2:9e:ab:1a:d9 → 10.100.102.133</code></td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="7-planned-not-yet-wired">7. Planned / not yet wired</h2>
+<table>
+<thead>
+<tr>
+<th>Subsystem</th>
+<th>Wiring plan</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>360° LiDAR</strong> WitMotion/Gouke COIN-D6 (UART 230400)</td>
+<td><strong>Option A (recommended):</strong> ZH1.5 cable → CH340 USB adapter → Pi USB → <code>/dev/ttyUSB0</code>. <strong>Option B:</strong> direct UART — 5V (yellow) → pin 2/4, GND (white) → pin 6, LiDAR TXD (red) → Pi RXD <strong>GPIO15</strong> (pin 10), LiDAR RXD (black) → Pi TXD <strong>GPIO14</strong> (pin 8); enable UART, free the console. Spin: <code>AA 55 F0 0F</code>, stop <code>AA 55 F5 0A</code>. Power it from a powered hub / separate 5 V (motor surge)</td>
+<td><code>../briefs/stella-eyes-lidar/WIRING.md</code>, driver <code>modules/navigation/lidar_coin_d6.py</code></td>
+</tr>
+<tr>
+<td><strong>Head pan/tilt</strong> 2× MG90S</td>
+<td>PCA9685 <strong>on the eyes' ESP32-C3</strong> (I²C GPIO8/9), channels 0 pan / 1 tilt; software limits ±60° / ±30°; camera mounted ON the head</td>
+<td><code>../briefs/stella-eyes-head-arm-brief.md</code></td>
+</tr>
+<tr>
+<td><strong>Arm (10 DOF)</strong></td>
+<td>same PCA9685 (or a 2nd at 0x41): 2 shoulder pan/3 tilt/4 elbow/5 wrist pitch/6 wrist roll/7–11 fingers; ArUco 2 cm marker on the hand; external servo PSU</td>
+<td>brief above</td>
+</tr>
+<tr>
+<td>2nd <strong>INMP441</strong></td>
+<td>replaces the USB wake mic (I²S, shares SCK/WS, own SD or L/R pairing)</td>
+<td>§3</td>
+</tr>
+<tr>
+<td>Wheels / motors, IMU, encoders, ultrasonic</td>
+<td>ESP32 motor controller over WiFi (RobotNet) — TBD</td>
+<td><code>navigation</code> config (all <code>false</code>)</td>
+</tr>
+<tr>
+<td>SIM7600X 4G</td>
+<td>not fitted (<code>/dev/ttyAMA1</code> reserved in config)</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="8-change-log">8. Change log</h2>
+<ul>
+<li><strong>2026-10-31</strong> — Camera found inverted after a re-mount (both face detectors blind) → module turned 180°; <code>tools/camera_orientation_check.py</code> and <code>tools/face_diag.py</code> added. Master re-enrolled with the CSI camera (<code>tools/reenroll.py</code>, 14 samples, faces 104–391 px). Liveness (blink) gate added (<code>modules/vision/liveness.py</code>): a photo no longer unlocks master mode, the guard or enrolment.</li>
+<li><strong>2026-10-27</strong> — USB webcam removed → Camera Module 3 Wide NoIR on CSI (libcamera from source). Wake mic → USB PnP dongle (temporary). Fan on J17 enabled. Home WiFi switched to "Arik hadash at moti" with static IP + wpa retry fix. Eyes (ESP32-C3 + dual GC9D01) pinout finalised; GPIO8/9 reserved for the PCA9685.</li>
+<li><strong>2026-09-26</strong> — audio/service/camera verification (USB era).</li>
+<li><strong>2026-08-15</strong> — hand wiring verified; classic ESP32 replaced by ESP32-S3 after a short.</li>
+</ul>
+</div>
+</body>
+</html>

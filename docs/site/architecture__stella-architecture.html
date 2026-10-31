@@ -1,0 +1,839 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stella — Architecture (current)</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="stella-architecture-current">Stella — Architecture (current)</h1>
+<h2 id="0-status">0. Status</h2>
+<blockquote>
+<p><strong>This is the only current architecture document.</strong>
+Superseded: <code>archive/stella-architecture-2026-09-13.md</code> and <code>archive/stella-architecture-2026-09-19.md</code>
+(both moved to <code>docs/architecture/archive/</code> with a SUPERSEDED banner) and <code>docs/architecture.md</code> (deleted).
+This file is updated <strong>in the same commit</strong> as any change to a device assignment, a thread ownership or a
+public interface. History lives in <code>bug_report/</code> and <code>docs/decisions/log.md</code>, not here.</p>
+<p>Last verified against commit <code>a2e3229</code> on 2026-09-26 (live journal, <code>systemctl show airobot -p NRestarts</code> = 0
+since 20:26). Written for the 2026-09-27 deep clean. Items tagged <strong>[done 2026-09-27]</strong> landed that day (dead code 0e01175/ed47922, docs 750d2df, audio hardening 587f965); the few still tagged <strong>[planned]</strong> are
+are decided but were not yet in <code>a2e3229</code> when this was verified; everything else describes the running code.</p>
+</blockquote>
+<hr>
+<h2 id="1-what-stella-is">1. What Stella is</h2>
+<p>A Raspberry Pi 5 robot that listens, talks, sees, remembers people, controls the house and moves a hand.
+One Python process (<code>main.py</code>) under one systemd unit (<code>airobot</code>).</p>
+<table>
+<thead>
+<tr>
+<th>Part</th>
+<th>Exactly what is fitted</th>
+<th>Owner in code</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Compute</td>
+<td>Raspberry Pi 5, Ubuntu Server 24.04 aarch64, headless, user <code>moti_ai</code>, SSH alias <code>rpi5</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td>NPU</td>
+<td>Hailo-10H (PCIe/M.2), driver <code>hailo1x_pci</code> (DKMS, <code>/dev/hailo0</code>). <strong>Serves only the offline LLM</strong> (<code>qwen2.5-instruct:1.5b</code> via the <code>hailo-ollama</code> service on <code>:8000</code>). Object detection runs on the <strong>CPU</strong> (OpenCV-DNN, <code>data/models/yolov8n.onnx</code>) because the pip <code>hailort</code> wheel is ABI-broken against HailoRT 5.1.1 — stated explicitly so nobody "fixes" vision by touching the NPU.</td>
+<td><code>modules/ai/ai_engine.py</code> (LLM), <code>parts_used/hailo_10h.py</code> (detector, CPU fallback path is the live path)</td>
+</tr>
+<tr>
+<td>Camera</td>
+<td>USB UVC webcam "Signo Camera WB-400 Auto Focus Camera" with a <strong>built-in mic</strong> (ALSA card id <code>Camera</code>)</td>
+<td><code>parts_used/camera_usb.py</code> <code>CameraManager</code></td>
+</tr>
+<tr>
+<td>Wake mic</td>
+<td>the camera's built-in mic (see §4)</td>
+<td><code>modules/audio/wake_word.py</code></td>
+</tr>
+<tr>
+<td>Command mic</td>
+<td>"USB PnP Sound Device" (C-Media dongle, ALSA card id <code>Device</code>) (see §4)</td>
+<td><code>modules/audio/speech_recognition.py</code></td>
+</tr>
+<tr>
+<td>Audio out</td>
+<td>HDMI (<code>vc4hdmi0</code> / <code>vc4hdmi1</code>, auto-detected); optional BT speaker "AR-SPJ"</td>
+<td><code>modules/audio/text_to_speech.py</code></td>
+</tr>
+<tr>
+<td>Hand</td>
+<td>ESP32-S3-WROOM-1 + PCA9685 + 5 servos, USB serial <code>/dev/ttyACM0</code> @115200</td>
+<td><code>parts_used/esp32_hand.py</code> <code>Hand</code></td>
+</tr>
+<tr>
+<td>MCU bridge</td>
+<td>generic real-world command sink (serial / network / null), <code>microcontroller.connected: false</code> today (log-only)</td>
+<td><code>parts_used/microcontroller_bridge.py</code></td>
+</tr>
+<tr>
+<td>Phone link</td>
+<td>Telegram bot (two-way chat, alerts, voice notes, YES/NO flows)</td>
+<td><code>modules/comms/telegram_bridge.py</code></td>
+</tr>
+<tr>
+<td>Smart home</td>
+<td>Tuya plug (local key), Sensibo AC (cloud), MQTT hub (mosquitto on the Pi, <code>:1883</code>, 0 devices configured)</td>
+<td><code>modules/smart_home/</code></td>
+</tr>
+<tr>
+<td>Screen face</td>
+<td><code>face_bridge/</code> — HTTP + WebSocket on <strong><code>:8080</code></strong> (ws path <code>/ws</code>), shown on a PC/tablet on voice command</td>
+<td><code>face_bridge/bridge.py</code></td>
+</tr>
+<tr>
+<td>Dashboard</td>
+<td><code>modules/web/dashboard.py</code> on <code>:5000</code> (camera, conversation, guard)</td>
+<td>—</td>
+</tr>
+<tr>
+<td>WiFi</td>
+<td>onboard radio = home WiFi client; TP-Link Archer T2U Plus (RTL8821AU, <code>8821au</code> DKMS) = "RobotNet" AP 10.0.0.1/24</td>
+<td><code>parts_used/wifi_adapter.py</code>, <code>robotnet-*.service</code> (system)</td>
+</tr>
+<tr>
+<td>RC toy</td>
+<td>stub, <code>rc_toy.connected: false</code></td>
+<td><code>parts_used/rc_toy.py</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Not fitted / not used (do not document as present):</strong> SIM7600X 4G modem, IMU, wheel encoders, wheels, lidar,
+ultrasonic, Picovoice/Porcupine, Coqui TTS, DeepFace, local Whisper, <code>llama_cpp</code>, Anthropic/OpenAI providers
+(keys optional, not in the chain). The code paths for these are dead and are listed as debt in §14.</p>
+<hr>
+<h2 id="2-process-model-and-runtime">2. Process model and runtime</h2>
+<p><strong>One unit, one interpreter.</strong> <code>deploy/airobot.service</code>: <code>User=moti_ai</code>, <code>WorkingDirectory=/home/moti_ai/AIRobot_v2.0</code>,
+<code>ExecStart=/home/moti_ai/AIRobot_v2.0/venv/bin/python main.py</code>, <code>Restart=on-failure</code>, <code>RestartSec=5</code>,
+<code>After=network-online.target hailo-ollama.service</code>. The interpreter is <strong><code>venv/</code></strong>. A second <code>.venv/</code> exists in the
+repo directory, is not used by anything and lacks PyYAML — never run Stella from it.</p>
+<p><strong>Boot order</strong> (<code>main.py</code>): config load → <code>CameraManager</code> → face recognition → object detection → wake word →
+speech recognition → TTS → MCU bridge → navigation hooks → motion guard → VLM → face bridge (<code>:8080</code>) → music →
+audio arbiter → hand → hand mirror → RC toy → conversation manager → Telegram → dashboard (<code>:5000</code>) → watchdog →
+<code>start()</code> of the vision/audio modules → brain event thread → <code>run()</code> loop.</p>
+<p><strong>Threads and what each one owns</strong></p>
+<table>
+<thead>
+<tr>
+<th>Thread (name)</th>
+<th>Created in</th>
+<th>Owns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>main</td>
+<td><code>main.py</code></td>
+<td>initialisation, <code>run()</code> loop, <code>shutdown()</code></td>
+</tr>
+<tr>
+<td>brain event thread</td>
+<td><code>core/robot_brain.py:1387</code></td>
+<td>the event bus / state machine</td>
+</tr>
+<tr>
+<td>wake-word listener</td>
+<td><code>modules/audio/wake_word.py:142</code> (<code>_listen_loop</code> → <code>_vosk_loop</code>)</td>
+<td><strong>the wake stream</strong> (open, read, stop, close) — nobody else touches it</td>
+</tr>
+<tr>
+<td><code>conversation</code></td>
+<td><code>modules/conversation/manager.py:55</code></td>
+<td>the spoken session and <strong>the command stream</strong> during <code>capture_utterance()</code></td>
+</tr>
+<tr>
+<td>camera capture</td>
+<td><code>parts_used/camera_usb.py:155</code></td>
+<td>the one <code>cv2.VideoCapture</code></td>
+</tr>
+<tr>
+<td>face capture + recognition</td>
+<td><code>modules/vision/face_recognition.py:180,185</code></td>
+<td>frame subscription, YuNet + dlib</td>
+</tr>
+<tr>
+<td>TTS speech loop</td>
+<td><code>modules/audio/text_to_speech.py:316</code></td>
+<td>piper/aplay playback queue</td>
+</tr>
+<tr>
+<td><code>hw_watchdog</code></td>
+<td><code>core/watchdog.py:38</code></td>
+<td>health checks every 20 s (§9)</td>
+</tr>
+<tr>
+<td><code>telegram</code></td>
+<td><code>modules/comms/telegram_bridge.py:46</code></td>
+<td><code>getUpdates</code> polling</td>
+</tr>
+<tr>
+<td><code>face_bridge</code></td>
+<td><code>face_bridge/bridge.py:47</code></td>
+<td>HTTP/WS server <code>:8080</code></td>
+</tr>
+<tr>
+<td><code>web-dashboard</code></td>
+<td><code>modules/web/dashboard.py:462</code></td>
+<td>HTTP <code>:5000</code></td>
+</tr>
+<tr>
+<td><code>reminders</code></td>
+<td><code>modules/ai/reminders.py:83</code></td>
+<td>reminder announcer</td>
+</tr>
+<tr>
+<td>one-shots</td>
+<td><code>main.py</code> (AI warmup, network monitor, performance monitor, gaze feed, guard alert, welcome)</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>Rule: a resource (PortAudio stream, serial port, camera) is opened, used and closed by <strong>one</strong> thread. §4 is the
+enforced instance of this rule for audio.</p>
+<p><strong>Scheduler.</strong> The only scheduler is the <strong>user crontab</strong>: <code>0 3 * * * /home/moti_ai/AIRobot_v2.0/evolution/nightly.sh</code>
+(<code>crontab -l</code>). <code>deploy/stella-evolution.service</code> / <code>.timer</code> are an optional sudo alternative and are <strong>not installed</strong>
+(<code>systemctl list-timers</code> shows none).</p>
+<p><strong>Deploy.</strong> Only through <code>deploy/deploy.sh</code> from a clean tree: restart → Guardian <code>--wait</code> → auto-rollback
+(<code>git reset --hard &lt;previous&gt;</code> + restart + Telegram line) if unhealthy. See §10.</p>
+<hr>
+<h2 id="3-configuration">3. Configuration</h2>
+<p><code>config/config.yaml</code> is the <strong>single editable file</strong>. It is loaded only by the dataclasses in <code>config/settings.py</code>
+(<code>RobotConfig</code> and its sections), which export module-level objects (<code>hardware_config</code>, <code>model_config</code>, …) that the
+code imports. Secrets live in <code>.env</code> (mode 600, gitignored): <code>GROQ_API_KEY</code>, <code>GEMINI_API_KEY</code>, <code>MOONDREAM_API_KEY</code>,
+<code>NVIDIA_API_KEY</code>, <code>TELEGRAM_TOKEN</code>, <code>TELEGRAM_CHAT_ID</code>, <code>SENSIBO_API_KEY</code>.</p>
+<p>Rules:
+- No other YAML reader. <strong>[planned]</strong> <code>main.py</code> still reads the <code>mqtt</code> section from raw YAML; it moves to a
+  <code>MqttConfig</code> dataclass (§14).
+- No JSON fallback. <code>config/config.json</code> is removed in the deep clean; <strong>[done 2026-09-27]</strong> a <code>config.yaml</code> load failure logs
+  ERROR with the path and exception and exits with code 2 instead of silently booting the Gonzo-era defaults.
+- Every yaml key maps to a dataclass field <strong>and</strong> is read by some code — <strong>[done 2026-09-27]</strong> <code>tests/test_config_keys.py</code>
+  enforces it (14 decoy keys exist today).
+- Dataclass defaults equal the known-good live values (face threshold 0.60 / euclidean / yunet, wake word <code>stella</code>,
+  <code>robot_name</code> Stella, the current Groq/Gemini model ids) — <strong>[done 2026-09-27]</strong>, today several defaults are stale.</p>
+<table>
+<thead>
+<tr>
+<th>Section</th>
+<th>Read by (verified by grep on <code>*_config</code> imports)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>behavior</code></td>
+<td><code>main.py</code>, <code>core/robot_brain.py</code>, <code>modules/audio/speech_recognition.py</code>, <code>modules/audio/text_to_speech.py</code>, <code>modules/conversation/manager.py</code>, <code>modules/ai/ai_engine.py</code></td>
+</tr>
+<tr>
+<td><code>ai</code></td>
+<td><code>main.py</code>, <code>modules/ai/ai_engine.py</code>, <code>tools/check_deps.py</code></td>
+</tr>
+<tr>
+<td><code>conversation</code></td>
+<td><code>modules/conversation/manager.py</code></td>
+</tr>
+<tr>
+<td><code>music</code></td>
+<td><code>main.py</code></td>
+</tr>
+<tr>
+<td><code>web_search</code></td>
+<td><code>main.py</code>, <code>modules/ai/ai_engine.py</code></td>
+</tr>
+<tr>
+<td><code>hand</code></td>
+<td><code>main.py</code>, <code>modules/conversation/manager.py</code></td>
+</tr>
+<tr>
+<td><code>microcontroller</code></td>
+<td><code>main.py</code>, <code>parts_used/microcontroller_bridge.py</code>, <code>tools/check_deps.py</code></td>
+</tr>
+<tr>
+<td><code>rc_toy</code></td>
+<td><code>main.py</code></td>
+</tr>
+<tr>
+<td><code>navigation</code></td>
+<td><code>main.py</code>, <code>modules/navigation/navigator.py</code></td>
+</tr>
+<tr>
+<td><code>hardware</code></td>
+<td><code>main.py</code>, <code>modules/vision/face_recognition.py</code>, <code>modules/audio/{speech_recognition,text_to_speech,wake_word}.py</code>, <code>parts_used/{audio_devices,camera_usb,hailo_10h}.py</code></td>
+</tr>
+<tr>
+<td><code>model</code></td>
+<td><code>modules/vision/face_recognition.py</code>, <code>modules/audio/{speech_recognition,text_to_speech,wake_word}.py</code>, <code>parts_used/hailo_10h.py</code></td>
+</tr>
+<tr>
+<td><code>system</code></td>
+<td><code>main.py</code>, <code>core/robot_brain.py</code>, <code>modules/vision/{face_recognition,object_detection}.py</code>, <code>modules/ai/{learning_db,ai_engine}.py</code>, <code>parts_used/{camera_usb,hailo_10h}.py</code></td>
+</tr>
+<tr>
+<td><code>security</code></td>
+<td><code>main.py</code>, <code>core/robot_brain.py</code>, <code>modules/vision/face_recognition.py</code>, <code>modules/conversation/manager.py</code></td>
+</tr>
+<tr>
+<td><code>mqtt</code></td>
+<td><code>main.py</code> (raw YAML today — debt)</td>
+</tr>
+</tbody>
+</table>
+<p>Audio keys that matter (<code>hardware</code>): <code>wake_word_microphone_name: "Auto Focus Camera"</code>,
+<code>speech_microphone_name: "USB PnP Sound Device"</code>, <code>microphone_rate: 48000</code>, <code>speech_microphone_rate: 44100</code>,
+<code>audio_output_device: hdmi</code>, <code>audio_output_card: null</code> (auto-detect). <strong>[done 2026-09-27]</strong> <code>wake_mic_id</code> / <code>speech_mic_id</code>
+(by-id strings) alongside the name keys; the rate keys become the first entry of the probe tuples (§4, invariant I7).</p>
+<hr>
+<h2 id="4-audio-the-canonical-two-mic-design">4. Audio — the canonical two-mic design</h2>
+<p>This section supersedes every other mention of microphones in the repo (README, <code>docs/hardware/*</code>,
+<code>docs/schematics/*</code>, older bug files). It is what worked before the 2026-09-19..26 changes and what is running now at
+<code>a2e3229</code> with 0 restarts.</p>
+<h3 id="41-devices-stable-identity-verified-on-the-pi">4.1 Devices (stable identity, verified on the Pi)</h3>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>Device</th>
+<th><code>/dev/snd/by-id</code></th>
+<th>ALSA card (id)</th>
+<th>PortAudio name</th>
+<th>Native rate</th>
+<th>Config key</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>WAKE</strong></td>
+<td>camera built-in mic</td>
+<td><code>usb-Signo_Camera_WB-400_Auto_Focus_Camera_200901010001-02</code> → <code>controlC3</code></td>
+<td>card 3 (<code>Camera</code>)</td>
+<td><code>Auto Focus Camera: USB Audio (hw:3,0)</code></td>
+<td>48000 Hz (no 16 k)</td>
+<td><code>hardware.wake_word_microphone_name: "Auto Focus Camera"</code> (<strong>[done 2026-09-27]</strong> <code>wake_mic_id: usb-Signo_Camera_WB-400_Auto_Focus_Camera*</code>)</td>
+</tr>
+<tr>
+<td><strong>COMMAND</strong></td>
+<td>dedicated USB dongle</td>
+<td><code>usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device-00</code> → <code>controlC0</code></td>
+<td>card 0 (<code>Device</code>)</td>
+<td><code>USB PnP Sound Device: Audio (hw:0,0)</code></td>
+<td>44100 Hz</td>
+<td><code>hardware.speech_microphone_name: "USB PnP Sound Device"</code> (<strong>[done 2026-09-27]</strong> <code>speech_mic_id: usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device*</code>)</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>Cards 1 and 2 (<code>vc4hdmi0</code>, <code>vc4hdmi1</code>) are playback-only HDMI. HDMI card numbers move across reboots; USB card
+  numbers can move after a replug. <strong>PortAudio indices are not ALSA card numbers</strong> — at <code>a2e3229</code> the camera mic is
+  PortAudio device <strong>2</strong> = <code>hw:3,0</code>, the dongle is PortAudio device <strong>0</strong> = <code>hw:0,0</code>. Only the <code>(hw:N,</code> fragment in the
+  PortAudio name is a stable link to the card.</li>
+<li>PulseAudio runs as the user; its default source is the camera mic
+  (<code>alsa_input.usb-Signo_Camera_WB-400_Auto_Focus_Camera_200901010001-02.analog-stereo</code>). <strong>The robot never records
+  through Pulse</strong>: it opens the ALSA <code>hw</code> device by PortAudio index.</li>
+<li>Output: TTS via piper → espeak-ng fallback, played with <code>aplay</code> on the auto-detected HDMI device string (bug_038);
+  never via pygame/pyaudio (those code paths in <code>text_to_speech.py</code> are dead, §14).</li>
+</ul>
+<h3 id="42-ownership-and-threads">4.2 Ownership and threads</h3>
+<ul>
+<li><strong>One PyAudio instance</strong> for the process: <code>parts_used/audio_portaudio.get_pa()</code>, created once, never terminated.
+  <strong>[done 2026-09-27]</strong> it logs the input-device table once at creation (<code>idx name rate</code>); <code>AudioManager</code>'s private
+  <code>pyaudio.PyAudio()</code> + <code>terminate()</code> at boot and <code>text_to_speech._play_with_pyaudio</code> are removed. No other file may
+  construct <code>pyaudio.PyAudio()</code>.</li>
+<li><strong>Wake stream</strong>: owned exclusively by the wake-word listener thread (<code>_vosk_loop</code>): <code>_open()</code>, <code>stream.read()</code>,
+  <code>_close()</code> all run inside that thread. <code>pause_listening()</code> only clears <code>listen_event</code> and waits (2 s) on
+  <code>_stream_closed_event</code>; <code>resume_listening()</code> only sets <code>listen_event</code>. This is the design already in the code
+  (<code>wake_word.py:162-175, 206-249</code>) and is deliberate — the comment at the open site cites bug_028 and bug_054.</li>
+<li><strong>Command stream</strong>: owned exclusively by the conversation thread that calls <code>capture_utterance()</code>
+  (<code>speech_recognition.py:134-217</code>): open → read loop with VAD → close in the same thread, with a <strong>hard wall-clock
+  deadline</strong> checked between reads (<code>max(start_timeout, max_seconds) + 5 s</code>, current <code>442c8a8</code> code). <strong>No reader
+  thread, ever.</strong> A wedged <code>stream.read()</code> is bounded by the two-stage watchdog (§9: 75 s no speech → soft session stop
+  → +25 s → service restart), not by a thread.</li>
+<li><strong>[done 2026-09-27]</strong> Both open sites wrap the stream in <code>MicStream</code> (new, in <code>audio_portaudio.py</code>), which records the owner
+  thread id, raises <code>RuntimeError</code> on <code>stop_stream()</code>/<code>close()</code> from any other thread, refuses <code>device_index=None</code>, and
+  asserts the resolved PortAudio name contains the expected <code>(hw:N,</code> before opening.</li>
+</ul>
+<h3 id="43-handoff-sequence-wake-command-wake">4.3 Handoff sequence (wake → command → wake)</h3>
+<ol>
+<li>Vosk detects "hey stella" on the wake stream (camera mic). Journal: <code>Wake word detected (method=vosk, confidence=…)</code>.</li>
+<li><code>main.py</code> calls <code>wake.pause_listening()</code>: the wake thread closes <strong>its</strong> stream; pause waits up to 2 s for
+   <code>_stream_closed_event</code>. Journal: <code>Pausing wake-word listener (conversation) — releasing mic</code>.</li>
+<li>If the wait times out: <strong>[done 2026-09-27]</strong> mark the wake device wedged, log ERROR, do <strong>not</strong> open the command mic, end the
+   session, let the watchdog restart. (Today it logs <code>Timed out waiting for wake-word stream to close</code> as a WARNING and
+   proceeds — that was the 2026-09-26 14:40 failure path under the single-mic layout.)</li>
+<li><code>capture_utterance()</code> resolves the command mic at every call (today: by name substring against the PortAudio table;
+   <strong>[done 2026-09-27]</strong> by-id → <code>controlC0</code> → <code>(hw:0,</code>), opens at its native rate (today the literal tuple
+   <code>(44100, 48000, 16000)</code>; <strong>[done 2026-09-27]</strong> <code>[speech_microphone_rate, 48000, 44100, 16000]</code> de-duplicated), reads with VAD,
+   closes in the same thread.</li>
+<li>At session end (<code>manager.py:263</code> → <code>main._resume_wake_word_listener()</code>, the single resume owner) the wake thread
+   reopens the camera mic, re-resolving on every attempt with exponential backoff 1 s → 60 s. Journal:
+   <code>Wake-word listener resumed</code> then <code>Vosk wake mic open at 48000 Hz (device 2)</code>.</li>
+</ol>
+<p>Because the two roles are on two physical devices, the wake-stream close and the command-stream open never contend for
+the same ALSA device. <strong>That is the property the single-mic detour (<code>2051a76</code>) broke, and why it failed</strong> (bug_055).</p>
+<h3 id="44-invariants-each-enforced-in-code-and-tested">4.4 Invariants (each enforced in code and tested)</h3>
+<ul>
+<li><strong>I1.</strong> wake device ≠ command device (by-id and by <code>hw:N</code>) at startup, else exit with a clear error. <strong>[done 2026-09-27]</strong></li>
+<li><strong>I2.</strong> <code>input_device_index</code> is never <code>None</code> at <code>audio.open()</code>; an unresolved name is an ERROR + backoff, never a
+  fall-through to PortAudio <code>default</code> (= ALSA <code>default</code> = pulse plugin = whichever source PulseAudio favours that day).
+  Today <code>capture_utterance</code> refuses when <code>mic_available()</code> is false, but <code>mic_available()</code> keeps a stale index when the
+  name does not resolve, and the wake <code>_open</code> reuses <code>self.device_index</code> — <strong>[done 2026-09-27]</strong> both become hard refusals.</li>
+<li><strong>I3.</strong> A stream is touched only by the thread that opened it (<code>MicStream</code> guard raises otherwise). <strong>[done 2026-09-27]</strong>
+  guard; the behaviour is already true on the live path.</li>
+<li><strong>I4.</strong> No thread holding a stream is ever abandoned; a join/close timeout is terminal for that device in this process.
+  <strong>[done 2026-09-27]</strong> for <code>pause_listening()</code>.</li>
+<li><strong>I5.</strong> Exactly one <code>Pa_Initialize</code> per process; the device table is logged once so the journal shows what the app
+  resolves against. <strong>[done 2026-09-27]</strong> (today the only table in the journal is <code>AudioManager</code>'s discarded one).</li>
+<li><strong>I6.</strong> Every capture-capable card (any <code>/dev/snd/pcmC&lt;n&gt;D*c</code>) gets its capture gain raised at boot, by card id string
+  not by index. <strong>[done 2026-09-27]</strong> (today <code>_boost_input_gains</code> loops over cards <code>(0, 1)</code>; card 1 is HDMI, card 3 — the wake
+  mic — is never boosted).</li>
+<li><strong>I7.</strong> Rates come from config (native-first), not from literal tuples. <strong>[done 2026-09-27]</strong></li>
+<li><strong>I8.</strong> Mic role changes require a bug file, a decision-log entry and a 24 h soak before another audio change.</li>
+</ul>
+<h3 id="45-known-failure-modes-and-the-response-to-each">4.5 Known failure modes and the response to each</h3>
+<table>
+<thead>
+<tr>
+<th>Failure</th>
+<th>What happens</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Mic busy/absent at boot (PortAudio's frozen snapshot lacks <code>hw:N</code>; PortAudio V19.6.0-devel has no <code>Pa_RefreshDeviceList</code>)</td>
+<td>resolver finds no <code>(hw:N,</code> entry</td>
+<td><strong>[planned]</strong> if zero streams are open, ONE serialized re-init under <code>open_lock()</code> (terminate + new PyAudio, table re-logged) and retry; otherwise ERROR + backoff. Watchdog gets a <em>visibility-only</em> WARNING when the wake listener has had no open stream for &gt; 5 min. Today: needs a service restart (README "known quirks").</td>
+</tr>
+<tr>
+<td>PulseAudio grabbing a mic</td>
+<td>Pulse (user session) holds the device</td>
+<td>The by-id/<code>hw:N</code> path opens the ALSA hw device directly, never the pulse plugin. <strong>[planned]</strong> on "device busy" log which PID holds it (<code>fuser /dev/snd/pcmC&lt;N&gt;D0c</code>).</td>
+</tr>
+<tr>
+<td>Replug / renumber during transport</td>
+<td>card numbers change</td>
+<td>by-id symlinks track the device across renumbering; the resolver re-reads them at every open. <strong>[done 2026-09-27]</strong> (today: name substring against the frozen snapshot).</td>
+</tr>
+<tr>
+<td>Wedged <code>stream.read()</code></td>
+<td>the conversation thread blocks</td>
+<td>two-stage watchdog (§9). <strong>This is the only bound. Do not add a reader thread.</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="46-what-not-to-do">4.6 What NOT to do</h3>
+<ul>
+<li>No reader threads for mic capture (bug_027 → bug_028 on 2026-09-13; bug_049 → bug_054 → bug_055 on 2026-09-19..26).</li>
+<li>No <code>stop_stream()</code> / <code>close()</code> from a thread other than the one that opened the stream (SIGABRT, <code>malloc(): unaligned
+  tcache chunk detected</code>).</li>
+<li>Never abandon a thread that holds a stream (no join-timeout-and-continue): the abandoned reader keeps the ALSA device
+  and every later open fails with <code>Could not open command mic for capture</code> (ed73b10, 2026-09-26 13:47).</li>
+<li>Never pass <code>input_device_index=None</code>.</li>
+<li>No single-mic handoff (wake and command on one device) — tried in <code>2051a76</code>, failed at 14:40 the same day, unsupported.</li>
+<li>No second <code>pyaudio.PyAudio()</code> anywhere.</li>
+<li>No index-based device selection in config or code; indices change every reboot and replug.</li>
+<li>Never proceed past <code>Timed out waiting for wake-word stream to close</code> into another open.</li>
+</ul>
+<h3 id="47-changes-landed-on-2026-09-27-commit-587f965-kept-as-the-verification-checklist">4.7 Changes landed on 2026-09-27 (commit 587f965) — kept as the verification checklist</h3>
+<p>(1) <code>MicStream</code> owner guard used in <code>wake_word._open/_close</code> and <code>speech_recognition.capture_utterance</code>;
+(2) replace both <code>_resolve_microphone_index</code> copies and <code>mic_available()</code>'s fallback-to-saved-index with
+<code>audio_devices.find_input_index()</code> built on <code>/dev/snd/by-id</code> and the shared <code>get_pa()</code>;
+(3) remove the <code>input_device_index=self.device_index</code> None path — return None/error before open when unresolved;
+(4) make <code>pause_listening()</code>'s timeout terminal (wedged flag, no command open, watchdog escalation);
+(5) startup assertion wake ≠ command device;
+(6) config keys <code>wake_mic_id</code> / <code>speech_mic_id</code> alongside the name keys;
+(7) rate tuples from config;
+(8) <code>_boost_input_gains</code> by capture-node card id;
+(9) log the shared PyAudio device table once and delete <code>AudioManager</code>'s private init;
+(10) comments at both open sites citing bug_028 + bug_054 and the two rules;
+(11) <code>tests/test_audio_threading.py</code> and <code>tests/test_mic_resolution.py</code>.</p>
+<hr>
+<h2 id="5-conversation-pipeline">5. Conversation pipeline</h2>
+<pre><code>camera mic ──Vosk──► &quot;hey stella&quot; ──► main.py: pause wake, start ConversationManager session (thread &quot;conversation&quot;)
+   │                                            │
+   │                       capture_utterance() on the USB PnP mic: VAD (webrtcvad), end_silence 1.2 s,
+   │                       max_utterance 12 s, silence gate (rms &lt; 220 or &lt; 0.35 s = ignored)
+   │                                            │
+   │                       STT: Groq Whisper ──► Google (speech_recognition lib) ──► offline Vosk, hallucination filter
+   │                                            │
+   │                       keyword handlers (guard, AC, devices, music, mirror, face show/hide; master-gated)
+   │                       else LLM: groq openai/gpt-oss-120b ──429──► groq_fast openai/gpt-oss-20b ──► gemini-3.6-flash
+   │                                 ──► hailo qwen2.5-instruct:1.5b (hailo-ollama :8000, /v1/chat/completions)
+   │                                 with tools: get_time/get_weather, web_search, look, set_reminder, control_device,
+   │                                 set_guard_mode, send_telegram/send_photo, play_music/stop_music, do_gesture,
+   │                                 speak_aloud (drive_toy only when rc_toy.connected)
+   │                                            │
+   │                       TTS: piper (data/models/piper/en_US-amy-medium.onnx) ──► espeak fallback ──► aplay HDMI
+   │                                            │
+   └──◄── idle_timeout 12 s: &quot;Can I do anything else?&quot; ── end phrase / silence ──► session end:
+          learn_facts_from_session (per-person durable facts, background thread) → clear history →
+          main._resume_wake_word_listener() (single resume owner; refused while a session is active)
+</code></pre>
+<ul>
+<li>The brain's <strong>legacy</strong> <code>wake_word_heard</code> / <code>listen_for_command</code> pipeline in <code>core/robot_brain.py</code> is <strong>not</strong> on the
+  live path (the live path is <code>main.py</code> → <code>ConversationManager</code>); it opens the camera and command mic through second
+  code paths and is scheduled for removal (§14). Do not fix audio bugs there.</li>
+<li>Offline: the network monitor sets <code>engine.online = False</code>; cloud providers are skipped so an offline answer starts in
+  ~0.2 s instead of ~90 s (bug_034). A one-time spoken offline notice is given at boot with no internet (<code>c47e21f</code>).</li>
+<li>Memory: <code>data/robot_memory.db</code> (<code>modules/ai/learning_db.py</code>) — people, objects, conversations, and the per-person facts
+  distilled at session end (<code>6cf5416</code>).</li>
+<li>Telegram voice notes go through the same STT chain (<code>_transcribe_pcm16k</code>) and are answered in text and in the Piper voice.</li>
+</ul>
+<hr>
+<h2 id="6-vision">6. Vision</h2>
+<ul>
+<li><strong>Camera owner</strong>: <code>parts_used/camera_usb.py</code> <code>CameraManager</code> is the only <code>cv2.VideoCapture</code> on the live path (one
+  capture thread, subscribers get frames). USB webcam found <strong>by name</strong>, CSI nodes skipped (bug_019/020). The
+  <code>cv2.VideoCapture(self.camera_index)</code> in <code>modules/vision/face_recognition.py:143</code> belongs to the legacy <code>--test</code>
+  camera path removed in the deep clean; <code>tools/reenroll.py</code> / <code>enroll_master.py</code> open the camera only while <code>airobot</code>
+  is stopped.</li>
+<li><strong>Face detection</strong>: YuNet (<code>data/models/face_detection_yunet_2023mar.onnx</code>, <code>model.face_backend: yunet</code>, Haar kept
+  as fallback, <code>top_k</code> 50). <strong>Recognition</strong>: dlib 128-d embeddings, <strong>euclidean distance, threshold 0.60</strong>
+  (<code>model.face_distance_metric</code>, <code>model.face_recognition_threshold</code>). Lessons: cosine made a stranger match the master
+  (bug_014); YuNet's tight box vs dlib-enrolled geometry needs box padding at both encode sites and a re-enrol
+  (bug_048, re-enrol still pending). Identity is debounced — one Unknown frame no longer clears the master (bug_047);
+  <code>security.identity_memory_seconds: 60</code>.</li>
+<li><strong>Object detection</strong>: <code>parts_used/hailo_10h.py</code> <code>HailoDetector</code> → OpenCV-DNN on <code>data/models/yolov8n.onnx</code>
+  (gitignored binary; a fresh clone must copy it — bug_032). Cadence <code>MIN_DETECT_INTERVAL = 4.0 s</code> idle
+  (thermal, bug_039). <code>system.enable_hailo: false</code> on purpose. bug_041 lesson: model paths are resolved from the repo
+  root (<code>Path(__file__).parent.parent</code>), never from the file's own folder — the 09-19 move broke this once.</li>
+<li><strong>Low light</strong>: <code>hardware.camera_low_light_boost: true</code> (software brightening before detection); camera gain /
+  brightness knobs in <code>hardware.camera_*</code>.</li>
+<li><strong>Enrolment</strong>: <code>sudo systemctl stop airobot &amp;&amp; venv/bin/python tools/reenroll.py &amp;&amp; sudo systemctl start airobot</code>;
+  <code>tools/manage_faces.py list|remove|rename</code>. Face DB: <code>data/faces/</code> (<code>security.store_faces: true</code>).</li>
+<li><strong>Scene understanding</strong>: cloud VLM (Moondream → NVIDIA NIM), on demand only (<code>look</code> tool), never per frame.</li>
+<li><strong>Guard</strong>: <code>modules/vision/motion_guard.py</code> (movement / body while armed → photo + YES/NO on Telegram → alarm).</li>
+<li><strong>Hand mirror</strong>: MediaPipe landmarks → <code>set &lt;5 bits&gt;</code> on the hand.</li>
+</ul>
+<hr>
+<h2 id="7-smart-home-guard-and-identity">7. Smart home, guard and identity</h2>
+<ul>
+<li><strong>Device control — one owner (rule)</strong>: <code>control_device</code> tries <strong>Tuya → MQTT → wired MCU</strong> in that order, and the
+  master rule (<code>security.require_authentication: true</code>) is checked once. Today four entry points each carry their own
+  copy of the check: the voice keyword handler (<code>_do_device_control</code> in <code>modules/conversation/manager.py</code>), the LLM
+  tool (<code>control_device</code>), the Telegram bridge and the web dashboard — <strong>debt to collapse into one function</strong> (§14).</li>
+<li><strong>Guard — one owner (rule)</strong>: one set/unset function and one phrase list ("guard on", "guard off", "I'm home",
+  status questions must not arm — bug_029). Who may arm: anyone present, Telegram, dashboard. Who may disarm: the
+  master by voice (<code>guard_require_master_to_disarm: true</code>, optional <code>guard_disarm_phrase</code>), the master's face after<blockquote>
+<p>60 s away (bug_021), Telegram (the remote master), the dashboard. Same four writers as above — same debt.</p>
+</blockquote>
+</li>
+<li><strong>Identity</strong>: <code>master_mode</code> is set by face recognition (<code>user_authenticated</code> event) and by the Telegram master chat
+  (<code>_remote_master</code>); every privileged keyword handler and tool checks it (bug_031 closed the keyword bypass).</li>
+<li>Sensibo: cloud API, cached <code>acState</code>, one call per command (bug_017), fresh state before a change (bug_051).
+  Tuya: local key from <code>devices.json</code> (gitignored). MQTT hub: <code>mqtt.devices</code> is empty today; <strong>[planned]</strong> the hub does
+  not start with zero devices.</li>
+</ul>
+<hr>
+<h2 id="8-hardware-bridges">8. Hardware bridges</h2>
+<ul>
+<li><strong>ESP32-S3 hand</strong>: firmware <code>firmware/hand/hand.ino</code> (I²C SDA GPIO 8 / SCL GPIO 9 → PCA9685 0x40, ~50 Hz; channels
+  0..4 = pinky..thumb; homes to a fist on connect). Protocol and gotchas: <code>docs/firmware/hand-esp32.md</code>. Pi driver
+  <code>parts_used/esp32_hand.py</code> holds one persistent link on <code>/dev/ttyACM0</code> (stop <code>airobot</code> before reflashing); the
+  watchdog reconnects it. Bench tool <code>tools/handctl.py</code> (the doc's <code>firmware/handctl.py</code> path is stale — fixed in the
+  deep clean). Bench sketches <code>firmware/hand_test/</code> and <code>firmware/i2c_scan/</code> are kept for hardware checks.</li>
+<li><strong>Microcontroller bridge</strong>: <code>parts_used/microcontroller_bridge.py</code> is the <strong>only</strong> MCU command path
+  (<code>parts_used/esp32_controller.py</code> removed in the deep clean; it had no importer and its only event, <code>battery_low</code>,
+  had no live producer). <code>microcontroller.connected: false</code> → commands are logged only.</li>
+<li><strong>Audio arbiter</strong>: <code>parts_used/audio_arbiter.py</code> decides who owns the one speaker (speech ducks music to
+  <code>music.duck_volume</code>).</li>
+<li><strong>Not fitted</strong>: <code>parts_used/sim7600x_modem.py</code> and <code>modules/connectivity/server_connection.py</code> removed (dead, and the
+  modem probe at import time blocked every <code>config.settings</code> import on <code>/dev/ttyAMA0</code> for up to 2 s).</li>
+</ul>
+<hr>
+<h2 id="9-health-and-recovery">9. Health and recovery</h2>
+<p><code>core/watchdog.py</code> (<code>hw_watchdog</code>, every <strong>20 s</strong>, first check after 20 s):</p>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>Threshold</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>stuck conversation</td>
+<td><code>_conv_active</code> and no <code>_conv_activity</code> stamp for <strong>&gt; 75 s</strong> (monotonic clock, bug_040), not while <code>_thinking</code></td>
+<td><strong>Stage 1</strong>: <code>Conversation stuck (no speech NNs) — soft-stopping the session</code> → <code>conversation.stop()</code>. <strong>Stage 2</strong>: still active <strong>25 s</strong> later → <code>Conversation still stuck after soft stop — restarting service</code> → <code>sudo -n systemctl restart airobot</code>.</td>
+</tr>
+<tr>
+<td>camera</td>
+<td>frames stale &gt; 15 s</td>
+<td>WARNING only (<code>CameraManager</code> reopens itself)</td>
+</tr>
+<tr>
+<td>hand</td>
+<td>serial port vanished / link dead</td>
+<td>re-detect <code>/dev/ttyACM*</code> / <code>/dev/ttyUSB*</code>, <code>hand.reconnect()</code></td>
+</tr>
+<tr>
+<td>audio out</td>
+<td>TTS device fails to open 2× in a row, never while speaking</td>
+<td>re-resolve the HDMI device; backoff 20 s → 300 s when no output exists</td>
+</tr>
+<tr>
+<td>wedged audio <strong>[done 2026-09-27]</strong></td>
+<td><code>_audio_wedged_at</code> set for &gt; 10 s (wake-stream close timed out)</td>
+<td>Stage 2 restart</td>
+</tr>
+<tr>
+<td>wake listener <strong>[planned]</strong></td>
+<td>wake stream <code>None</code> for &gt; 300 s while <code>running</code></td>
+<td>WARNING once per 10 min, no restart</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>The watchdog docstring still says 120 s; the code says 75 s — <strong>[done 2026-09-27]</strong> docstring fix. The header comment that mics
+  "self-heal by re-resolving by name" is only true for devices present in PortAudio's frozen snapshot.</li>
+<li>systemd: <code>Restart=on-failure</code>, <code>RestartSec=5</code>. A crash (<code>code=dumped, status=6/ABRT</code>) costs ~30 s of blackout
+  (wake, vision, guard, Telegram all drop) and resets in-memory guard state — which is why in-process recovery is
+  preferred and <strong>only the watchdog restarts the process</strong>.</li>
+<li>Journal lines and their meaning: <code>Vosk wake mic open at 48000 Hz (device 2)</code> = wake stream healthy on the camera mic;
+  <code>Resolved speech mic 'USB PnP Sound Device' -&gt; device 0</code> = command mic resolved; <code>Could not open command mic for capture</code>
+  = the dongle is held (by us — a leaked thread — or by Pulse) or absent; <code>Timed out waiting for wake-word stream to
+  close</code> = the wake thread is stuck in <code>read()</code>, terminal (§4.3 step 3); <code>malloc(): unaligned tcache chunk detected</code> /
+  <code>malloc_consolidate</code> = cross-thread PortAudio access, a code bug, never a hardware fault.</li>
+</ul>
+<hr>
+<h2 id="10-evolution-and-deploy">10. Evolution and deploy</h2>
+<blockquote>
+<p><strong>Autonomous evolution is OFF</strong> (operator decision 2026-09-27): <code>evolution/AUTORUN_DISABLED</code> is present and the cron entry is removed, so nothing runs unattended. Guardian remains the deploy gate (<code>deploy/deploy.sh</code>). Scout/report can be run by hand; they never modify code or packages.</p>
+</blockquote>
+<p><strong>Guardian</strong> (<code>evolution/guardian.py</code>, deterministic, no LLM, writes <code>evolution/reports/guardian-latest.json</code>, exit 0/1):
+<code>syntax</code> (compileall) · <code>imports</code> (every module <code>main.py</code> imports, derived by parsing <code>main.py</code>) · <code>config</code>
+(<code>RobotConfig</code> builds from <code>config.yaml</code>) · <code>service</code> (<code>--wait</code> up to 90 s, stays up <code>--stable</code> 45 s) · <code>log</code> (last
+2 min of the journal: error count and fatal patterns — <code>Traceback</code>, <code>malloc_consolidate</code>,
+<code>HAILO_OUT_OF_PHYSICAL_DEVICES</code>) · <code>hardware</code> (soft) · <code>brain</code> (hailo-ollama answers; <code>--no-brain</code>, <code>--require-hailo</code>) ·
+<code>resources</code> (disk ≥ 2 GB, RAM, <code>vcgencmd get_throttled</code>, undervoltage reported loudly).
+<strong>[done 2026-09-27]</strong> a <code>tests</code> check runs every <code>tests/test_*.py</code> with the venv python so the new tests (§13) gate every deploy; today Guardian and
+<code>tests/test_imports.py</code> both derive their module list from <code>main.py</code>, so an orphan module is never checked.</p>
+<p><strong>deploy.sh</strong>: refuses a dirty tree (<code>git status --porcelain --untracked-files=no</code>); records HEAD; restarts; Guardian
+<code>--wait</code>; on failure <code>git reset --hard &lt;HEAD~1 or given sha&gt;</code> + restart + Guardian again; Telegram one-liner either way.
+Rollback of a bad commit = <code>git revert</code> (or <code>deploy/deploy.sh &lt;good-sha&gt;</code>) + deploy — never a hand-edit on the robot.</p>
+<p><strong>nightly.sh</strong> (crontab 03:00): skip if an SSH connection is established, the tree is dirty, disk &lt; 2 GB or load ≥ 3;
+then <code>manifest.py</code> → <code>guardian.py</code> → <code>scout.py</code> (report-only, 900 s cap) → <code>report.py</code>, all under <code>nice -n 15</code>.
+Results: <code>evolution/reports/nightly.log</code>, <code>guardian-latest.json</code>, <code>reports/YYYY-MM-DD.md</code> + a 5-line Telegram summary.</p>
+<p><strong>Generated files are gitignored</strong>: <code>stella_manifest.yaml</code> (written by <code>manifest.py</code>; was tracked, which meant the
+first successful nightly run dirtied the tree and disabled both nightly and deploy), <code>evolution/reports/*.json</code>,
+<code>evolution/evolution.db</code>.</p>
+<hr>
+<h2 id="11-repository-layout-after-the-2026-09-27-removals">11. Repository layout (after the 2026-09-27 removals)</h2>
+<pre><code>AIRobot_v2.0/
+├── main.py                  entry point (systemd ExecStart); wires parts and modules; --test/--create-service removed
+├── README.md                the map: what Stella is, how to run, where everything lives
+├── requirements.txt
+├── .gitignore               ignores .env, data/, devices.json, tinytuya.json, stella_manifest.yaml, evolution/reports/*.json
+├── config/                  config.yaml (the ONE file you edit), settings.py (dataclasses, the only loader), platforms/raspberry_pi5.py
+├── core/                    robot_brain.py (event bus + state), watchdog.py (§9)
+├── parts_used/              ONE FILE PER PHYSICAL PART (README inside)
+│   ├── camera_usb.py            CameraManager — the only camera owner
+│   ├── audio_portaudio.py       get_pa() / open_lock()  [planned: MicStream, open_input()]
+│   ├── audio_devices.py         card listing  [planned: find_input_index() by-id resolver; AudioManager lease API removed]
+│   ├── audio_arbiter.py         AudioArbiter — who owns the speaker
+│   ├── hailo_10h.py             HailoDetector — CPU OpenCV-DNN path is live
+│   ├── esp32_hand.py            Hand — /dev/ttyACM0
+│   ├── microcontroller_bridge.py  the only MCU command path
+│   ├── wifi_adapter.py          is_online()/scan()/connect()
+│   └── rc_toy.py                RCToy stub
+├── modules/                 capabilities by what they do (README inside)
+│   ├── ai/                  ai_engine.py, learning_db.py, reminders.py, web_search.py
+│   ├── audio/               wake_word.py (owns the wake stream), speech_recognition.py (owns the command stream), text_to_speech.py, spell_parser.py
+│   ├── vision/              face_recognition.py, object_detection.py, motion_guard.py, hand_mirror.py, vlm.py
+│   ├── conversation/        manager.py
+│   ├── comms/               telegram_bridge.py, notify.py
+│   ├── smart_home/          sensibo.py, tuya_devices.py, mqtt_devices.py
+│   ├── media/               music.py
+│   ├── navigation/          navigator.py (all hardware flags false)
+│   └── web/                 dashboard.py (:5000)
+├── face_bridge/             bridge.py (:8080, ws /ws) + webface/
+├── firmware/                hand/hand.ino, hand_test/, i2c_scan/ (bench sketches)
+├── evolution/               guardian.py, manifest.py, scout.py, report.py, db.py, llm_client.py, nightly.sh, reports/
+├── deploy/                  airobot.service, deploy.sh, install_service.sh, allow-service-control.sh, wifi helpers, stella-evolution.* (not installed)
+├── bug_report/              bug_001..bug_055 + README.md index + _TEMPLATE.md
+├── tests/                   test_imports.py  [planned: test_no_orphans, test_config_keys, test_audio_threading, test_mic_resolution]
+├── tools/                   reenroll.py, enroll_master.py, manage_faces.py, check_deps.py, handctl.py
+├── docs/                    README.md, CONTINUE.md, architecture/ (this file + archive/), decisions/log.md, hardware/, firmware/, schematics/, briefs/
+└── data/                    runtime state, gitignored: models/, faces/, logs/, robot_memory.db, tts_cache/, reminders.json
+</code></pre>
+<p>Removed on 2026-09-27: <code>parts_used/esp32_controller.py</code>, <code>parts_used/sim7600x_modem.py</code>, <code>modules/connectivity/</code>,
+<code>tools/test_sim7600x.py</code>, <code>config/config.json</code>, <code>claude_read.txt</code>, <code>docs/architecture.md</code>, <code>docs/GONZO_GUIDE.md</code>,
+<code>docs/rpi5_setup.md</code> (apt list moved to <code>docs/hardware/hailo.md</code>), <code>docs/service_accounts.txt</code>, <code>main.py</code>
+<code>--create-service</code> / <code>--test</code> code and the <code>face_recognition.py</code> legacy camera methods; <code>stella_manifest.yaml</code> untracked.</p>
+<p>Rule for <code>parts_used/</code>: one file per physical part, one main class, <code>is_available()/start()/stop()</code>, talks to hardware
+and nothing else; modules receive these objects from <code>main.py</code> and never open hardware themselves.</p>
+<hr>
+<h2 id="12-engineering-rules">12. Engineering rules</h2>
+<ol>
+<li>PortAudio single-owner rule, enforced in code not prose: a stream is opened, read, stopped and closed by exactly one thread; the MicStream wrapper in parts_used/audio_portaudio.py records the owner thread id and raises RuntimeError on stop/close from any other thread. Never abandon a thread that holds a stream (no join-timeout-and-continue).</li>
+<li>A close/join timeout on a mic is terminal for that ALSA device in this process: do not reopen the same device, set a wedged flag and let the watchdog's two-stage recovery (soft stop, then service restart) handle it. Never proceed past 'Timed out waiting for wake-word stream to close' into another open.</li>
+<li>Two mics, two roles, two different devices: wake word on the camera mic (by-id usb-Signo_Camera_WB-400_Auto_Focus_Camera<em>), commands on USB PnP Sound Device (by-id usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device</em>). Startup refuses a config where both roles resolve to the same device. Single-mic handoff is documented as failed (bug_055) and is not retried.</li>
+<li>One resolver, called at every open, never a silent default: parts_used/audio_devices.find_input_index() resolves /dev/snd/by-id -&gt; controlC<N> -&gt; PortAudio entry whose name contains '(hw:N,'. input_device_index=None is never passed; an unresolved mic logs ERROR and backs off exponentially.</li>
+<li>One process-wide PyAudio instance (get_pa()), initialised once, never terminated, its device table logged once at init. No other file may construct pyaudio.PyAudio().</li>
+<li>A reverted fix is edited IN PLACE: the bug file gets 'Status: REVERTED - do not reintroduce, see bug_0XX', the decision-log entry gets the same banner at its top, and the docstring at the code site cites both bug numbers. A later entry alone is not enough.</li>
+<li>Bug file in the same commit as the fix, numbered sequentially with no gaps; a commit message may not cite a bug number that does not exist in bug_report/.</li>
+<li>Reproduce the real failure before fixing it: for mic stalls that means killing/unplugging/usbreset-ing the device while a read is blocked, not an open/read/close loop. A fix that was not reproduced is not deployed to the live service.</li>
+<li>One audio change per day, then a 24h soak with NRestarts=0 and zero 'Could not open' lines in journalctl before the next audio change. No stacking of fixes minutes apart on the live robot.</li>
+<li>Deploy only through deploy/deploy.sh (Guardian: syntax, imports, tests, config check) from a clean tree; generated files (stella_manifest.yaml, evolution/reports/) are gitignored so the tree cannot be dirtied by the robot itself.</li>
+<li>Every key in config/config.yaml must map to a dataclass field AND be read by some code (tests/test_config_keys.py enforces it); every .py under modules/ and parts_used/ must be imported by something (tests/test_no_orphans.py enforces it). Decoy keys and orphan modules fail the deploy.</li>
+<li>Resolve hardware by stable identity (by-id symlink, ALSA card id string, USB VID:PID), never by index; indices change every reboot and replug.</li>
+<li>One owner per concern: one device-control function, one guard set/unset function, one Telegram HTTP path, one config loader. New features call the owner; they do not add a parallel implementation.</li>
+<li>Docs describe the CURRENT layout; history lives in bug_report/ and docs/decisions/log.md with a dated 'paths are pre-2026-09-19' banner. The single architecture doc is updated in the same commit as any change to a public interface, device assignment or thread ownership.</li>
+</ol>
+<hr>
+<h2 id="13-test-plan-and-verification-checklist">13. Test plan and verification checklist</h2>
+<p>Run top to bottom after any audio, vision or config change. "Journal" = <code>journalctl -u airobot</code>. Automated results
+land in <code>evolution/reports/guardian-latest.json</code> (Guardian), <code>evolution/reports/nightly.log</code> and
+<code>evolution/reports/YYYY-MM-DD.md</code> (nightly); manual results are recorded in the relevant bug file's "How to verify".</p>
+<ul>
+<li>[ ] <strong>Imports and syntax of every live module</strong> — <code>venv/bin/python -m pytest tests/test_imports.py -q</code>; Guardian
+      <code>check_syntax</code> + <code>check_imports</code> via <code>deploy/deploy.sh</code>. Expect: all modules <code>main.py</code> imports load, no
+      <code>ImportError</code>, deploy proceeds past Guardian. <em>Status: passing (the only test present today).</em></li>
+<li>[x] <strong>No orphan modules</strong> — <code>tests/test_no_orphans.py</code> <strong>[done 2026-09-27]</strong>: every <code>.py</code> under <code>modules/</code> and <code>parts_used/</code>
+      (except <code>__init__</code>/README) is imported by another repo file. Expect: passes once <code>esp32_controller</code>,
+      <code>server_connection</code>, <code>sim7600x_modem</code> are gone. <em>Status: not implemented; 3 orphans before the deep clean.</em></li>
+<li>[x] <strong>Config keys all mapped and read</strong> — <code>tests/test_config_keys.py</code> <strong>[done 2026-09-27]</strong>: walk <code>config.yaml</code>, assert each
+      key is a dataclass field and its name appears in code outside <code>settings.py</code>. <em>Status: not implemented; 14 decoy keys.</em></li>
+<li>[x] <strong>PortAudio owner-thread guard</strong> — <code>tests/test_audio_threading.py</code> <strong>[done 2026-09-27]</strong> with a fake PyAudio: open a
+      <code>MicStream</code> in thread A, <code>close()</code> from thread B → <code>RuntimeError</code>; close from A succeeds; <code>open_input(None)</code> raises.</li>
+<li>[x] <strong>Mic resolution by stable identity</strong> — <code>tests/test_mic_resolution.py</code> <strong>[done 2026-09-27]</strong>: mock <code>/dev/snd/by-id</code> and a
+      PortAudio table; cases normal / renumbered card / device missing / table without <code>hw:N</code>. Expect: the <code>hw:N</code>-matching
+      index; <code>None</code> (never a default) when missing; the re-init path only when zero streams are open.</li>
+<li>[ ] <strong>Two-mic startup invariant</strong> — after deploy:
+      <code>journalctl -u airobot -n 200 | grep -E 'device table|Resolved speech mic|Vosk wake mic open|same device'</code>.
+      Expect: device table logged once; <code>Resolved speech mic 'USB PnP Sound Device' -&gt; device &lt;hw:0 entry&gt;</code>;
+      <code>Vosk wake mic open at 48000 Hz (device &lt;hw:3 entry&gt;)</code>; no <code>same device</code> error; <code>jack server is not running</code>
+      triplet once. <em>Status: live journal shows speech → device 0, wake → device 2 @ 48 k; names not yet asserted.</em>
+      <strong>[planned]</strong> <code>tools/check_audio.py</code> runs these greps and exits non-zero; run by <code>nightly.sh</code>.</li>
+<li>[ ] <strong>Full wake → command → reply → resume cycle (two mics)</strong> — say "Hey Stella", ask "what time is it", wait for the
+      reply and the idle timeout; repeat 10×. Expect: 10/10 <code>Wake word detected</code> on the camera mic, 10/10 captures on
+      the USB PnP mic, <code>Pausing wake-word listener</code> / <code>Wake-word listener resumed</code> paired each time, no <code>Timed out
+      waiting</code>, no <code>Could not open command mic</code>. <em>Status: working since <code>a2e3229</code> 20:26 (NRestarts=0); count not yet
+      measured — log the result in bug_053.</em></li>
+<li>[ ] <strong>Real stall reproduction</strong> (the test the reader-thread fixes never ran) — <strong>bench only, operator present</strong>: start a
+      conversation and, while <code>capture_utterance</code> is blocked in <code>stream.read()</code>, <code>sudo usbreset</code> (or unplug) the USB PnP
+      mic; separately do the same to the camera mic while the wake stream is open. Expect: no SIGABRT; the capture ends
+      at its hard deadline, or the watchdog soft-stops at 75 s and restarts at +25 s if still stuck; after replug the
+      resolver finds the mic by by-id at the next open (no restart when it was not in use; after the watchdog restart
+      when it was). <em>Status: never performed; bug_054 records only an open/read/close loop.</em></li>
+<li>[ ] <strong>Wake-close timeout is terminal</strong> — unit test with a fake wake thread that never sets <code>_stream_closed_event</code>;
+      live: a debug env var that delays <code>_close</code> by 5 s. Expect: <code>pause_listening()</code> returns False, the session ends
+      without opening the command mic, the watchdog restarts after 10 s. <em>Status: today it warns and proceeds.</em></li>
+<li>[ ] <strong>Boot with a mic unplugged, plug later</strong> — bench: stop <code>airobot</code>, unplug the USB PnP mic, start, wait 60 s, plug
+      it in, say "Hey Stella" + a command. Expect: boot logs ERROR for the unresolved command mic with backoff (no
+      <code>default</code> open); after plugging, the next capture resolves <code>hw:0</code> (via the zero-streams re-init if the snapshot
+      lacked it) without a restart, or the log says why not. <em>Status: known to need a restart today.</em></li>
+<li>[ ] <strong>PulseAudio contention</strong> — bench: <code>pactl set-default-source</code> to the USB PnP mic and start a Pulse recorder on it,
+      then trigger a capture. Expect: the direct hw open succeeds or logs <code>device busy, held by PID &lt;pulse pid&gt;</code>; never a
+      silent capture from a different device. <em>Status: unknown; fall-through to default is possible today.</em></li>
+<li>[ ] <strong>Capture gain on all capture cards</strong> — <code>amixer -D hw:CARD=Camera sget Mic</code> and <code>amixer -D hw:CARD=Device sget Mic</code>.
+      Expect: both at 100 % capture; one <code>gain set</code> journal line per card. <em>Status: only cards 0–1 attempted; the camera
+      is never boosted.</em></li>
+<li>[ ] <strong>Watchdog two-stage recovery</strong> — bench: set <code>_conv_active</code> and freeze <code>_conv_activity</code> via a debug hook. Expect:
+      <code>Conversation stuck (no speech 75s) — soft-stopping</code> then, if still stuck, restart at +25 s; docstring matches.
+      <em>Status: implemented; docstring says 120 s.</em> Unit test with a mocked monotonic clock <strong>[planned]</strong>.</li>
+<li>[ ] <strong>Face recognition (YuNet, euclidean 0.60)</strong> — master in front of the camera at normal and low light. Expect:
+      recognised within 3 s, no false positive for a second person, the wave happens once. <em>Status: working after the
+      bug_048 revert; re-check after any vision edit.</em></li>
+<li>[ ] <strong>Object detection</strong> — hold a known object, ask "what do you see". Expect: correct object, no <code>model not found</code>
+      (bug_041 class). <strong>[planned]</strong> <code>tests/test_paths.py</code> asserting every model path in config resolves to a file.</li>
+<li>[ ] <strong>Hand, Telegram, face bridge, smart home</strong> — "wave"; send a Telegram message and get the reply; open
+      <code>http://&lt;pi&gt;:8080</code>; toggle one Tuya device by voice. Expect: all four respond, no exceptions in the journal.</li>
+<li>[ ] <strong>Nightly self-check and deploy gate</strong> — run <code>evolution/nightly.sh</code> by hand once after gitignoring the manifest;
+      then <code>git status --porcelain --untracked-files=no</code>. Expect: nightly completes, tree stays clean, <code>deploy.sh</code> does
+      not refuse.</li>
+<li>[ ] <strong>Boot noise and probes gone</strong> — <code>journalctl -u airobot -b | grep -cE 'SIM7600X|Coqui TTS not installed|Picovoice'</code>.
+      Expect: 0 after the removals; boot no longer blocks on <code>/dev/ttyAMA0</code>. <em>Status: 212 occurrences each before.</em></li>
+<li>[ ] <strong>24 h soak after each audio change</strong> — <code>systemctl show airobot -p NRestarts</code>;
+      <code>journalctl -u airobot --since '24 hours ago' | grep -cE 'Could not open|Timed out waiting|status=6|malloc_consolidate'</code>.
+      Expect: <code>NRestarts=0</code> and zero matches before the next audio change is allowed. <em>Status: 0 restarts since
+      2026-09-26 20:26.</em></li>
+</ul>
+<hr>
+<h2 id="14-known-debt-and-next-steps-ordered">14. Known debt and next steps (ordered)</h2>
+<ol>
+<li><strong>Legacy brain dialogue pipeline</strong> (<code>core/robot_brain.py</code> <code>wake_word_heard</code> / <code>listen_for_command</code>, the
+   <code>speech_recognition.py</code> <code>listen()</code>/<code>active_listener</code> path, <code>_record_audio</code>): not on the live path, opens mics through
+   second code paths. Remove after verifying no transition is reachable by voice intent (the review found
+   <code>patrol/observing/alert/battery_low</code> truly dead but <code>movement/learning/recovery/set_led_color</code> still reachable —
+   remove call sites together with transitions).</li>
+<li><strong>Device-control and guard consolidation</strong>: one <code>control_device()</code> and one <code>set_guard()</code> owner with the single phrase
+   list and one master check; the four entry points (§7) call them.</li>
+<li><strong>Dead optional backends</strong>: Porcupine, Coqui, DeepFace, local Whisper, <code>llama_cpp</code>, Anthropic/OpenAI branches,
+   pygame/pyaudio TTS playback; pip-uninstall what nothing imports.</li>
+<li><strong>46 unread settings fields</strong> in <code>config/settings.py</code> (after <code>test_config_keys.py</code> lands, delete or wire each).</li>
+<li><strong>Hailo runtime repair</strong>: <code>pip uninstall hailort</code>; install the matched pyhailort wheel from the h10-hailort bundle
+   (not PyPI); only then evaluate NPU vision vs single-context contention with <code>hailo-ollama</code>. Object detection stays on
+   the CPU until then.</li>
+<li><strong><code>MqttConfig</code></strong> dataclass; <code>main.py</code> stops reading raw YAML; hub does not start with zero devices.</li>
+<li>Audio hardening in §4.7 order (MicStream, resolver, terminal timeout, startup invariant, config ids, rates, gains,
+   device table, comments, tests).</li>
+<li>Hardware: PSU rating / power-offs with Ethernet plugged (use the official 27 W supply), a fan (80 °C soft limit under
+   load), INMP441 I²S mics as the durable cure for USB-audio fragility, re-enrol the master face under YuNet.</li>
+<li>Voice: openWakeWord "Hey Stella" (needs Moti's voice clips), faster-whisper offline STT ahead of Vosk.</li>
+<li>Evolution v3: Lab (sandbox) + Builder behind <code>evolution.require_operator_approval</code>.</li>
+</ol>
+</div>
+</body>
+</html>

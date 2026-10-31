@@ -210,9 +210,9 @@
 // #define TFT2_CS 8
 #define TFT1_CS  -1 
 #define TFT_CS  -1   // Chip select control pin  1.90 12  1.44 2
-#define TFT_DC   10  // Stella: data/command (vendor used 9 = PCA9685 SCL on our ESP32-C3)
+#define TFT_DC   10  // Stella: eyes DC on GPIO10 so the PCA9685 keeps GPIO8/9 for the hand. (Use 9 only if the PCA moves to GPIO12/13.)
 #define TFT2_RST   5 // Reset p in (could connect to RST pin)  1.99 13  1.44 5
-#define TFT_RST   0  // Stella: RST1 = left eye (vendor used 8 = PCA9685 SDA on our ESP32-C3)
+#define TFT_RST   11  // Stella: RST1 on GPIO11 so the PCA9685 keeps GPIO8/9 for the hand (and off GPIO0, an S3 strap pin). (Use 8 only if the PCA moves to GPIO12/13.)
 
 
 // #define TFT_MOSI  1   // 1.90 4  1.44  4

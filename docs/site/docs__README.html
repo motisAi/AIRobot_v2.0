@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stella — Project Documentation</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="stella-project-documentation">Stella — Project Documentation</h1>
+<p>This folder is the long-term memory of the <strong>Stella</strong> robot project (formerly "Gonzo").
+It lives inside the git repo (<code>AIRobot_v2.0/docs/</code>) so it is versioned and pushed to
+GitHub alongside the code — design decisions, wiring, and briefs stay understandable
+in the future even if a PC is wiped.</p>
+<p><strong>Start here:</strong> <a href="architecture__stella-architecture.html">architecture/stella-architecture.md</a> — the single current
+architecture document (hardware, process and threads, config, the canonical two-mic audio design, conversation,
+vision, guard, watchdog, evolution/deploy, layout, engineering rules, test checklist, debt). It is updated in the same
+commit as any change to a device assignment, a thread ownership or a public interface.</p>
+<h2 id="how-this-is-organized">How this is organized</h2>
+<table>
+<thead>
+<tr>
+<th>Folder</th>
+<th>What goes here</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>architecture/</code></td>
+<td><strong>One current document</strong>, <code>stella-architecture.md</code>. Dated predecessors live in <code>architecture/archive/</code> with a SUPERSEDED banner and are history only.</td>
+</tr>
+<tr>
+<td><code>decisions/</code></td>
+<td>Dated design-decision log: what we chose, why, and what we rejected. Entries before 2026-09-19 use the pre-reorganisation paths.</td>
+</tr>
+<tr>
+<td><code>hardware/</code></td>
+<td>Physical build: component list (BOM), wiring/connection map, the Hailo NPU runbook (incl. base apt packages), the screen-face subsystem and tablet setup.</td>
+</tr>
+<tr>
+<td><code>firmware/</code></td>
+<td>Microcontroller firmware design: the ESP32-S3 hand, serial/I2C protocols, pin maps.</td>
+</tr>
+<tr>
+<td><code>schematics/</code></td>
+<td>Diagrams — system overview, data-flow. Mermaid (renders on GitHub) + ASCII.</td>
+</tr>
+<tr>
+<td><code>briefs/</code></td>
+<td>Incoming design/product briefs and ideas. One file per idea.</td>
+</tr>
+<tr>
+<td><code>CONTINUE.md</code></td>
+<td>The operator hand-off page: where we are, what is open, what is next.</td>
+</tr>
+</tbody>
+</table>
+<p>Related folders outside <code>docs/</code>: the code map is the root <a href="root__README.html">README.md</a>; every bug ever
+fixed is in <a href="bug_report__README.html"><code>bug_report/</code></a> (55 files, one per bug, no number gaps); the safety net and
+nightly self-check are in <a href="evolution__README.html"><code>evolution/</code></a>.</p>
+<h2 id="workflow-for-adding-files">Workflow for adding files</h2>
+<ol>
+<li>Drop a file anywhere on the PC (Downloads is fine) and tell Claude the filename.</li>
+<li>Claude files it into the right subfolder here, adds a summary, and links it from this index.</li>
+<li>It goes to GitHub on the next push.</li>
+</ol>
+<p>When new hardware is wired up, tell Claude the connections — the wiring map and a schematic
+under <code>hardware/</code> + <code>schematics/</code> get updated so nothing is lost. A change to a mic role, a thread owner or a
+public interface also updates <code>architecture/stella-architecture.md</code> in the same commit.</p>
+<h2 id="how-devices-find-the-pi-motiailocal-mdns">How devices find the Pi: <code>motiAi.local</code> (mDNS)</h2>
+<p>Every device on a network has an IP address (like <code>192.168.11.204</code>), but those <strong>change</strong>
+when you switch networks or the router hands out a new one. Hardcoding an IP means editing
+configs every time you move — annoying and fragile.</p>
+<p><strong>mDNS</strong> (multicast DNS) fixes this. It lets a device answer to a <strong>name</strong> instead of an IP,
+with no central server to set up. In plain terms:</p>
+<ul>
+<li>The Pi runs a tiny service (<strong>avahi</strong>) that announces on the local network:
+  <em>"Hi, I'm <code>motiAi</code> — reach me at whatever my current IP is."</em></li>
+<li>When a device wants the Pi, it asks the whole network at once (a <em>multicast</em> question):
+  <em>"Who is <code>motiAi.local</code>?"</em> The Pi hears it and replies with its current IP.</li>
+<li>The <code>.local</code> ending is the signal to use mDNS instead of normal internet DNS.</li>
+</ul>
+<p>So <strong><code>motiAi.local</code> just means "the Pi, wherever it is right now."</strong>
+- Home → it resolves to <code>192.168.11.x</code>; work → <code>192.168.1.x</code>. <strong>Same name, you change nothing.</strong>
+- Windows, macOS, iPhones and most Androids speak mDNS out of the box.</p>
+<p><strong>The one catch:</strong> mDNS relies on multicast, which some locked-down networks (corporate/guest
+WiFi) block. That's why the face controller has a <strong>fallback</strong>: if <code>motiAi.local</code> doesn't
+answer, it scans the local network for the Pi and remembers where it found it. Either way you
+never touch an IP.</p>
+<p><em>(The name comes from the Pi's hostname, <code>motiAi</code>. Rename the host and the <code>.local</code> name
+follows.)</em></p>
+<h2 id="index">Index</h2>
+<ul>
+<li><strong>Architecture</strong></li>
+<li><a href="architecture__stella-architecture.html">stella-architecture.md</a> — <strong>the canonical, current architecture</strong> (sections 0–14).</li>
+<li><code>architecture/archive/</code> — <a href="architecture__archive__stella-architecture-2026-09-19.html">2026-09-19 layout, Guardian, self-evolution</a>
+    and <a href="architecture__archive__stella-architecture-2026-09-13.html">2026-09-13 capability stack, Hailo + NVIDIA plan, roadmap</a>;
+    superseded, kept for history.</li>
+<li><strong>Operator</strong></li>
+<li><a href="docs__CONTINUE.html">CONTINUE.md</a> — where we are, open items, next steps.</li>
+<li><strong>Hardware</strong></li>
+<li><a href="hardware__wiring.html">Wiring &amp; connection map</a></li>
+<li><a href="hardware__bom.html">Bill of materials</a></li>
+<li><a href="hardware__hailo.html">Hailo-10H NPU — usage, kernel-upgrade fix, base packages</a></li>
+<li><a href="hardware__face-subsystem.html">Screen face subsystem</a> — <strong>live</strong>: <code>face_bridge/</code> serves the animated face on
+    <code>http://&lt;pi&gt;:8080</code> (ws <code>/ws</code>), shown on voice command; <a href="hardware__tablet-setup.html">tablet setup checklist</a> for the
+    planned dedicated Teclast P30T screen.</li>
+<li><strong>Firmware</strong></li>
+<li><a href="firmware__hand-esp32.html">ESP32-S3 robotic hand</a> — serial protocol, I2C, servo/finger map (host tool: <code>tools/handctl.py</code>).</li>
+<li><strong>Schematics</strong></li>
+<li><a href="schematics__system-overview.html">System overview</a></li>
+<li><strong>Briefs</strong></li>
+<li><a href="briefs__robot-face-tablet-brief.html">Robot face tablet subsystem</a> — the original proposal for the tablet face. The
+    bridge and web face are built (see Hardware above); the dedicated tablet is still to be set up.</li>
+<li><strong>Decisions</strong></li>
+<li><a href="decisions__log.html">Decision log</a></li>
+<li><strong>Bugs</strong> — <a href="bug_report__README.html">bug_report/</a> (one file per fixed bug; reverted fixes are marked in place)</li>
+</ul>
+</div>
+</body>
+</html>

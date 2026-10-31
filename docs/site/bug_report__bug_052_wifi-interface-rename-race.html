@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bug #052 — Stella off home WiFi: onboard radio renamed wlan0 -&gt; wlan1 (boot race)</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="bug-052-stella-off-home-wifi-onboard-radio-renamed-wlan0-wlan1-boot-race">Bug #052 — Stella off home WiFi: onboard radio renamed wlan0 -&gt; wlan1 (boot race)</h1>
+<ul>
+<li><strong>Date found:</strong> 2026-09-20 (she appeared "dead"; only RobotNet reachable)</li>
+<li><strong>Status:</strong> fixed</li>
+<li><strong>Area:</strong> network</li>
+<li><strong>Files touched:</strong> <code>/etc/netplan/50-cloud-init.yaml</code> (system file, not in repo)</li>
+<li><strong>Commit(s):</strong> n/a (system config; documented here)</li>
+</ul>
+<h2 id="symptom">Symptom</h2>
+<p>Stella unreachable on the home network and not on any home IP; her RobotNet AP (10.0.0.1, USB dongle) still worked. <code>iw dev</code> showed the onboard radio as <code>wlan1</code>, no <code>wlan0</code>; <code>sudo iw dev wlan0 scan</code> -&gt; "No such device (-19)".</p>
+<h2 id="root-cause">Root cause</h2>
+<p>Boot-order race between the two WiFi radios. Kernel log: <code>rtl8821au ... wlx984827df22bb: renamed from wlan0</code> — the USB dongle enumerated first and took <code>wlan0</code>, then udev renamed it to its predictable <code>wlx...</code> name, leaving the onboard brcmfmac as <code>wlan1</code>. The netplan only configured <code>wlan0</code>, so the onboard never joined home WiFi. Nondeterministic: worked for weeks, then this boot the order flipped. Not a power/undervoltage event (throttled=0x0 this boot).</p>
+<h2 id="fix">Fix</h2>
+<p>Configure BOTH <code>wlan0</code> and <code>wlan1</code> in <code>/etc/netplan/50-cloud-init.yaml</code> (same home AP, <code>optional: true</code>, DHCP), so whichever name the onboard radio gets, it connects. netplan's networkd backend does NOT support <code>match: macaddress</code> for wifis (only by interface name), so MAC-matching is not an option; dual-name is the working approach. Applied with <code>sudo netplan apply</code> (no reboot). Result: onboard came up as wlan1 at 192.168.11.204, RobotNet unchanged.</p>
+<h2 id="how-to-verify">How to verify</h2>
+<p><code>ip -br addr | grep 192.168.11</code> shows the onboard WiFi with a home IP; <code>iw dev &lt;name&gt; link</code> shows SSID "Arik -2.4G-ext". Survives a reboot regardless of which name the onboard gets.</p>
+<h2 id="will-it-come-back">Will it come back?</h2>
+<p>No — both names are covered. A permanent alternative is a systemd .link file pinning the onboard MAC (88:a2:9e:ab:1a:d9) to a fixed name; not needed now. Related, still-open: the Ethernet-cable brownout power-offs are a separate issue.</p>
+</div>
+</body>
+</html>

@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Firmware — ESP32-S3 Robotic Hand</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="firmware-esp32-s3-robotic-hand">Firmware — ESP32-S3 Robotic Hand</h1>
+<p>Firmware source: <code>firmware/hand/hand.ino</code>. Host-side helper: <code>firmware/handctl.py</code>.
+Pi-side driver: <code>parts_used/esp32_hand.py</code>.</p>
+<h2 id="target-toolchain">Target / toolchain</h2>
+<ul>
+<li><strong>Board:</strong> ESP32-S3-WROOM-1</li>
+<li><strong>arduino-cli</strong>, FQBN <code>esp32:esp32:esp32s3</code></li>
+<li><strong>Serial:</strong> <code>/dev/ttyACM0</code> (CH343 USB-serial), 115200 baud, newline-terminated ASCII</li>
+</ul>
+<h2 id="i2c-pwm">I2C / PWM</h2>
+<ul>
+<li>I2C to PCA9685 at address <strong>0x40</strong>, <strong>SDA = GPIO 8, SCL = GPIO 9</strong>.</li>
+<li>PCA9685 driven by raw register writes. <code>setFreq()</code> <strong>clears the SLEEP bit</strong> before setting
+  the prescaler, or the servos won't move:
+  <code>write MODE1 0x10 (sleep) → set PRESCALE → 0x20 (wake) → 0xA0 (auto-increment + restart)</code>.</li>
+<li>PWM ~50 Hz; per-servo pulse calibration for open/closed positions.</li>
+</ul>
+<h2 id="servo-finger-map-pca9685-channel">Servo → finger map (PCA9685 channel)</h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Channel</th>
+<th>Finger</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">0</td>
+<td>Pinky</td>
+</tr>
+<tr>
+<td style="text-align: center;">1</td>
+<td>Ring</td>
+</tr>
+<tr>
+<td style="text-align: center;">2</td>
+<td>Middle</td>
+</tr>
+<tr>
+<td style="text-align: center;">3</td>
+<td>Index</td>
+</tr>
+<tr>
+<td style="text-align: center;">4</td>
+<td>Thumb</td>
+</tr>
+</tbody>
+</table>
+<p>On boot / serial connect the ESP32 resets and <strong>homes to a closed fist</strong>.</p>
+<h2 id="serial-command-protocol-pi-esp32">Serial command protocol (Pi → ESP32)</h2>
+<p>One command per line, lowercase ASCII + <code>\n</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fist</code></td>
+<td>Close all fingers (home pose)</td>
+</tr>
+<tr>
+<td><code>open</code></td>
+<td>Open all fingers</td>
+</tr>
+<tr>
+<td><code>hello</code></td>
+<td>Wave gesture (greeting)</td>
+</tr>
+<tr>
+<td><code>middle</code></td>
+<td>Raise middle finger ~3 s, then lower</td>
+</tr>
+<tr>
+<td><code>middlehold</code></td>
+<td>Raise middle finger and <strong>keep</strong> it up until told to lower</td>
+</tr>
+<tr>
+<td><code>point</code></td>
+<td>Index finger only</td>
+</tr>
+<tr>
+<td><code>peace</code></td>
+<td>Index + middle (victory)</td>
+</tr>
+<tr>
+<td><code>thumbs</code></td>
+<td>Thumbs-up</td>
+</tr>
+<tr>
+<td><code>count &lt;n&gt;</code></td>
+<td>Show a number of fingers</td>
+</tr>
+<tr>
+<td><code>set &lt;5 bits&gt;</code></td>
+<td>Per-finger open/closed mask — used by the <strong>hand-mirror</strong> (e.g. <code>set 10100</code>)</td>
+</tr>
+<tr>
+<td><code>lower</code> / <code>rest</code></td>
+<td>Return the hand to a fist</td>
+</tr>
+</tbody>
+</table>
+<p>Bit order for <code>set</code> matches the channel map above (pinky … thumb).</p>
+<h2 id="pi-side-driver-notes-parts_usedesp32_handpy">Pi-side driver notes (<code>parts_used/esp32_hand.py</code>)</h2>
+<ul>
+<li>Holds <strong>one persistent serial link</strong> (the ESP32 keeps its pose between commands; it only
+  resets on (re)connect).</li>
+<li><code>reconnect(port)</code> re-opens the link — used by the hardware watchdog when <code>/dev/ttyACM*</code>
+  renumbers or the link goes dead.</li>
+<li>Friendly gesture names map to firmware commands via the <code>GESTURES</code> dict.</li>
+</ul>
+<h2 id="gotchas">Gotchas</h2>
+<ul>
+<li>If nothing moves: check the SLEEP-bit sequence and that <strong>external servo power</strong> is present
+  with a <strong>common ground</strong>.</li>
+<li>The classic-ESP32 pin GPIO22 does not exist on the S3 — I2C was moved to GPIO 8/9 for that
+  reason.</li>
+</ul>
+</div>
+</body>
+</html>

@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>parts_used — one file per physical part</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="parts_used-one-file-per-physical-part">parts_used — one file per physical part</h1>
+<p>Every sensor, actuator, radio or accelerator that Stella is built from has exactly one
+file here with one main class. These files talk to hardware and nothing else: no
+"greet when a face appears" logic, no LLM calls. The capability code in <code>modules/</code>
+receives these objects from <code>main.py</code> and uses them.</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Class</th>
+<th>Part</th>
+<th>Interface</th>
+<th>Config</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>camera_usb.py</code></td>
+<td><code>CameraManager</code>, <code>Frame</code></td>
+<td>USB webcam (auto‑detected by name, CSI nodes skipped) — the only <code>cv2.VideoCapture</code> on the live path</td>
+<td>V4L2 <code>/dev/video*</code></td>
+<td><code>hardware.camera_*</code></td>
+</tr>
+<tr>
+<td><code>audio_devices.py</code></td>
+<td><code>AudioManager</code>, <code>AudioDevice</code> (→ <code>find_input_index()</code> by‑id resolver, deep‑clean fix)</td>
+<td>The two microphones and their roles: WAKE = camera built‑in mic (card <code>Camera</code>), COMMAND = USB PnP Sound Device (card <code>Device</code>); speaker role</td>
+<td>ALSA <code>/dev/snd/by-id</code> / PortAudio</td>
+<td><code>hardware.*microphone*</code>, <code>hardware.audio_output_*</code></td>
+</tr>
+<tr>
+<td><code>audio_portaudio.py</code></td>
+<td><code>get_pa()</code>, <code>open_lock()</code> (→ <code>MicStream</code>, <code>open_input()</code>, deep‑clean fix)</td>
+<td>The single process‑wide PortAudio instance (a second <code>Pa_Initialize</code> crashes the Pi) and the owner‑thread guard for every stream</td>
+<td>PortAudio</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>audio_arbiter.py</code></td>
+<td><code>AudioArbiter</code></td>
+<td>Who owns the one speaker right now (speech ducks music)</td>
+<td>—</td>
+<td><code>music.duck_volume</code></td>
+</tr>
+<tr>
+<td><code>hailo_10h.py</code></td>
+<td><code>HailoDetector</code>, <code>Detection</code></td>
+<td>Object detector: OpenCV‑DNN CPU path on <code>data/models/yolov8n.onnx</code> is the live path; the Hailo path waits for the runtime repair (pip <code>hailort</code> is ABI‑broken)</td>
+<td>ONNX / HailoRT</td>
+<td><code>system.enable_hailo</code>, <code>model.object_*</code></td>
+</tr>
+<tr>
+<td><code>esp32_hand.py</code></td>
+<td><code>Hand</code></td>
+<td>5‑finger hand (ESP32‑S3 + PCA9685), persistent serial link</td>
+<td>USB serial <code>/dev/ttyACM0</code></td>
+<td><code>hand.*</code></td>
+</tr>
+<tr>
+<td><code>microcontroller_bridge.py</code></td>
+<td><code>MicrocontrollerController</code> + transports</td>
+<td><strong>The only MCU command path</strong>: hardware‑agnostic sink for real‑world commands (serial / network / null)</td>
+<td>serial or HTTP</td>
+<td><code>microcontroller.*</code></td>
+</tr>
+<tr>
+<td><code>wifi_adapter.py</code></td>
+<td>helpers <code>is_online()</code>, <code>scan()</code>, <code>connect()</code>, QR read</td>
+<td>Onboard WiFi + sudoers helper (<code>deploy/wifi-helper.sh</code>)</td>
+<td>nmcli/wpa_cli</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>rc_toy.py</code></td>
+<td><code>RCToy</code></td>
+<td>RC toy chassis (not chosen yet) — safe no‑op until <code>rc_toy.connected: true</code></td>
+<td>null / ESP32 serial / BLE / WiFi</td>
+<td><code>rc_toy.*</code></td>
+</tr>
+</tbody>
+</table>
+<p>Removed 2026-09-27 (no importer anywhere): <code>esp32_controller.py</code> (superseded by <code>microcontroller_bridge.py</code>) and
+<code>sim7600x_modem.py</code> (modem not fitted; its import‑time serial probe blocked every <code>config.settings</code> import).</p>
+<p>Not a file here but a part: the <strong>Hailo‑10H as LLM</strong> is served by the system service
+<code>hailo-ollama</code> (port 8000) and used by <code>modules/ai/ai_engine.py</code>; the <strong>screen face</strong> is
+<code>face_bridge/</code> (<code>:8080</code>); <strong>smart‑home devices</strong> (Sensibo AC, Tuya plug, MQTT relays) are external
+devices, so they live in <code>modules/smart_home/</code>.</p>
+<h2 id="contract-for-a-part-file">Contract for a part file</h2>
+<pre><code class="language-python">class MyPart:
+    def __init__(self, config): ...
+    def is_available(self) -&gt; bool: ...   # is the hardware actually present right now?
+    def start(self) -&gt; bool: ...          # never raise; return False and log once
+    def stop(self) -&gt; None: ...
+</code></pre>
+<ul>
+<li><strong>Resolve devices by stable identity, never by index</strong>: <code>/dev/snd/by-id</code> symlink → <code>controlC&lt;N&gt;</code> → the PortAudio
+  entry whose name contains <code>(hw:N,</code> for microphones; ALSA card id string (<code>hw:CARD=Camera</code>) for mixer controls; USB
+  VID:PID or by‑id for serial. ALSA card numbers and PortAudio indices both change across reboots and replugs.
+  An unresolved device is an ERROR + backoff, never a silent fall‑through to <code>default</code>.</li>
+<li><strong>One thread owns a PortAudio stream</strong>: the thread that opens a stream is the only one that reads, stops and closes
+  it (<code>MicStream</code> raises otherwise). Never abandon a thread holding a stream; a close/join timeout is terminal for that
+  device in this process (flag it, let the watchdog recover). Never construct a second <code>pyaudio.PyAudio()</code>. Wake and
+  command must be two different devices (bug_028, bug_054, bug_055; architecture doc §4).</li>
+<li>Missing hardware is normal (bench, travel): log once, back off, keep the rest of Stella alive.</li>
+<li>Add a new part = one new file here + a config block + a line in this table. The
+  self‑evolution manifest (<code>evolution/manifest.py</code>) picks it up from this folder.</li>
+</ul>
+<p>Wiring and power details: <a href="hardware__wiring.html">docs/hardware/wiring.md</a>,
+<a href="hardware__hailo.html">docs/hardware/hailo.md</a>. Canonical audio design:
+<a href="architecture__stella-architecture.html#4-audio--the-canonical-two-mic-design">docs/architecture/stella-architecture.md §4</a>.</p>
+</div>
+</body>
+</html>

@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>evolution — Stella&#x27;s self‑improvement system</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="evolution-stellas-selfimprovement-system">evolution — Stella's self‑improvement system</h1>
+<blockquote>
+<p><strong>DISABLED (operator decision, 2026-09-27):</strong> no autonomous runs. <code>evolution/AUTORUN_DISABLED</code> exists and the cron entry was removed; <code>nightly.sh</code> exits immediately while the marker is present. Guardian is still used by <code>deploy/deploy.sh</code> on every manual deploy. Nothing here ever installed packages or edited code (Scout is report-only; Lab/Builder were never built).</p>
+</blockquote>
+<p>Goal: Stella knows what she is, checks her own health, looks for ways to get better, and
+tells Moti every morning — using <strong>free models only</strong> (hailo‑ollama → Groq → Gemini; never
+a paid API) and <strong>never changing herself without a safety net</strong>. Design:
+<a href="architecture__stella-architecture.html#10-evolution-and-deploy">docs/architecture/stella-architecture.md §10</a>.</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Role</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>guardian.py</code></td>
+<td><strong>Deterministic health check</strong> (no LLM): syntax, imports, config, service up &amp; stable, log errors/fatal patterns, hardware present, offline brain answers, disk/RAM/temperature/<strong>undervoltage</strong>. Exit 0/1, JSON report in <code>reports/guardian-latest.json</code>. A <code>tests</code> step that runs <code>pytest tests/ -q</code> is being added in the 2026-09-27 deep clean.</td>
+<td>live</td>
+</tr>
+<tr>
+<td><code>manifest.py</code></td>
+<td>Builds <code>stella_manifest.yaml</code> (repo root, <strong>generated — gitignored</strong>, never commit it): hardware detected now, models on disk, providers with keys, services, capabilities from config, recurring bugs from <code>bug_report/</code>.</td>
+<td>live</td>
+</tr>
+<tr>
+<td><code>db.py</code></td>
+<td><code>evolution.db</code> (SQLite, gitignored): <code>candidates</code>, <code>runs</code>, <code>llm_calls</code>.</td>
+<td>live</td>
+</tr>
+<tr>
+<td><code>llm_client.py</code></td>
+<td>Free‑only LLM for the agents; every call logged with purpose + tokens.</td>
+<td>live</td>
+</tr>
+<tr>
+<td><code>scout.py</code></td>
+<td>Looks for upgrades (PyPI versions of AI packages, GitHub releases of Piper/Vosk/openWakeWord/faster‑whisper/Ultralytics, Hailo model zoo), scores relevance with the LLM against the manifest. <strong>Report‑only — installs nothing.</strong></td>
+<td>live</td>
+</tr>
+<tr>
+<td><code>report.py</code></td>
+<td>Morning report <code>reports/YYYY-MM-DD.md</code> + 5‑line Telegram summary (Guardian, power/thermal events, errors, Scout findings, open recurring bugs).</td>
+<td>live</td>
+</tr>
+<tr>
+<td><code>nightly.sh</code></td>
+<td>03:00 daily: skip if an SSH connection is established, the tree is dirty, load ≥ 3 or disk &lt; 2 GB; then manifest → Guardian → Scout (900 s cap) → report under <code>nice -n 15</code>; log in <code>reports/nightly.log</code>. <strong>Scheduled by the user crontab</strong> — <code>crontab -l</code> shows <code>0 3 * * * /home/moti_ai/AIRobot_v2.0/evolution/nightly.sh</code>. That crontab line is the one and only scheduler.</td>
+<td>live</td>
+</tr>
+<tr>
+<td><code>deploy/stella-evolution.service</code> + <code>.timer</code></td>
+<td>systemd equivalent of the crontab line — an <strong>optional sudo alternative, not installed</strong> (<code>systemctl list-timers</code> shows no stella timer). Do not install both.</td>
+<td>optional</td>
+</tr>
+<tr>
+<td>Lab (sandbox tests) / Builder (auto‑merge) / hardware inbox</td>
+<td><strong>Deferred to v3</strong> on purpose: a small model must not install packages into a running robot unsupervised. When added they sit behind <code>evolution.require_operator_approval: true</code> (approval by Telegram reply).</td>
+<td>planned</td>
+</tr>
+</tbody>
+</table>
+<h2 id="deploying-safely">Deploying safely</h2>
+<pre><code class="language-bash">git commit -am &quot;...&quot;          # the commit IS the rollback point (deploy.sh refuses a dirty tree)
+deploy/deploy.sh              # restart → Guardian --wait → if unhealthy: git reset --hard HEAD~1 + restart + Telegram
+deploy/deploy.sh &lt;good-sha&gt;   # roll back to a specific commit on failure
+</code></pre>
+<p>Guardian alone: <code>venv/bin/python evolution/guardian.py [--wait] [--require-hailo] [--no-brain]</code>.
+One audio change per day, then a 24 h soak (<code>NRestarts=0</code>, zero <code>Could not open</code> lines) before the next.</p>
+<h2 id="rules">Rules</h2>
+<ol>
+<li>Guardian never uses an LLM. Pass/fail is a script.</li>
+<li>Nothing in <code>evolution/</code> edits code, config, <code>.env</code>, systemd or the network. Scout writes to
+   the database and the report only.</li>
+<li>Runs pause while the operator is working (open SSH session or dirty git tree).</li>
+<li>Secrets are read from <code>.env</code> only, never logged.</li>
+<li>Generated files (<code>stella_manifest.yaml</code>, <code>reports/*.json</code>, <code>evolution.db</code>) are gitignored so a nightly run can
+   never dirty the tree and disable itself or <code>deploy.sh</code>.</li>
+</ol>
+</div>
+</body>
+</html>

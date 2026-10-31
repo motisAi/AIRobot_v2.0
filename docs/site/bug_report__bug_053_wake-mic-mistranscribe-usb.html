@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bug #053 — &quot;Hey Stella&quot; not detected: wake mic mistranscribes on the USB dongle mic</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="bug-053-hey-stella-not-detected-wake-mic-mistranscribes-on-the-usb-dongle-mic">Bug #053 — "Hey Stella" not detected: wake mic mistranscribes on the USB dongle mic</h1>
+<ul>
+<li><strong>Date found:</strong> 2026-09-26</li>
+<li><strong>Status:</strong> verified (2026-09-26 journal: wake stream on the camera mic, <code>Wake word detected</code> at 21:12:09, <code>NRestarts=0</code>)</li>
+<li><strong>Area:</strong> audio</li>
+<li><strong>Files touched:</strong> <code>config/config.yaml</code></li>
+<li><strong>Commit(s):</strong> d3b2577 (wake back to the camera mic); a2e3229 (two-mic layout restored after the bug_055 detour)</li>
+<li><strong>Superseded by:</strong> —</li>
+<li><strong>Reverted:</strong> — (the intermediate single-mic detour 2051a76 that followed this fix is recorded in bug_055)</li>
+</ul>
+<h2 id="symptom">Symptom</h2>
+<p>She recognises Moti on camera but does not respond to "Hey Stella". The wake mic hears audio (log shows "wake heard: ...") but Vosk mistranscribes it ("good luck to the moon", "richard"), so it never matches "stella".</p>
+<h2 id="root-cause">Root cause</h2>
+<p>Bug_046 moved the wake mic onto the dedicated USB PnP dongle (card 0) to dodge a stall. That mic has Auto Gain Control and poor pickup at conversational distance, so Vosk gets garbage and the wake never matches. It's a mic-quality problem, not a stall — the mic is capturing.</p>
+<h2 id="fix">Fix</h2>
+<p>Point the wake mic back at the camera mic ("Auto Focus Camera", ALSA card 3 / id <code>Camera</code>), which historically detected "stella" reliably and is better positioned. The stall that motivated bug_046 is handled by the wake-loop self-heal (dead-stream reopen). Command STT stays on the USB PnP mic (card 0 / id <code>Device</code>). This is the <strong>canonical two-mic layout</strong> — roles, by-id names, rates, thread ownership and the handoff sequence are specified in
+<a href="architecture__stella-architecture.html#4-audio--the-canonical-two-mic-design">docs/architecture/stella-architecture.md §4</a>; every other mention of mic roles in the repo defers to that section.</p>
+<p>(The original text here said the stall was "separately handled by the command-mic reader-thread (bug_049)". That reader thread was reverted the same afternoon — bug_054/bug_055 — and is not part of the design.)</p>
+<h2 id="how-to-verify">How to verify</h2>
+<p>Say "Hey Stella": <code>journalctl -u airobot | grep "Wake word detected"</code> grows; "wake heard" lines resemble real words, not gibberish; the wake stream opens on the camera mic (<code>Vosk wake mic open at 48000 Hz (device 2)</code> where device 2 is <code>Auto Focus Camera: USB Audio (hw:3,0)</code> in the boot device table).</p>
+<p>Verified 2026-09-26 after a2e3229 (20:26): <code>Vosk wake mic open at 48000 Hz (device 2)</code> at 20:26:45; <code>Wake word detected (method=vosk, confidence=0.90)</code> at 21:12:09 followed by <code>Pausing wake-word listener</code> and, at 21:13:02, <code>Wake-word listener resumed</code> + reopen; 0 <code>Could not open</code> / <code>Timed out</code> lines; <code>NRestarts=0</code>. The 10-cycle count from the architecture doc §13 checklist is still to be logged here.</p>
+<h2 id="will-it-come-back">Will it come back?</h2>
+<p>The durable cure is a proper "Hey Stella" model (openWakeWord, needs Moti's voice clips) or the dedicated INMP441 I2S mics — both planned. If the camera mic stalls under heavy video load, the self-heal reopens it within ~20 s. Moving the wake role to the USB PnP mic again would bring this bug back: the two-mic assignment is an invariant, not a tuning knob.</p>
+</div>
+</body>
+</html>

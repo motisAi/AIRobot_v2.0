@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bug #046 — &quot;No response to Hey Stella&quot; after a while (wake mic stream went silent)</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="bug-046-no-response-to-hey-stella-after-a-while-wake-mic-stream-went-silent">Bug #046 — "No response to Hey Stella" after a while (wake mic stream went silent)</h1>
+<ul>
+<li><strong>Date found:</strong> 2026-09-19</li>
+<li><strong>Status:</strong> fixed (fix step 1 stands; fix step 2 — wake mic on the USB dongle — superseded)</li>
+<li><strong>Area:</strong> audio</li>
+<li><strong>Files touched:</strong> <code>modules/audio/wake_word.py</code>, <code>config/config.yaml</code></li>
+<li><strong>Commit(s):</strong> 743ef31 (2026-09-19 wake-mic commit)</li>
+<li><strong>Superseded by:</strong> bug_053 (wake mic moved back to the camera mic, d3b2577)</li>
+<li><strong>Reverted:</strong> fix step 2 (wake on "USB PnP Sound Device") reverted by d3b2577 on 2026-09-26; the current layout is wake = camera mic, command = USB PnP — see <code>docs/architecture/stella-architecture.md</code> §4</li>
+</ul>
+<h2 id="symptom">Symptom</h2>
+<p>She recognised Moti and answered normally, then after some minutes "Hey Stella" got no response at all. Face detection kept working the whole time.</p>
+<h2 id="root-cause">Root cause</h2>
+<p>The wake-word listener was opening the microphone built into the USB "Auto Focus Camera" (via the ambiguous PortAudio "sysdefault" device). That mic shares one USB device with the camera video; under continuous camera+face-recognition load the audio stream went silent while still "open" — no exception, no kernel USB error, just zero audio. The wake loop only recovered from a failure to OPEN the stream, not from a stream that goes silent while open, so it never reopened. Vosk produced no results for minutes (log: last "wake heard" then silence while faces kept detecting).</p>
+<h2 id="fix">Fix</h2>
+<ol>
+<li><code>wake_word.py</code>: self-heal the read loop — reopen the stream after repeated read errors, and detect a dead stream (long run of exact-zero frames; a live mic never returns perfect digital silence) and reopen it (~20 s of zeros). <strong>This part stands.</strong></li>
+<li><code>config.yaml</code>: move the wake mic off the camera's shared mic to the dedicated <strong>USB PnP Sound Device</strong>. <strong>Superseded:</strong> the dongle has AGC and poor pickup at conversational distance, so Vosk mistranscribed and the wake never matched (bug_053). d3b2577 moved the wake mic back to the camera mic; the self-heal from step 1 covers the stall that motivated this move. Do not move the wake mic to the USB PnP device again — that device is the command mic.</li>
+</ol>
+<h2 id="how-to-verify">How to verify</h2>
+<p><code>journalctl -u airobot | grep "wake heard"</code> keeps producing lines over time; "Hey Stella" responds after long idle periods and after heavy camera use. If a stream ever dies, the log shows "Wake mic went silent (dead stream) — reopening". The wake stream must open on the camera mic: <code>Vosk wake mic open at 48000 Hz (device &lt;hw:3 entry&gt;)</code>.</p>
+<h2 id="will-it-come-back">Will it come back?</h2>
+<p>The self-heal recovers from any silent/failed stream regardless of cause. The durable hardware fix is dedicated I2S mics (INMP441) instead of USB audio; planned. Related audio-flakiness: bug_002, bug_009, bug_010, bug_037; the mic-role history continues in bug_053 and bug_055.</p>
+</div>
+</body>
+</html>

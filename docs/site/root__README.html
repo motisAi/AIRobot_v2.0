@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stella — Smart Self‑Learning AI Robot 🤖</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="stella-smart-selflearning-ai-robot">Stella — Smart Self‑Learning AI Robot 🤖</h1>
+<p>Stella runs on a <strong>Raspberry Pi 5 + Hailo‑10H NPU</strong> (Ubuntu Server 24.04, headless), with a
+USB camera (+ mic), a USB mic, a <strong>5‑finger robotic hand</strong> (ESP32‑S3 + PCA9685), an on‑demand
+animated <strong>face</strong> on a PC/phone screen, and a two‑way <strong>Telegram</strong> link. She recognises faces,
+holds a spoken conversation, thinks with cloud LLMs and falls back to an on‑device LLM when
+offline, sees through a vision model, detects objects, plays music, guards the home, controls
+smart‑home devices, gestures and mirrors your hand, and has a cheeky personality with a memory.</p>
+<p>Everything is driven by one human‑editable file — <strong><code>config/config.yaml</code></strong> — and all secrets
+live in <strong><code>.env</code></strong> (never in git).</p>
+<blockquote>
+<p><strong>This file is the map.</strong> Each folder below has its own focused README where the detail lives.</p>
+</blockquote>
+<hr>
+<h2 id="where-everything-lives">Where everything lives</h2>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>What is in it</th>
+<th>Read more</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>main.py</code></td>
+<td>The entry point. Wires every part and module together, runs the systemd service.</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>config/</code></td>
+<td><code>config.yaml</code> (behaviour, the ONE file you edit), <code>settings.py</code> (typed config), <code>platforms/</code> (Pi 5 overrides).</td>
+<td>comments inside <code>config.yaml</code></td>
+</tr>
+<tr>
+<td><code>core/</code></td>
+<td><code>robot_brain.py</code> (event bus + robot state + memory), <code>watchdog.py</code> (restarts her when stuck).</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong><code>parts_used/</code></strong></td>
+<td><strong>One file per physical part</strong>: USB camera, audio devices, Hailo‑10H, ESP32 hand, microcontroller bridge, WiFi, RC toy.</td>
+<td><a href="parts_used__README.html">parts_used/README.md</a></td>
+</tr>
+<tr>
+<td><strong><code>modules/</code></strong></td>
+<td>Capabilities grouped by what they do: <code>ai/</code>, <code>audio/</code>, <code>vision/</code>, <code>conversation/</code>, <code>comms/</code>, <code>smart_home/</code>, <code>media/</code>, <code>navigation/</code>, <code>web/</code>.</td>
+<td><a href="modules__README.html">modules/README.md</a></td>
+</tr>
+<tr>
+<td><code>face_bridge/</code></td>
+<td>The screen face: WebSocket server + web app (<code>http://&lt;pi&gt;:8080</code>).</td>
+<td><a href="hardware__face-subsystem.html">docs/hardware/face-subsystem.md</a></td>
+</tr>
+<tr>
+<td><code>firmware/</code></td>
+<td>ESP32 sketches (hand, tests, I²C scan).</td>
+<td><a href="firmware__hand-esp32.html">docs/firmware/hand-esp32.md</a></td>
+</tr>
+<tr>
+<td><strong><code>evolution/</code></strong></td>
+<td>Stella's self‑improvement system: <strong>Guardian</strong> (health + rollback), manifest, Scout, reports.</td>
+<td><a href="evolution__README.html">evolution/README.md</a></td>
+</tr>
+<tr>
+<td><strong><code>bug_report/</code></strong></td>
+<td>One file per bug ever fixed: symptom → root cause → fix → how to verify. <strong>Check here before debugging anything.</strong></td>
+<td><a href="bug_report__README.html">bug_report/README.md</a></td>
+</tr>
+<tr>
+<td><code>tests/</code></td>
+<td>Smoke and invariant tests run by Guardian on every deploy (<code>test_imports</code>, <code>test_no_orphans</code>, <code>test_config_keys</code>, <code>test_audio_threading</code>, <code>test_mic_resolution</code>).</td>
+<td><a href="tests__README.html">tests/README.md</a></td>
+</tr>
+<tr>
+<td><code>tools/</code></td>
+<td>Operator scripts: enrol the master face, manage faces, check deps, hand control.</td>
+<td><a href="tools__README.html">tools/README.md</a></td>
+</tr>
+<tr>
+<td><code>deploy/</code></td>
+<td>systemd unit, <strong><code>deploy.sh</code></strong> (restart → Guardian → auto‑rollback), sudoers/WiFi helpers.</td>
+<td><a href="evolution__README.html#deploying-safely">evolution/README.md</a></td>
+</tr>
+<tr>
+<td><code>docs/</code></td>
+<td>The single architecture doc, dated decision log, hardware/wiring, briefs, CONTINUE.md.</td>
+<td><a href="docs__README.html">docs/README.md</a></td>
+</tr>
+<tr>
+<td><code>data/</code></td>
+<td>Runtime state, gitignored: models, faces DB, logs, memory DB, TTS cache.</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Architecture:</strong> <a href="architecture__stella-architecture.html">docs/architecture/stella-architecture.md</a> — the single
+current document (hardware, threads, config, the canonical two‑mic audio design, watchdog, evolution, layout,
+engineering rules, test checklist). The dated 2026‑09‑13 / 2026‑09‑19 documents are archived under
+<code>docs/architecture/archive/</code> and are history only.</p>
+<hr>
+<h2 id="capabilities">Capabilities</h2>
+<h3 id="voice-conversation">🎙️ Voice &amp; conversation</h3>
+<ul>
+<li><strong>Wake word</strong> ("Stella" / "hey Stella"), offline (Vosk; openWakeWord "Hey Stella" planned).</li>
+<li><strong>Two microphones, two roles, two devices</strong> — the camera's built‑in mic ("Auto Focus Camera") for the wake word,
+  the "USB PnP Sound Device" dongle for the command (voice‑activity detection ends the sentence). Canonical spec,
+  by‑id names and the handoff sequence: <a href="architecture__stella-architecture.html#4-audio--the-canonical-two-mic-design">architecture §4</a>.
+  No mic → she stays quiet instead of talking to herself.</li>
+<li><strong>Multi‑turn conversation</strong> — greets, chats, asks "anything else?" after silence, says goodbye.</li>
+<li><strong>Speech‑to‑text chain:</strong> Groq Whisper → Google → offline Vosk, with a hallucination filter.</li>
+<li><strong>Natural neural voice</strong> — Piper (offline). HDMI output auto‑detected, non‑HDMI fallback.</li>
+<li><strong>Language switch</strong> — <code>behavior.language: en | he</code>.</li>
+</ul>
+<h3 id="brain-llm-with-graceful-fallback">🧠 Brain (LLM) with graceful fallback</h3>
+<p>Tried in order per question; on error/rate‑limit she falls to the next:
+1. <strong>Groq <code>openai/gpt-oss-120b</code></strong> — smartest free model.
+2. <strong>Groq <code>openai/gpt-oss-20b</code></strong> — separate rate limit.
+3. <strong>Gemini <code>gemini-3.6-flash</code></strong> — separate provider, separate quota.
+4. <strong>On‑device Hailo‑10H NPU (<code>qwen2.5-instruct:1.5b</code> via hailo‑ollama)</strong> — free, offline.</p>
+<p>When she is offline (network monitor), cloud providers are skipped entirely, so an offline
+answer takes ~0.2 s to start instead of ~90 s. Per‑user memory lives in a SQLite DB;
+anti‑fabrication rules stop her inventing facts or firing tools on filler.</p>
+<h3 id="agent-tools-she-picks-them-herself">🤖 Agent tools (she picks them herself)</h3>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_time</code> / <code>get_weather</code></td>
+<td>Time in any timezone; live weather (wttr.in)</td>
+</tr>
+<tr>
+<td><code>web_search</code></td>
+<td>DuckDuckGo (free)</td>
+</tr>
+<tr>
+<td><code>look</code></td>
+<td>Describe the camera view / "what am I holding?" (Moondream VLM → NVIDIA NIM fallback)</td>
+</tr>
+<tr>
+<td><code>set_reminder</code></td>
+<td>"Remind me in 10 minutes to…" (survives restarts)</td>
+</tr>
+<tr>
+<td><code>control_device</code></td>
+<td>Smart‑home: Tuya plug → MQTT → wired microcontroller</td>
+</tr>
+<tr>
+<td><code>set_guard_mode</code></td>
+<td>Arm / disarm home guard</td>
+</tr>
+<tr>
+<td><code>send_telegram</code> / <code>send_photo</code></td>
+<td>Message or camera snapshot to your phone</td>
+</tr>
+<tr>
+<td><code>play_music</code> / <code>stop_music</code></td>
+<td>YouTube playback</td>
+</tr>
+<tr>
+<td><code>do_gesture</code></td>
+<td>Hand gestures: wave, thumbs_up, point, peace, fist, count, middle_finger…</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vision">👁️ Vision</h3>
+<ul>
+<li><strong>Face recognition + enrolment</strong> (YuNet detector + dlib embeddings, euclidean threshold 0.60, CPU) with master authentication for privileged actions.</li>
+<li><strong>Object detection</strong> — YOLOv8n via OpenCV‑DNN on CPU (<code>data/models/yolov8n.onnx</code>), 1 inference/s,
+  scene‑change events; the Hailo NPU serves only the offline LLM — the NPU vision path waits for the runtime repair (matched pyhailort wheel, not PyPI).</li>
+<li><strong>Scene understanding</strong> — cloud VLM (Moondream, NVIDIA NIM llama‑3.2‑11b‑vision).</li>
+<li><strong>Motion guard</strong> for the home‑guard mode; <strong>hand mirror</strong> (MediaPipe landmarks → servos).</li>
+</ul>
+<h3 id="robotic-hand-personality-home-guard-music-telegram">✋ Robotic hand · 🎭 Personality · 🛡️ Home guard · 🎵 Music · 📱 Telegram</h3>
+<p>Unchanged from before and documented in detail below. Sensibo AC, Tuya plugs and MQTT
+devices are controlled by voice or Telegram (master‑only).</p>
+<hr>
+<h2 id="everyday-commands">Everyday commands</h2>
+<ul>
+<li>"Stella… what's the weather in Tel Aviv?" · "what time is it in Tokyo?"</li>
+<li>"What do you see?" / "What am I holding?"</li>
+<li>"Play <em>Bohemian Rhapsody</em>" → "louder" / "pause" / "stop the music"</li>
+<li>"Remind me in 15 minutes to take out the laundry."</li>
+<li>"Copy my hand" → mirror → "stop copying" · "Give me a thumbs up" · "count to three"</li>
+<li>"Guard on" (goes quiet, armed) / "I'm home" / "Guard off" · "Turn on the AC, make it cold"</li>
+<li>"Show your face" / "show your face on phone" · "say <something> out loud" (she speaks it on her speaker)</li>
+<li>Telegram: "status", "send me a picture", "say ... out loud", or a 🎤 voice note, or <strong>send a 🎤 voice note</strong> — she transcribes it (Groq Whisper), runs it like a typed command, and answers in text <strong>and</strong> in her own voice</li>
+</ul>
+<h2 id="the-robotic-hand">The robotic hand</h2>
+<p><strong>Channels (PCA9685):</strong> <code>0=pinky 1=ring 2=middle 3=index 4=thumb</code>. Open <code>{1500,1500,1500,1500,2000}</code>,
+closed <code>{2600,2600,2600,2600,500}</code>. Firmware <code>firmware/hand/hand.ino</code> (ESP32‑S3, I²C GPIO 8/9,
+serial 115200 on <strong><code>/dev/ttyACM0</code></strong>). Stella holds one persistent link (<code>hand.enabled: true</code>);
+<strong>stop <code>airobot</code> before reflashing</strong>. Full protocol: <a href="firmware__hand-esp32.html">docs/firmware/hand-esp32.md</a>.</p>
+<h2 id="home-guard">Home guard</h2>
+<ol>
+<li>Arm: <em>"Stella, guard on"</em>, Telegram <code>guard on</code>, or dashboard.</li>
+<li>Movement / a body while armed → 📸 + <em>"Do you recognise this person? YES/NO"</em> on Telegram.</li>
+<li><strong>NO</strong> → <em>"Sound the alarm? YES"</em> → screamed alarm on the speaker.</li>
+<li>Disarm: your face (auto, after you were away &gt;60 s), <em>"guard off"</em> (master‑gated), Telegram, dashboard.</li>
+</ol>
+<hr>
+<h2 id="configuration-configconfigyaml">Configuration (<code>config/config.yaml</code>)</h2>
+<p>Sections: <code>behavior</code>, <code>ai</code> (provider chain), <code>conversation</code>, <code>music</code>, <code>web_search</code>, <code>hand</code>,
+<code>microcontroller</code>, <code>rc_toy</code>, <code>navigation</code>, <code>hardware</code> (camera, mics, audio out, Hailo),
+<code>model</code> (face threshold, Piper voice, STT, wake word), <code>system</code>, <code>security</code> (guard), <code>mqtt</code>.
+Every key is commented in the file.</p>
+<h2 id="secrets-env-mode-600-gitignored">Secrets (<code>.env</code>, mode 600, gitignored)</h2>
+<p><code>GROQ_API_KEY</code>, <code>GEMINI_API_KEY</code>, <code>MOONDREAM_API_KEY</code>, <code>NVIDIA_API_KEY</code>, <code>TELEGRAM_TOKEN</code>,
+<code>TELEGRAM_CHAT_ID</code>, <code>SENSIBO_API_KEY</code> (+ optional <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>).
+Edit a value → <code>sudo systemctl restart airobot</code>.</p>
+<h3 id="accounts-and-keys">Accounts and keys</h3>
+<p>Services behind those keys (no secrets here): Groq (console.groq.com), Google AI Studio (Gemini), Telegram BotFather,
+Sensibo, Moondream, NVIDIA NIM, and a Tuya IoT project (<code>devices.json</code> via <code>python -m tinytuya wizard</code>).
+No Picovoice account — Porcupine is not used.</p>
+<hr>
+<h2 id="run-ops">Run &amp; ops</h2>
+<pre><code class="language-bash">sudo systemctl restart airobot            # start/restart (autostarts on boot)
+journalctl -u airobot -f                  # live log        (app log: data/logs/stella.log)
+venv/bin/python evolution/guardian.py     # health check: syntax, imports, config, service, log, hardware, brain, power
+deploy/deploy.sh                          # after a commit: restart → Guardian → auto-rollback if unhealthy
+venv/bin/python tools/reenroll.py         # re-enrol the master face
+</code></pre>
+<p><strong>Rule for every change:</strong> commit → <code>deploy/deploy.sh</code> → push. Rollback is always
+<code>git reset --hard &lt;previous commit&gt;</code> + restart. Every fixed bug gets a file in <code>bug_report/</code>.</p>
+<h2 id="hardware-setup">Hardware setup</h2>
+<ul>
+<li><strong>Pi 5 + Hailo‑10H</strong>, USB camera (its built‑in mic = wake mic), USB PnP mic (= command mic), HDMI monitor or USB speaker for audio.
+  Use the official 27 W PSU; the Pi has powered off when the Ethernet cable was plugged in on a
+  weaker supply. No fan is fitted yet and she reaches the 80 °C soft limit under load.</li>
+<li><strong>Hand:</strong> ESP32‑S3 → PCA9685 <code>3V3→VCC, GND→GND, GPIO8→SDA, GPIO9→SCL</code>, servos on channels 0–4,
+  <strong>external 5–6 V</strong> into PCA9685 <strong>V+</strong> with a common ground. See <a href="hardware__wiring.html">docs/hardware/wiring.md</a>.</li>
+<li><strong>Hailo driver:</strong> rebuilt automatically after kernel upgrades once <code>linux-headers-raspi</code> is
+  installed; if <code>/dev/hailo0</code> is missing see <a href="bug_report__bug_011_hailo-driver-missing-after-kernel-upgrade.html">bug_report/bug_011</a>.</li>
+<li><strong>Deps:</strong> <code>arduino-cli</code> + <code>esp32</code> core, <code>yt-dlp</code> + <code>ffmpeg</code>, <code>mediapipe 0.10.18</code> + <code>opencv 4.11</code> +
+  <code>numpy&lt;2</code>, <code>face_recognition</code>, <code>vosk</code>, <code>piper</code>. Python deps: <code>requirements.txt</code>.</li>
+</ul>
+<h2 id="known-quirks">Known quirks</h2>
+<ul>
+<li>HDMI audio card numbers and USB device order reshuffle across reboots — devices are resolved by stable
+  identity (by‑id / card id), never by index. <strong>Two‑mic rule:</strong> wake and command must be two different devices
+  (wake = camera mic, command = USB PnP); a single shared mic fails (bug_055) and a helper thread for mic reads
+  crashes or leaks the device (bug_028, bug_054). A mic absent when the service started needs a restart until the
+  by‑id resolver with re‑init lands (architecture §4).</li>
+<li>Groq free tier rate‑limits (per‑minute and daily); Gemini and the NPU catch the overflow.</li>
+<li>Reflashing the ESP32 requires stopping <code>airobot</code> first (it holds the serial port).</li>
+<li>Everything else that ever went wrong, and how it was fixed: <a href="bug_report__README.html">bug_report/</a>.</li>
+</ul>
+</div>
+</body>
+</html>

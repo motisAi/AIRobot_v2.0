@@ -83,7 +83,9 @@ class WakeWordModule:
         # Fuzzy prefix for near-miss transcriptions, DERIVED from the wake word
         # so it follows config changes (e.g. "gonzo"->"gonz", "robby"->"robb").
         kw = self.keyword.split()[-1] if self.keyword else "gonzo"
-        self._wake_prefix = kw[:4] if len(kw) >= 4 else kw
+        # 5-char prefix ("stell"), not 4 ("stel"): a 4-char prefix + loose fuzzy
+        # matched common TV speech like "ella" and woke her to no one.
+        self._wake_prefix = kw[:5] if len(kw) >= 5 else kw
         self.detector_mode = self._select_mode()
         self.porcupine = None
         self._vosk_model = None
@@ -324,28 +326,32 @@ class WakeWordModule:
                 if actual_rate != TARGET_RATE:
                     frame = self._resample_to_16k(frame, actual_rate)
 
-                text = ""
+                # Match ONLY on FINAL results, never partials: partials are
+                # unstable and fired constant false wakes on TV/ambient speech.
                 if rec.AcceptWaveform(frame):
                     text = _json.loads(rec.Result()).get("text", "")
                     if text:
-                        # visibility: what the wake mic actually hears (finals only, no spam)
+                        # visibility: what the wake mic actually hears
                         self.logger.info("wake heard: %r", text[:80])
+                        if self._matches_wake(text):
+                            self._emit_detection(confidence=0.9, method="vosk")
+                            rec = KaldiRecognizer(self._vosk_model, TARGET_RATE)  # reset
+                            time.sleep(1.2)
                 else:
-                    text = _json.loads(rec.PartialResult()).get("partial", "")
-
-                if text and self._matches_wake(text):
-                    self._emit_detection(confidence=0.9, method="vosk")
-                    rec = KaldiRecognizer(self._vosk_model, TARGET_RATE)  # reset
-                    time.sleep(1.2)
+                    # drain partials so the recognizer streams, but do not match them
+                    rec.PartialResult()
         finally:
             _close()
 
     # Vosk's small EN model mis-renders "stella" wildly. These are the tokens it
     # actually produces for it (measured), plus near-spellings. Kept off the most
     # common English words to limit false wakes.
+    # Only very close mis-renders of "stella". Dropped common English words
+    # (taylor, sailor, settler, settlers, sella, stallion) that the TV said and
+    # falsely woke her.
     _WAKE_ALIASES = {
-        "stella", "stellar", "steller", "settler", "settlers", "sella",
-        "estella", "stellah", "stela", "taylor", "sailor", "stallion",
+        "stella", "stellar", "steller", "estella", "stellah", "stela",
+        "stellaa", "stellas",
     }
 
     @staticmethod
@@ -379,8 +385,10 @@ class WakeWordModule:
             return True
         if any(tok.startswith(self._wake_prefix) for tok in toks):
             return True
-        # close spelling to the actual keyword (e.g. "stellaa", "stela")
-        return any(len(tok) >= 4 and self._lev(tok, self.keyword) <= 2 for tok in toks)
+        # close spelling to the keyword, but TIGHT: distance <=1 and length >=5,
+        # so common short words ("ella", "sell", "tell") no longer match "stella".
+        kw = self.keyword.split()[-1] if self.keyword else self.keyword
+        return any(len(tok) >= 5 and self._lev(tok, kw) <= 1 for tok in toks)
 
     @staticmethod
     def _resample_to_16k(frame: bytes, src_rate: int) -> bytes:

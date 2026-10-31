@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>modules — capabilities, grouped by what they do</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="modules-capabilities-grouped-by-what-they-do">modules — capabilities, grouped by what they do</h1>
+<p>Each sub‑package is one capability. Modules never open hardware themselves; they get the
+<code>parts_used</code> objects (camera, audio, hand…) from <code>main.py</code>, and they talk to each other
+through the event bus in <code>core/robot_brain.py</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Package</th>
+<th>Files</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ai/</code></td>
+<td><code>ai_engine.py</code> (provider chain groq → groq_fast → gemini → hailo, tools, <code>online</code> flag), <code>learning_db.py</code> (SQLite memory <code>data/robot_memory.db</code>: people, objects, conversations, per‑person facts), <code>reminders.py</code>, <code>web_search.py</code> (DuckDuckGo)</td>
+<td>Thinking, memory, tools</td>
+</tr>
+<tr>
+<td><code>audio/</code></td>
+<td><code>wake_word.py</code> (Vosk "hey stella" on the <strong>camera mic</strong>; the wake‑word thread owns that stream; energy fallback, backoff when no mic, dead‑stream reopen), <code>speech_recognition.py</code> (<code>capture_utterance()</code> on the <strong>USB PnP mic</strong>, single‑thread + hard deadline; STT chain Groq Whisper → Google → Vosk, hallucination filter, <code>mic_available()</code>), <code>text_to_speech.py</code> (Piper via aplay, HDMI auto‑detect + espeak fallback), <code>spell_parser.py</code>. Canonical design: <a href="architecture__stella-architecture.html#4-audio--the-canonical-two-mic-design">docs/architecture/stella-architecture.md §4</a></td>
+<td>Hearing and speaking</td>
+</tr>
+<tr>
+<td><code>vision/</code></td>
+<td><code>face_recognition.py</code> (YuNet detector + dlib embeddings, euclidean 0.60, enrolment, master auth), <code>object_detection.py</code> (YOLOv8n via <code>parts_used/hailo_10h.py</code> on the CPU, every 4 s, scene‑change events), <code>motion_guard.py</code> (guard mode), <code>hand_mirror.py</code> (MediaPipe → hand), <code>vlm.py</code> (Moondream → NVIDIA NIM)</td>
+<td>Seeing</td>
+</tr>
+<tr>
+<td><code>conversation/</code></td>
+<td><code>manager.py</code> — the spoken session on its own thread: wake → listen → think → speak, plus keyword handlers (guard, AC, devices, music, mirror, face show/hide) all master‑gated; resumes the wake listener once at session end</td>
+<td>The dialogue loop</td>
+</tr>
+<tr>
+<td><code>comms/</code></td>
+<td><code>telegram_bridge.py</code> (two‑way chat, alerts, voice notes, YES/NO flows), <code>notify.py</code> (spoken/phone notifications)</td>
+<td>Talking to Moti's phone</td>
+</tr>
+<tr>
+<td><code>smart_home/</code></td>
+<td><code>sensibo.py</code> (AC, cloud API, cached state), <code>tuya_devices.py</code> (local plugs), <code>mqtt_devices.py</code> (mosquitto on the Pi, RobotNet relays)</td>
+<td>Controlling the house</td>
+</tr>
+<tr>
+<td><code>media/</code></td>
+<td><code>music.py</code> (yt‑dlp + ffmpeg, ducking, volume)</td>
+<td>Music</td>
+</tr>
+<tr>
+<td><code>navigation/</code></td>
+<td><code>navigator.py</code> — hooks for wheels/lidar/IMU (all off in config)</td>
+<td>Future driving</td>
+</tr>
+<tr>
+<td><code>web/</code></td>
+<td><code>dashboard.py</code> — <code>http://&lt;pi&gt;:5000</code> camera + conversation + guard control</td>
+<td>Local dashboard</td>
+</tr>
+</tbody>
+</table>
+<p>Removed 2026-09-27: <code>connectivity/</code> (<code>server_connection.py</code>, a dead remote‑server link over the never‑fitted 4G modem).</p>
+<h2 id="conventions">Conventions</h2>
+<ul>
+<li>Config comes from <code>config.settings</code> dataclasses (loaded from <code>config/config.yaml</code>); no
+  module reads YAML itself (<code>main.py</code>'s raw read of the <code>mqtt</code> section is listed debt — <code>MqttConfig</code> is coming).</li>
+<li>Time inside loops and watchdogs uses <code>time.monotonic()</code> (the wall clock jumps hours after
+  an offline boot syncs NTP — see <code>bug_report/bug_040</code>).</li>
+<li>Anything that can block (mic read, HTTP, subprocess) has a timeout; providers are skipped
+  when <code>engine.online</code> is false. A blocked mic read is bounded by the hard deadline and the two‑stage watchdog,
+  <strong>never by a helper thread</strong> (bug_028, bug_054).</li>
+<li>A PortAudio stream is opened, read and closed by one thread; wake and command are two different devices.</li>
+<li>A privileged action (devices, guard off, gestures on people, RC toy) goes through the
+  master check in <code>conversation/manager.py</code> or the equivalent tool gate in <code>ai/ai_engine.py</code>.</li>
+</ul>
+</div>
+</body>
+</html>

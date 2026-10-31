@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Screen Face Subsystem (M0 done + she&#x27;s alive)</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="screen-face-subsystem-m0-done-shes-alive">Screen Face Subsystem (M0 done + she's alive)</h1>
+<p>Stella shows an animated face on an external screen <strong>on voice command</strong>, and hides it
+to give the computer back. Currently running on the <strong>Surface Pro</strong> (dev/preview); will
+move to a dedicated tablet later. Fully additive — a failure never affects the robot.</p>
+<p><strong>Working now:</strong>
+- Show/hide by voice ("show your face" / "hide your face"), tolerant of STT mishears.
+- <strong>Drawn female face</strong> (hair, skin, brows, eyes+pupils+lashes, nose, lips) — a full face,
+  not floating features. (A photo "living-portrait" was tried and reverted — too crude.)
+- <strong>Emotions</strong> — expression matches her real mood: happy/sad/curious when she reads your
+  face on greeting, <code>alert</code> on a guard event, <code>listening</code> during a chat, <code>neutral</code> idle.
+- <strong>Eye-follow (gaze)</strong> — a Pi thread (<code>_start_gaze_feed</code>) streams your detected face centre
+  to the screen so her <strong>eyes follow you</strong> while the face is shown. Idle drift when no one's
+  seen. Flip <code>MIRROR_X</code> in <code>main._start_gaze_feed</code> if the direction feels reversed.
+- <strong>Lip-sync (v1)</strong> — her mouth moves whenever she speaks (real visemes can replace it later).
+- Auto-blink so she never looks frozen.
+- <code>GET /test</code> on the bridge = a visual self-test (go happy + talk 3s + relax).</p>
+<h2 id="how-it-works">How it works</h2>
+<pre><code> You: &quot;Stella, show your face&quot;
+   -&gt; manager._maybe_face()  -&gt; robot.face.show_face()   (Pi)
+   -&gt; face_bridge flips /display_state = {&quot;show&quot;: true}
+   -&gt; face_client.ps1 on the Surface polls that, launches Edge --kiosk at the face URL
+   -&gt; the face page connects back over WebSocket and renders (eyes/blink/gaze/mouth)
+ You: &quot;Stella, hide your face&quot;  -&gt; show=false -&gt; controller closes Edge.
+</code></pre>
+<h2 id="pieces">Pieces</h2>
+<table>
+<thead>
+<tr>
+<th>Where</th>
+<th>File</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Pi</td>
+<td><code>face_bridge/bridge.py</code></td>
+<td>aiohttp server on <strong>:8080</strong> — serves the face, WebSocket, <code>/display_state</code>, <code>/show</code>, <code>/hide</code>. Runs in its own thread.</td>
+</tr>
+<tr>
+<td>Pi</td>
+<td><code>face_bridge/webface/index.html</code></td>
+<td>The face (2D canvas: glowing eyes, blink, idle gaze, mouth; emotion presets ready for M1).</td>
+</tr>
+<tr>
+<td>Pi</td>
+<td><code>main.py</code></td>
+<td>Creates <code>self.face = FaceBridge(...)</code>, guarded.</td>
+</tr>
+<tr>
+<td>Pi</td>
+<td><code>modules/conversation/manager.py</code></td>
+<td><code>_maybe_face()</code> — the show/hide voice command.</td>
+</tr>
+<tr>
+<td>PC</td>
+<td><code>face_client/face_client.ps1</code></td>
+<td>Controller: finds the Pi, polls, launches/kills Edge kiosk.</td>
+</tr>
+<tr>
+<td>PC</td>
+<td><code>face_client/start-face-controller.cmd</code></td>
+<td>Double-click to run the controller.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="network-independent-home-work-anywhere">Network-independent (home / work / anywhere)</h2>
+<p>The controller finds the Pi in this order, so a changing IP/subnet needs <strong>no edits</strong>:
+1. <strong>mDNS</strong> — <code>motiAi.local</code> (verified working Surface↔Pi).
+2. Cached last-good IP (<code>%LOCALAPPDATA%\stella-face-pi.txt</code>).
+3. Quick scan of the current /24 for the bridge, then caches it.</p>
+<p>Face URL (any network): <strong><code>http://motiAi.local:8080/</code></strong>.</p>
+<h2 id="running-the-controller">Running the controller</h2>
+<ul>
+<li><strong>Background (recommended):</strong> run <code>face_client/start-hidden.vbs</code> — no visible window.</li>
+<li>Visible (for debugging): <code>face_client/start-face-controller.cmd</code>.</li>
+<li><strong>Auto-start at login:</strong> put a shortcut to <code>start-hidden.vbs</code> in <code>shell:startup</code>.</li>
+<li>It must be running for the voice command to open the face. It's the thing that opens/closes
+  the face — it is NOT the face, and it does not open/close with the face. Keep it running
+  (hidden) all the time; the <strong>face window</strong> (Edge) is what appears/disappears on command.</li>
+<li><strong>Single-instance:</strong> a named mutex means launching it twice is harmless (the 2nd exits).</li>
+<li><strong>Foreground:</strong> on show, the controller raises the face window to the front.</li>
+<li><strong>Manual close = hide:</strong> if you close the face window yourself, the controller syncs to
+  hidden instead of re-opening it (no more pop-back).</li>
+<li><strong>Hide</strong> closes <em>any</em> Stella kiosk window, so an orphan from a crash gets cleaned up.</li>
+</ul>
+<h2 id="requirements-caveats">Requirements / caveats</h2>
+<ul>
+<li>PC and Pi on the <strong>same LAN</strong> (mesh/extender counts).</li>
+<li>Edge is used in <code>--kiosk --edge-kiosk-type=fullscreen</code> with its own throwaway profile.</li>
+<li>This is <strong>M0</strong> (link-up + a placeholder parametric face). Next: M1 realism
+  (living-portrait look), then gaze (M2), lip-sync (M3). Emotion/gaze/viseme messages are
+  already implemented in the page and the bridge API — they just aren't wired to Stella's
+  events yet.</li>
+</ul>
+<h2 id="next-step-idea-logged-use-the-pcs-camera-mic">Next-step idea (logged): use the PC's camera + mic</h2>
+<p>The Surface's 1080p cam + mics are better than the Pi's current ones. The face page can
+capture them (<code>getUserMedia</code>) and stream to the Pi to improve face recognition / STT while
+the face is shown. Deferred until after M1.</p>
+</div>
+</body>
+</html>

@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stella Documentation</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="site-head"><h1>Stella Documentation</h1></div>
+<p class="intro">Stella documentation &mdash; generated 2026-10-31. 80 documents, self-contained and offline-ready.</p>
+<section class="group">
+<h2>Root / Overview</h2>
+<ul class="doclist">
+<li><a href="docs__CONTINUE.html">Continue point — 2026-09-27</a><span class="desc">Update 2026-09-27 (later): all queued code fixes landed — dead code/hygiene 0e01175 + ed47922, docs 750d2df, audio hardening 587f965 (MicStream owner guard, by-id mic resolver,...</span></li>
+<li><a href="docs__README.html">Stella — Project Documentation</a><span class="desc">This folder is the long-term memory of the Stella robot project (formerly &quot;Gonzo&quot;).</span></li>
+<li><a href="root__README.html">Stella — Smart Self‑Learning AI Robot 🤖</a><span class="desc">Stella runs on a Raspberry Pi 5 + Hailo‑10H NPU (Ubuntu Server 24.04, headless), with a</span></li>
+</ul></section>
+<section class="group">
+<h2>Architecture</h2>
+<ul class="doclist">
+<li><a href="architecture__archive__stella-architecture-2026-09-13.html">Stella Architecture 2026 09 13</a><span class="desc">SUPERSEDED by ../stella-architecture.md on 2026-09-27; kept for history.</span></li>
+<li><a href="architecture__archive__stella-architecture-2026-09-19.html">Stella Architecture 2026 09 19</a><span class="desc">SUPERSEDED by ../stella-architecture.md on 2026-09-27; kept for history.</span></li>
+<li><a href="architecture__stella-architecture.html">Stella — Architecture (current)</a><span class="desc">This is the only current architecture document.</span></li>
+</ul></section>
+<section class="group">
+<h2>Hardware</h2>
+<ul class="doclist">
+<li><a href="hardware__hailo.html">Hailo-10H NPU — how it&#x27;s used &amp; how to fix it</a><span class="desc">The Hailo-10H is Stella&#x27;s on-device AI accelerator.</span></li>
+<li><a href="hardware__bom.html">Hardware — Bill of Materials</a><span class="desc">_Running list of components in the Stella build.</span></li>
+<li><a href="hardware__wiring.html">Hardware — Wiring &amp; Connection Map (canonical)</a><span class="desc">_The single source of truth for every physical connection on Stella: ports, pins, buses,</span></li>
+<li><a href="hardware__face-subsystem.html">Screen Face Subsystem (M0 done + she&#x27;s alive)</a><span class="desc">Stella shows an animated face on an external screen on voice command, and hides it</span></li>
+<li><a href="hardware__tablet-setup.html">Tablet Face — Setup Checklist (Teclast P30T)</a><span class="desc">Do these once the tablet is charged (~50%+ is plenty).</span></li>
+</ul></section>
+<section class="group">
+<h2>Firmware</h2>
+<ul class="doclist">
+<li><a href="firmware__hand-esp32.html">Firmware — ESP32-S3 Robotic Hand</a><span class="desc">Firmware source: firmware/hand/hand.ino.</span></li>
+<li><a href="firmware__README.html">Stella firmware (everything needed to build lives in this folder)</a><span class="desc">Pinouts: docs/hardware/wiring.md (the single wiring map).</span></li>
+</ul></section>
+<section class="group">
+<h2>Schematics</h2>
+<ul class="doclist">
+<li><a href="schematics__system-overview.html">Schematic — System Overview</a><span class="desc">Current data-flow and hardware topology of Stella.</span></li>
+</ul></section>
+<section class="group">
+<h2>Modules</h2>
+<ul class="doclist">
+<li><a href="modules__README.html">modules — capabilities, grouped by what they do</a><span class="desc">Each sub‑package is one capability.</span></li>
+</ul></section>
+<section class="group">
+<h2>Parts Used</h2>
+<ul class="doclist">
+<li><a href="parts_used__README.html">parts_used — one file per physical part</a><span class="desc">Every sensor, actuator, radio or accelerator that Stella is built from has exactly one</span></li>
+</ul></section>
+<section class="group">
+<h2>Tools</h2>
+<ul class="doclist">
+<li><a href="tools__README.html">tools — operator scripts</a><span class="desc">Run from the repo root with the venv Python (venv/bin/python).</span></li>
+</ul></section>
+<section class="group">
+<h2>Briefs</h2>
+<ul class="doclist">
+<li><a href="briefs__README.html">Briefs</a><span class="desc">Design/product briefs and ideas for new subsystems.</span></li>
+<li><a href="briefs__robot-face-tablet-brief.html">Robot Face Subsystem — Build Brief (for Claude Code)</a><span class="desc">This document describes adding a tablet-based animated face + display subsystem to an</span></li>
+</ul></section>
+<section class="group">
+<h2>Decisions</h2>
+<ul class="doclist">
+<li><a href="decisions__log.html">Decision Log</a><span class="desc">*Entries before 2026-09-19 reference the pre-reorganisation paths (modules/hardware/).** The current layout is in</span></li>
+</ul></section>
+<section class="group">
+<h2>Evolution</h2>
+<ul class="doclist">
+<li><a href="evolution__README.html">evolution — Stella&#x27;s self‑improvement system</a><span class="desc">DISABLED (operator decision, 2026-09-27): no autonomous runs.</span></li>
+<li><a href="evolution__reports__2026-09-19.html">Stella Evolution Report — 2026-09-19</a><span class="desc">Status: HEALTHY (2026-09-19 12:06:12)</span></li>
+</ul></section>
+<section class="group">
+<h2>Bug Reports</h2>
+<ul class="doclist">
+<li><a href="bug_report__bug_001_face-rec-systemexit-missing-models.html">Bug #001 — face_recognition&#x27;s quit() killed the process when dlib models were missing</a><span class="desc">Date found: 2026-05-30</span></li>
+<li><a href="bug_report__bug_002_mic-sample-rate-mismatch.html">Bug #002 — Wake-word / speech mic opened at a sample rate the USB mic rejects</a><span class="desc">Date found: 2026-05-30</span></li>
+<li><a href="bug_report__bug_003_logging-stuck-warning-rms-overflow.html">Bug #003 — Root logger stuck at WARNING; numpy RMS overflow warnings in wake-word loop</a><span class="desc">Date found: 2026-05-30</span></li>
+<li><a href="bug_report__bug_004_face-rec-cropped-frame-to-dlib.html">Bug #004 — Face recognition passed a cropped face to dlib instead of full frame + location</a><span class="desc">Date found: 2026-05-30</span></li>
+<li><a href="bug_report__bug_005_brain-speech-pipeline-miswired.html">Bug #005 — Brain speech pipeline mis-wired (wrong module, unregistered modules, double listen call)</a><span class="desc">Date found: 2026-05-30</span></li>
+<li><a href="bug_report__bug_006_robotevent-priorityqueue-comparison.html">Bug #006 — RobotEvent objects not comparable, crashing the PriorityQueue</a><span class="desc">Date found: 2026-05-30</span></li>
+<li><a href="bug_report__bug_007_cpu-temp-threshold-too-low.html">Bug #007 — CPU temperature threshold too low, tripping thermal protection in normal use</a><span class="desc">Date found: 2026-05-30</span></li>
+<li><a href="bug_report__bug_008_face-detection-spam.html">Bug #008 — Face detection spam (tiny false faces, repeated events every frame)</a><span class="desc">Date found: 2026-05-31</span></li>
+<li><a href="bug_report__bug_009_mic-device-index-changes-on-reboot.html">Bug #009 — Wrong / shifting PyAudio mic device index after reboot</a><span class="desc">Date found: 2026-05-31</span></li>
+<li><a href="bug_report__bug_010_wake-stream-not-released-on-pause.html">Bug #010 — Wake-word PyAudio stream not closed on pause, so the speech mic could not open</a><span class="desc">Date found: 2026-05-31</span></li>
+<li><a href="bug_report__bug_011_hailo-driver-missing-after-kernel-upgrade.html">Bug #011 — Hailo PCIe driver gone after kernel upgrade: no /dev/hailo0, offline brain dead</a><span class="desc">Date found: 2026-09-05 (recurred 2026-09-16)</span></li>
+<li><a href="bug_report__bug_012_hailo-ollama-api-chat-empty.html">Bug #012 — App called hailo-ollama&#x27;s /api/chat, which returns empty on this build</a><span class="desc">Date found: 2026-09-05</span></li>
+<li><a href="bug_report__bug_013_cloud-llm-models-retired-404.html">Bug #013 — Cloud LLM models retired (404) and a blank Gemini key silently disabled providers</a><span class="desc">Date found: 2026-09-05 (earlier occurrence undated: llama-3.1-8b-instant)</span></li>
+<li><a href="bug_report__bug_014_face-rec-threshold-too-strict.html">Bug #014 — Face recognition threshold 0.50 too strict for dlib; master shown as &quot;Unknown&quot;</a><span class="desc">Date found: 2026-09-05</span></li>
+<li><a href="bug_report__bug_015_google-stt-failing-fell-to-vosk.html">Bug #015 — Google STT failed repeatedly, dropping to weak Vosk transcriptions</a><span class="desc">Date found: 2026-09-12</span></li>
+<li><a href="bug_report__bug_016_light-command-routed-to-missing-relay.html">Bug #016 — &quot;Turn on the light&quot; routed to a non-existent microcontroller relay</a><span class="desc">Date found: 2026-09-12</span></li>
+<li><a href="bug_report__bug_017_sensibo-rate-limit-429.html">Bug #017 — Sensibo AC commands failed with 429 (rate limit) on rapid calls</a><span class="desc">Date found: 2026-09-12</span></li>
+<li><a href="bug_report__bug_018_double-greeting-welcome-spam.html">Bug #018 — Double master greeting + welcome spam made Stella look frozen (the real &quot;stuck&quot;)</a><span class="desc">Date found: 2026-09-12</span></li>
+<li><a href="bug_report__bug_019_camera-dead-after-reboot-csi-renumbered.html">Bug #019 — Camera &quot;off&quot; after reboot: CSI camera renumbered the USB webcam</a><span class="desc">Date found: 2026-09-12</span></li>
+<li><a href="bug_report__bug_020_csi-kernel-console-spam.html">Bug #020 — Console filled with &quot;rp1-cfe ... csi2_chN node link is not enabled&quot; kernel lines</a><span class="desc">Date found: 2026-09-12</span></li>
+<li><a href="bug_report__bug_021_guard-auto-disarmed-instantly.html">Bug #021 — &quot;Guard my house&quot; disarmed itself ~6 s later</a><span class="desc">Date found: 2026-09-12</span></li>
+<li><a href="bug_report__bug_022_face-kiosk-never-opened.html">Bug #022 — Face kiosk never opened on the PC (controller not running, then wedged instances)</a><span class="desc">Date found: 2026-09-12 (second episode 2026-09-13)</span></li>
+<li><a href="bug_report__bug_023_music-wrong-song.html">Bug #023 — Music played the wrong video (tutorials, covers, unrelated clips)</a><span class="desc">Date found: 2026-09-12</span></li>
+<li><a href="bug_report__bug_024_music-no-audio-youtube-403.html">Bug #024 — Music: no sound at all — YouTube 403s the raw stream URL</a><span class="desc">Date found: 2026-09-12</span></li>
+<li><a href="bug_report__bug_025_vosk-never-hears-stella.html">Bug #025 — Voice dead: the Vosk wake model never transcribes &quot;Stella&quot;</a><span class="desc">Date found: 2026-09-13</span></li>
+<li><a href="bug_report__bug_026_phantom-replies-stt-hallucination.html">Bug #026 — Phantom replies: Whisper/Vosk hallucinate phrases from silence (even enrolled as names)</a><span class="desc">Date found: 2026-09-12 (noticed), fixed 2026-09-13, recurred and re-fixed 2026-09-16</span></li>
+<li><a href="bug_report__bug_027_blocking-mic-read-hangs-conversation.html">Bug #027 — Blocking mic read hung conversations; wake mic stayed paused (deaf for 10 min)</a><span class="desc">Date found: 2026-09-13</span></li>
+<li><a href="bug_report__bug_028_cross-thread-portaudio-close-sigabrt.html">Bug #028 — Self-inflicted crash loop: closing the PortAudio stream from another thread (SIGABRT every few minutes)</a><span class="desc">Date found: 2026-09-13</span></li>
+<li><a href="bug_report__bug_029_guard-off-command-armed-guard.html">Bug #029 — &quot;Guard mode off&quot; armed the guard; status questions armed it too</a><span class="desc">Date found: 2026-09-13</span></li>
+<li><a href="bug_report__bug_030_face-bridge-access-log-spam.html">Bug #030 — Journal flooded by aiohttp access logs from the face controller polling</a><span class="desc">Date found: 2026-09-13</span></li>
+<li><a href="bug_report__bug_031_master-auth-bypass-keyword-handlers.html">Bug #031 — Master-auth bypass: AC and hand-mirror keyword handlers skipped the master check</a><span class="desc">Date found: 2026-09-13</span></li>
+<li><a href="bug_report__bug_032_object-recognition-dead-three-blockers.html">Bug #032 — Object recognition dead: no model file, Hailo disabled, wrong hailort pip (+ stale root config.yaml)</a><span class="desc">Date found: 2026-09-13</span></li>
+<li><a href="bug_report__bug_033_object-detected-handlers-crash-event-flood.html">Bug #033 — object_detected handlers crashed and events flooded once detection was revived</a><span class="desc">Date found: 2026-09-13</span></li>
+<li><a href="bug_report__bug_034_offline-cliff-llm-chain-90s.html">Bug #034 — Offline cliff: every answer took ~90 s+ with no internet</a><span class="desc">Date found: 2026-09-16</span></li>
+<li><a href="bug_report__bug_035_false-lost-internet-announcement.html">Bug #035 — &quot;I lost internet&quot; announced ~16 s after every offline boot</a><span class="desc">Date found: 2026-09-16</span></li>
+<li><a href="bug_report__bug_036_no-mic-monologue.html">Bug #036 — With no microphone, Stella held whole conversations with herself</a><span class="desc">Date found: 2026-09-16</span></li>
+<li><a href="bug_report__bug_037_wake-mic-retry-error-spam.html">Bug #037 — Wake-word listener retried a missing mic at 1 Hz forever with an ERROR each time</a><span class="desc">Date found: 2026-09-16</span></li>
+<li><a href="bug_report__bug_038_tts-dead-hdmi-sink-pygame-hang.html">Bug #038 — TTS pinned to a dead HDMI sink; first fix made startup hang in pygame</a><span class="desc">Date found: 2026-09-16</span></li>
+<li><a href="bug_report__bug_039_yolo-every-frame-no-camera.html">Bug #039 — YOLO ran on every frame (3-4 CPU inferences/s) and loaded even with no camera</a><span class="desc">Date found: 2026-09-16</span></li>
+<li><a href="bug_report__bug_040_wall-clock-timers-false-stuck-restart.html">Bug #040 — Wall-clock timers caused a false &quot;stuck conversation&quot; restart after an NTP time jump</a><span class="desc">Date found: 2026-09-16</span></li>
+<li><a href="bug_report__bug_041_reorg-broke-model-path-object-detection.html">Bug #041 — Reorganisation moved hailo_10h.py one level; object detection lost data/models</a><span class="desc">Date found: 2026-09-19</span></li>
+<li><a href="bug_report__bug_042_polite-goodbye-not-recognised-slow-llm-roundtrip.html">Bug #042 — &quot;No, thank you, Stella.&quot; not recognised as goodbye → 5 s LLM round trip</a><span class="desc">Date found: 2026-09-19</span></li>
+<li><a href="bug_report__bug_043_groq-120b-rejects-send_photo-tool-schema.html">Bug #043 — Groq gpt-oss-120b rejects the send_photo tool call (400), falls back each time</a><span class="desc">Date found: 2026-09-19</span></li>
+<li><a href="bug_report__bug_044_robotnet-dongle-driver-not-loaded-after-kernel-upgrade.html">Bug #044 — RobotNet AP dead: RTL8821AU DKMS module missing after kernel upgrade</a><span class="desc">Date found: 2026-09-19 (failing since the 2026-09-14 boot)</span></li>
+<li><a href="bug_report__bug_045_phantom-new-person-on-wall.html">Bug #045 — &quot;New person&quot; greeting with nobody there (phantom face on a wall)</a><span class="desc">Date found: 2026-09-19</span></li>
+<li><a href="bug_report__bug_046_wake-mic-stall-no-response.html">Bug #046 — &quot;No response to Hey Stella&quot; after a while (wake mic stream went silent)</a><span class="desc">Date found: 2026-09-19</span></li>
+<li><a href="bug_report__bug_047_master-identity-flip-single-frame.html">Bug #047 — Master identity lost repeatedly (cleared on a single Unknown frame)</a><span class="desc">Date found: 2026-09-19</span></li>
+<li><a href="bug_report__bug_048_yunet-dlib-recognition-regression.html">Bug #048 — Recognition similarity collapsed after switching to YuNet detector</a><span class="desc">Date found: 2026-09-19</span></li>
+<li><a href="bug_report__bug_049_unbounded-mic-read-stuck.html">Bug #049 — Hard &quot;stuck / no response&quot; + 30s blackout (unbounded mic read)</a><span class="desc">Date found: 2026-09-19</span></li>
+<li><a href="bug_report__bug_050_number-retired.html">Bug #050 — Number retired — never assigned (numbering gap closed 2026-09-27)</a><span class="desc">Date found: n/a</span></li>
+<li><a href="bug_report__bug_051_sensibo-422-stale-fields.html">Bug #051 — Sensibo AC returns 422 on a mode/temperature change</a><span class="desc">Date found: 2026-09-19</span></li>
+<li><a href="bug_report__bug_052_wifi-interface-rename-race.html">Bug #052 — Stella off home WiFi: onboard radio renamed wlan0 -&gt; wlan1 (boot race)</a><span class="desc">Date found: 2026-09-20 (she appeared &quot;dead&quot;; only RobotNet reachable)</span></li>
+<li><a href="bug_report__bug_053_wake-mic-mistranscribe-usb.html">Bug #053 — &quot;Hey Stella&quot; not detected: wake mic mistranscribes on the USB dongle mic</a><span class="desc">Date found: 2026-09-26</span></li>
+<li><a href="bug_report__bug_054_sigabrt-reader-thread-crashloop.html">Bug #054 — SIGABRT crash-loop every ~2 min (&quot;malloc: unaligned tcache chunk&quot;)</a><span class="desc">Date found: 2026-09-26</span></li>
+<li><a href="bug_report__bug_055_usb-mic-misdiagnosed-single-mic-detour.html">Bug #055 — USB PnP mic misdiagnosed as &quot;wedged&quot;; single-mic detour failed (the real cause was our leaked reader thread)</a><span class="desc">Date found: 2026-09-26</span></li>
+<li><a href="bug_report___TEMPLATE.html">Bug #NNN — &lt;one-line title&gt;</a><span class="desc">Date found: YYYY-MM-DD</span></li>
+<li><a href="bug_report__README.html">Stella — Bug History</a><span class="desc">One file per bug that was actually hit and fixed (features and design decisions live in docs/decisions/log.md).</span></li>
+</ul></section>
+<section class="group">
+<h2>Tests</h2>
+<ul class="doclist">
+<li><a href="tests__README.html">tests — smoke and invariant tests</a><span class="desc">Guardian runs tests/ on every deploy (deploy/deploy.sh → evolution/guardian.py); a failing test blocks the</span></li>
+</ul></section>
+<div class="footer">Generated from the Stella project Markdown sources &middot; 80 docs across 13 sections.</div>
+</div>
+</body>
+</html>

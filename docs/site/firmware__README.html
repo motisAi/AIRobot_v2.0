@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stella firmware (everything needed to build lives in this folder)</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="stella-firmware-everything-needed-to-build-lives-in-this-folder">Stella firmware (everything needed to build lives in this folder)</h1>
+<table>
+<thead>
+<tr>
+<th>Sketch</th>
+<th>Board</th>
+<th>Talks to the Pi as</th>
+<th>Libraries</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hand/hand.ino</code></td>
+<td>ESP32-S3 (CH343 UART bridge)</td>
+<td><code>/dev/serial/by-id/usb-1a86_*</code></td>
+<td>Adafruit PWM Servo Driver (Arduino Library Manager)</td>
+</tr>
+<tr>
+<td><code>stella_eyes/stella_eyes.ino</code></td>
+<td><strong>ESP32C3 Dev Module</strong>, native USB port</td>
+<td><code>/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*</code></td>
+<td><code>libraries/TFT_eSPI</code> (vendored, pre-configured — see below)</td>
+</tr>
+<tr>
+<td><code>hand_test/</code>, <code>i2c_scan/</code></td>
+<td>test sketches</td>
+<td></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Pinouts: <code>docs/hardware/wiring.md</code> (the single wiring map).</p>
+<h2 id="arduino-ide-point-the-sketchbook-here-nothing-else-to-install-for-the-eyes">Arduino IDE: point the sketchbook here, nothing else to install for the eyes</h2>
+<p>File → Preferences → <strong>Sketchbook location</strong> = this <code>firmware</code> folder. The IDE then
+uses <code>firmware/libraries/</code> and all sketches appear under File → Sketchbook.</p>
+<p><code>libraries/TFT_eSPI</code> is the <strong>display supplier's build</strong> (TFT_eSPI 2.5.0 with the
+GC9D01 160×160 driver and a second reset line <code>TFT2_RST</code>) with Stella's pins
+already set in <code>User_Setup.h</code> (<code>TFT_DC 10</code>, <code>TFT_RST 0</code>, <code>TFT2_RST 5</code>, <code>TFT_MOSI 4</code>,
+<code>TFT_SCLK 7</code>, <code>TFT_CS -1</code>). Do <strong>not</strong> install the stock TFT_eSPI from the Library
+Manager over it — the stock one has neither the driver nor the second reset and
+the sketch will not compile. (Examples/docs were stripped to keep the repo small;
+the original zip is "0.71inch-DualEye-LCD-Module-Demo" from the supplier.)</p>
+<p>Eyes board options (Tools menu): board <em>ESP32C3 Dev Module</em>, <strong>USB CDC On Boot =
+Enabled</strong> (the sketch's <code>Serial</code> must be the native USB port the Pi is wired to),
+everything else default.</p>
+<h2 id="command-line-build-flash-from-the-pi-board-stays-plugged-into-stella">Command line build + flash from the Pi (board stays plugged into Stella)</h2>
+<pre><code class="language-bash"># on the laptop (arduino-cli shares the IDE's cores in %LOCALAPPDATA%\Arduino15):
+arduino-cli compile --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc \
+    --libraries firmware/libraries --export-binaries firmware/stella_eyes
+#   -&gt; firmware/stella_eyes/build/esp32.esp32.esp32c3/stella_eyes.ino.merged.bin
+scp firmware/stella_eyes/build/esp32.esp32.esp32c3/stella_eyes.ino.merged.bin stella:/tmp/
+
+# on the Pi (service must be stopped — it holds the port):
+sudo systemctl stop airobot
+venv/bin/esptool --chip esp32c3 --port /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*-if00 \
+    --baud 460800 write-flash 0x0 /tmp/stella_eyes.ino.merged.bin
+sudo systemctl start airobot
+</code></pre>
+<p>Quick test without the service: <code>echo "G -60 0" &gt; /dev/ttyACM0</code> makes the eyes look
+left, <code>echo B</code> blinks, <code>echo C</code> centres, <code>echo "E 1"</code> happy, <code>echo "P 80"</code> big pupils.
+The <code>build/</code> output folder is git-ignored.</p>
+</div>
+</body>
+</html>

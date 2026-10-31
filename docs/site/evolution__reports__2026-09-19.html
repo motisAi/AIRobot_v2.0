@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stella Evolution Report — 2026-09-19</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="stella-evolution-report-2026-09-19">Stella Evolution Report — 2026-09-19</h1>
+<h2 id="health-guardian">Health (Guardian)</h2>
+<ul>
+<li>Status: <strong>HEALTHY</strong> (2026-09-19 12:06:12)</li>
+<li>all checks passed</li>
+<li>Resources: warn: soft temperature limit occurred since boot | disk 94.6GB free, ram 2413MB avail, temp 61.5'C, throttled=0x80000</li>
+</ul>
+<h2 id="last-24-h-in-the-log">Last 24 h in the log</h2>
+<ul>
+<li>507 log lines, <strong>0 errors</strong>, 2 service starts, ~0 conversations</li>
+</ul>
+<h2 id="scout-upgrade-ideas-report-only-nothing-installed">Scout — upgrade ideas (report only, nothing installed)</h2>
+<ul>
+<li><strong>piper-tts</strong> not installed → 1.8.0  [8/10] Stella currently lacks a local text-to-speech engine, so adding piper-tts would significantly enhance her interaction capabilities.  https://pypi.org/project/piper-tts/1.8.0/</li>
+<li><strong>faster-whisper</strong> not installed → 1.2.1  [8/10] Stella currently relies on Groq cloud or low-accuracy Vosk for STT, and faster-whisper provides efficient, accurate local offline transcription on her Raspberry Pi 5 CPU.  https://pypi.org/project/faster-whisper/1.2.1/</li>
+<li><strong>openwakeword</strong> not installed → 0.6.0  [8/10] Stella lacks wake‑word detection, so adding openwakeword would enable hands‑free voice activation, a useful feature for a robot.  https://pypi.org/project/openwakeword/0.6.0/</li>
+<li><strong>hailo-rpi5-examples</strong>  → 25.7.0  [8/10] Stella operates on a Raspberry Pi 5 with a Hailo NPU, making updated RPi5 Hailo examples directly valuable for optimizing her NPU workloads and hardware integration.  https://github.com/hailo-ai/hailo-rpi5-examples/releases/tag/25.7.0</li>
+<li><strong>hailo_model_zoo</strong>  → v5.4.0  [7/10] Updating the Hailo Model Zoo enables optimized NPU model deployments to offload vision tasks from CPU fallback, though it requires upgrading her current 5.1.1 Hailo driver to match.  https://github.com/hailo-ai/hailo_model_zoo/releases/tag/v5.4.0</li>
+</ul>
+<h2 id="open-recurring-bugs">Open recurring bugs</h2>
+<ul>
+<li>Bug #011 — Hailo PCIe driver gone after kernel upgrade: no /dev/hailo0, offline brain dead</li>
+<li>Bug #013 — Cloud LLM models retired (404) and a blank Gemini key silently disabled providers</li>
+</ul>
+<h2 id="evolution-llm-usage-free-tiers">Evolution LLM usage (free tiers)</h2>
+<ul>
+<li>gemini: 28 calls, 110908 prompt chars, 2379 reply chars</li>
+<li>groq: 31 calls, 118772 prompt chars, 435 reply chars</li>
+<li>hailo: 10 calls, 35695 prompt chars, 1471 reply chars</li>
+</ul>
+<p><em>Generated 2026-09-19 12:07 by evolution/report.py</em></p>
+</div>
+</body>
+</html>

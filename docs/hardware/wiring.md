@@ -117,45 +117,57 @@ Protocol and gotchas: `../firmware/hand-esp32.md`.
 
 ---
 
-## 5. Eyes — ESP32-C3 + dual GC9D01 round LCDs (new, 2026-10-27)
+## 5. Hand + Eyes — ONE ESP32-S3 (corrected 2026-10-31)
+
+The hand and the eyes are **the same ESP32-S3** (not a separate C3 — that was wrong).
+One board drives the PCA9685 (hand) over I²C **and** the two GC9D01 eye LCDs over SPI.
 
 ```
-Pi 5 ──USB (power + gaze serial 115200)──> ESP32-C3 ──SPI (shared SCLK/MOSI/DC)──> 2× GC9D01 160×160
-                                               └──I2C (GPIO8 SDA / GPIO9 SCL)──> PCA9685 (head/arm servos, planned)
+Pi 5 ──USB 115200──> ESP32-S3 ──I2C  (GPIO8 SDA / GPIO9 SCL)──> PCA9685 @0x40 ──> 5 hand servos
+                              └──SPI (DIN4/CLK7/DC10)──────────> 2× GC9D01 160×160 eyes
 ```
 
-Module: bare "0.71 inch Dual-Eye LCD" (two GC9D01, 160×160, each with its own CS, RST and backlight).
-Firmware: `firmware/stella_eyes/stella_eyes.ino` (board "ESP32C3 Dev Module", USB CDC on boot) with the supplier's
-TFT_eSPI vendored at `firmware/libraries/TFT_eSPI` (pins pre-set). Build/flash recipe: `firmware/README.md`.
-**The C3 board has TWO type-C ports:** use the **native USB** one (enumerates as `Espressif USB JTAG/serial`,
-`/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_30:ED:A0:BD:2E:64-if00`, wired 2026-10-31). Its other
-port is a CH343 UART bridge on GPIO20/21 — it looks like the hand (`usb-1a86_*`) and must stay unplugged.
+The S3 DevKit has **two type-C ports**: a native-USB one (`usb-Espressif_*`) and a CH343
+UART one (`usb-1a86_*`, GPIO43/44). We drive everything over **one** of them; the firmware's
+`CDC_ON_BOOT` picks which (`0` = CH343/UART0, `1` = native-USB CDC). Current build: CH343
+(the hand flashes and runs reliably there). MAC 30:ED:A0:BD:2E:64.
 
-| Eye module pin | ESP32-C3 GPIO | Role / note |
-|----------------|---------------|-------------|
-| VCC | **3V3** | **not 5 V** |
-| GND | GND | |
-| SCL / SCLK / CLK | **GPIO7** | shared SPI clock (`TFT_SCLK 7`) |
-| SDA / MOSI / DIN | **GPIO4** | shared SPI data (`TFT_MOSI 4`) |
-| DC / RS | **GPIO10** | shared data/command (`TFT_DC 10`, moved off GPIO9) |
-| RST1 (left eye) | **GPIO0** | `TFT_RST 0` (moved off GPIO8) |
-| RST2 (right eye) | **GPIO5** | `TFT2_RST 5` (vendor default) |
-| CS_L (left eye) | **GPIO2** | sketch toggles CS (`TFT_CS -1`) |
-| CS_R (right eye) | **GPIO6** | |
-| BL_L (left backlight) | **GPIO1** | HIGH = on |
-| BL_R (right backlight) | **GPIO3** | HIGH = on |
-| — (reserved) | **GPIO8 SDA / GPIO9 SCL** | I²C to the 16-ch PCA9685 — never use for the eyes |
-| — (reserved) | GPIO18/19 (USB), GPIO20/21 (UART0) | |
+| Function | Module pin | ESP32-S3 GPIO | Note |
+|----------|-----------|---------------|------|
+| Hand I²C | SDA | **GPIO8** | PCA9685 @0x40 (scan also shows 0x70 all-call) |
+| Hand I²C | SCL | **GPIO9** | |
+| Eyes SPI | DIN/SDA | **GPIO4** | `TFT_MOSI 4` (shared) |
+| Eyes SPI | CLK/SCL | **GPIO7** | `TFT_SCLK 7` (shared) |
+| Eyes | DC | **GPIO10** | `TFT_DC 10` — off 8/9 so the PCA keeps them |
+| Eyes | RST1 (left) | **GPIO11** | `TFT_RST 11` — NOT GPIO0 (S3 boot-strap → boot loop) |
+| Eyes | RST2 (right) | **GPIO5** | `TFT2_RST 5` |
+| Eyes | CS1 (left) | **GPIO2** | sketch toggles CS (`TFT_CS -1`) |
+| Eyes | CS2 (right) | **GPIO6** | |
+| Eyes | BL1 (left) | **GPIO1** | HIGH = on |
+| Eyes | BL2 (right) | **GPIO3** | HIGH = on |
+| Power | VCC | **3V3** | module is 3.3V/5V; logic 3.3V. Use a GOOD 3V3 pin — a dead one read 2.6 V and nothing lit |
+| Power | GND | GND | shared |
 
-TFT_eSPI `User_Setup.h` (ESP32-C3 block): change only `TFT_DC 10` and `TFT_RST 0`; keep `TFT_MOSI 4`,
-`TFT_SCLK 7`, `TFT_CS -1`, `TFT2_RST 5`. Init pattern: both CS low → one `tft.init()` → CS high.
+> **Pin trade-off:** eyes DC/RST1 sit on GPIO10/11 so the PCA9685 keeps GPIO8/9. The *other*
+> option is Waveshare's reference DC=9/RST1=8 with the PCA I²C moved to **GPIO12/13** (ESP32 I²C
+> remaps to any free pin). Pick one; don't let the eyes and the PCA share 8/9.
 
-Serial protocol (Pi → eyes): `G <x> <y>` gaze −100..100 · `B` blink · `C` center · `E <n>` emotion 0–4 ·
-`P <n>` pupil 0–100. Pi side: `modules/vision/eye_tracker.py` (`EyeController`), config `hardware.eyes_*`.
+**Firmware:** `firmware/stella_s3/stella_s3.ino` = combined hand + eyes, one serial line, routed by
+first char (lowercase words → hand; `G/B/C/E/P` → eyes). Hand protocol: `fist|open|hello|middle|
+point|peace|thumbs|count N|set 11111|f/m/s <ch> …|speed|off|pos`. Eyes: `G x y`·`B`·`C`·`E n`·`P n`.
+Vendored display driver at `firmware/libraries/TFT_eSPI`. Build/flash recipe: `firmware/README.md`.
 
-> ⚠ Port detection: the eye board enumerates as an Espressif USB-JTAG/serial device
-> (`/dev/serial/by-id/usb-Espressif_*`), the hand as CH343 (`usb-1a86_*`). Pin `hardware.eyes_serial`
-> to the Espressif by-id path so the eyes never grab the hand's port (or vice-versa).
+> ⚠ **Must build with arduino-esp32 2.0.x** (PlatformIO `platform = espressif32@6.5.0`, or Arduino IDE
+> ESP32 core **2.0.x**). On arduino-esp32 **3.x** the vendored TFT_eSPI 2.5.0 crashes in `tft.init()`
+> (`begin_tft_write`, StoreProhibited) and boot-loops — which looked just like "dim blue, no image."
+> Flash from a PC with **esptool 5.x** (4.5.1 fails the baud change over the S3 USB-serial/JTAG).
+
+> ⚠ **Status 2026-10-31:** hand WORKS (PCA on 8/9, homes to fist). Eyes not yet confirmed lit — the
+> boot-loop crash above masked everything; retest after the arduino-2.x rebuild (the panels/wiring may
+> be fine). The user also planned to swap this S3 in case it is damaged (it has a dead 3V3 pin + prior short).
+
+Pi side: `modules/vision/eye_tracker.py` (`EyeController`), hand `parts_used/esp32_hand.py`; one shared
+serial link when both are enabled (`config hardware.eyes_*`, `hand.serial_port`).
 
 Power: ~100–200 mA from the Pi's USB is fine for the eyes alone.
 

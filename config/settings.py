@@ -194,7 +194,7 @@ class HardwareConfig:
     # LCD eyes: ESP32-C3 + dual GC9D01 (firmware/stella_eyes), native USB port.
     # eyes_serial may be a /dev/serial/by-id glob; the controller no-ops without it.
     eyes_enabled: bool = False
-    eyes_serial: str = "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*-if00"
+    eyes_serial: str = "/dev/serial/by-id/usb-Espressif_*-if00"
     eyes_baud: int = 115200
     eyes_invert_x: bool = False   # true if she looks the wrong way left/right
     eyes_invert_y: bool = False

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bug #026 — Phantom replies: Whisper/Vosk hallucinate phrases from silence (even enrolled as names)</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="bug-026-phantom-replies-whispervosk-hallucinate-phrases-from-silence-even-enrolled-as-names">Bug #026 — Phantom replies: Whisper/Vosk hallucinate phrases from silence (even enrolled as names)</h1>
+<ul>
+<li><strong>Date found:</strong> 2026-09-12 (noticed), fixed 2026-09-13, recurred and re-fixed 2026-09-16</li>
+<li><strong>Status:</strong> fixed-needs-verify</li>
+<li><strong>Area:</strong> conversation</li>
+<li><strong>Files touched:</strong> <code>modules/audio/speech_recognition.py</code> (<code>capture_utterance</code>), <code>modules/conversation/manager.py</code> (<code>_enroll_name</code>)</li>
+<li><strong>Commit(s):</strong> 382fb4c, 231740d</li>
+</ul>
+<h2 id="symptom">Symptom</h2>
+<p>Stella answered nobody ("Thank you.", "."), kept conversations alive forever, and on 2026-09-16 said "Nice to meet you, Foreign" — a hallucinated word was enrolled as a person's name.</p>
+<h2 id="root-cause">Root cause</h2>
+<p>Whisper (and Vosk) produce short no-speech hallucinations ("Foreign", "Thank you.", "so", "oh", "Hey", ".") from ambient noise between utterances. The conversation loop treated them as real speech; the name-enrollment path accepted any token as a name.</p>
+<h2 id="fix">Fix</h2>
+<ul>
+<li>382fb4c: <code>capture_utterance</code> discards captures below RMS 220 or shorter than 0.35 s before transcribing.</li>
+<li>231740d: a Whisper hallucination stoplist is treated as silence; <code>_enroll_name</code> rejects junk names.</li>
+</ul>
+<h2 id="how-to-verify">How to verify</h2>
+<p>Leave Stella awake in a quiet room after a real exchange for 2 minutes: she wraps up and says goodbye instead of replying to nothing; <code>journalctl -u airobot | grep -i "nice to meet you"</code> shows only real names.</p>
+<h2 id="will-it-come-back">Will it come back?</h2>
+<p>Likely with new hallucination strings — extend the stoplist in <code>speech_recognition.py</code>. The 231740d part still needs a post-restart verification (the Ethernet link dropped before it was confirmed).</p>
+</div>
+</body>
+</html>

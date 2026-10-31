@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stella Architecture 2026 09 19</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<blockquote>
+<p><strong>SUPERSEDED by ../stella-architecture.md on 2026-09-27; kept for history.</strong>
+<strong>Paths/facts here may be stale.</strong>
+</p>
+</blockquote>
+<h1 id="stella-architecture-v2-layout-self-evolution-safety-net-2026-09-19">Stella — Architecture v2: Layout, Self-Evolution, Safety Net (2026-09-19)</h1>
+<p><em>Supersedes the folder-layout and process parts of <a href="architecture__archive__stella-architecture-2026-09-13.html">stella-architecture-2026-09-13.md</a>. The capability stack (online primary → offline fallback per capability), the Hailo/NIM plan and the phased roadmap in that document stay valid and are referenced here, not repeated.</em></p>
+<h2 id="1-what-this-version-adds">1. What this version adds</h2>
+<table>
+<thead>
+<tr>
+<th>Goal (Moti, 2026-09-19)</th>
+<th>Design answer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Code organized and easy to understand; every physical part has its own class in its own file</td>
+<td><strong><code>parts_used/</code></strong> — one file per part (camera, mics/speaker, Hailo NPU, ESP32 hand, microcontroller bridge, 4G modem, WiFi, RC toy). Everything else grouped by <em>what it does</em> (<code>modules/&lt;capability&gt;/</code>). Stale duplicates deleted.</td>
+</tr>
+<tr>
+<td>One main README, linking to focused READMEs</td>
+<td><code>README.md</code> at the root is the map. Each top-level folder with &gt;3 files gets its own <code>README.md</code>. Docs live in <code>docs/</code>.</td>
+</tr>
+<tr>
+<td>Never fix the same bug twice</td>
+<td><strong><code>bug_report/</code></strong> — <code>bug_NNN_&lt;slug&gt;.md</code> per bug, fixed template (symptom → root cause → fix → verify → will it recur). Seeded from the whole project history. Rule: <strong>no fix is committed without its bug file.</strong></td>
+</tr>
+<tr>
+<td>Stella should be "the smartest she can, fastest she can, as much self/machine learning as possible"</td>
+<td><strong><code>evolution/</code></strong> — self-knowledge (manifest), a deterministic <strong>Guardian</strong> (health + smoke test + auto-rollback), a <strong>Scout</strong> that looks for upgrades and <em>reports</em> them, and a <strong>morning report</strong> on Telegram. Free models only. Autonomous merging is explicitly <em>not</em> in v2 (see §5).</td>
+</tr>
+<tr>
+<td>Cheap RC toy soon</td>
+<td><code>parts_used/rc_toy.py</code> + <code>rc_toy.connected: false</code> in config; a <code>RCToy</code> class with a no-op backend today and pluggable transports (BLE / WiFi / ESP32 relay).</td>
+</tr>
+<tr>
+<td>Rollback must always be trivial</td>
+<td>Every step is its own commit, pushed before the next. <code>deploy/deploy.sh</code> = restart → Guardian → on failure <code>git reset --hard &lt;previous&gt;</code> + restart.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="2-target-repository-layout">2. Target repository layout</h2>
+<pre><code>AIRobot_v2.0/
+├── main.py                 # entry point (systemd ExecStart — path unchanged)
+├── README.md               # THE map: what Stella is, how to run, where everything lives
+├── requirements.txt
+├── stella_manifest.yaml    # self-knowledge, generated by evolution/manifest.py
+├── config/                 # config.yaml (behaviour), settings.py (dataclasses), platforms/
+├── core/                   # robot_brain.py (event bus + state), watchdog.py
+├── parts_used/             # ONE FILE PER PHYSICAL PART  (README.md inside)
+│   ├── camera_usb.py            CameraManager        (was modules/hardware/camera_manager.py)
+│   ├── audio_devices.py         AudioManager         (was modules/hardware/audio_manager.py)
+│   ├── audio_portaudio.py       get_pa/open_lock     (was modules/hardware/audio_pa.py)
+│   ├── audio_arbiter.py         AudioArbiter         (was modules/hardware/audio_arbiter.py)
+│   ├── hailo_10h.py             HailoDetector        (was modules/vision/hailo_detector.py)
+│   ├── esp32_hand.py            Hand                 (was modules/hardware/hand.py)
+│   ├── esp32_controller.py      ESP32Controller      (was modules/hardware/esp32_controller.py)
+│   ├── microcontroller_bridge.py MicrocontrollerController (was modules/hardware/microcontroller.py)
+│   ├── sim7600x_modem.py        SIM7600XController   (was modules/hardware/sim7600x_controller.py)
+│   ├── wifi_adapter.py          wifi helpers         (was modules/hardware/wifi.py)
+│   └── rc_toy.py                RCToy                (NEW, stub behind rc_toy.connected)
+├── modules/                # capabilities, grouped by what they DO  (README.md inside)
+│   ├── ai/                 ai_engine, learning_db, reminders, web_search
+│   ├── audio/              wake_word, speech_recognition, text_to_speech, spell_parser
+│   ├── vision/             face_recognition, object_detection, motion_guard, hand_mirror, vlm
+│   ├── conversation/       manager.py (voice session + keyword handlers)
+│   ├── comms/              telegram_bridge.py, notify.py
+│   ├── smart_home/         sensibo.py, tuya_devices.py, mqtt_devices.py
+│   ├── media/              music.py
+│   ├── navigation/         navigator.py
+│   ├── connectivity/       server_connection.py
+│   └── web/                dashboard.py
+├── face_bridge/            # screen face: WS server + web app (unchanged)
+├── firmware/               # ESP32 sketches (unchanged)
+├── evolution/              # self-evolution system (README.md inside) — see §5
+│   ├── manifest.py         builds stella_manifest.yaml from the live system
+│   ├── guardian.py         deterministic health + smoke checks, exit code, JSON report
+│   ├── scout.py            looks for upgrades (pip / GitHub releases / Hailo zoo), REPORT-ONLY
+│   ├── db.py               evolution.db (SQLite): candidates, runs, llm_calls
+│   ├── llm_client.py       free-only LLM (hailo-ollama → Groq → Gemini), every call logged
+│   ├── report.py           morning report → reports/YYYY-MM-DD.md + Telegram
+│   └── reports/
+├── bug_report/             # bug_001_….md … + README.md index + _TEMPLATE.md
+├── tests/                  # pytest: smoke + unit (run by Guardian)
+├── tools/                  # operator CLI: enroll_master, reenroll, manage_faces, check_deps, test_* 
+├── deploy/                 # systemd unit, deploy.sh (restart+guardian+rollback), helpers
+├── docs/                   # architecture/, decisions/log.md, hardware/, firmware/, briefs/
+└── data/                   # runtime state (gitignored): models, faces, logs, db
+</code></pre>
+<p><strong>Rules that keep it organized</strong>
+1. A file in <code>parts_used/</code> wraps exactly one kind of physical part and exposes <code>start() / stop()</code> plus <code>is_available()</code>; no business logic (no "greet when face seen" there).
+2. <code>modules/&lt;x&gt;/</code> never talk to hardware directly; they go through a <code>parts_used</code> class handed to them by <code>main.py</code>.
+3. <code>core/</code> knows nothing about hardware or the cloud.
+4. Root level holds only <code>main.py</code>, <code>README.md</code>, <code>requirements.txt</code>, <code>stella_manifest.yaml</code>. Operator scripts live in <code>tools/</code>.
+5. Runtime paths stay relative to the repo root (<code>data/...</code>); <code>WorkingDirectory</code> in the unit file guarantees that.</p>
+<h2 id="3-migration-procedure-mechanical-reversible">3. Migration procedure (mechanical, reversible)</h2>
+<p>Verified before writing this: <strong>no dynamic imports</strong> (<code>importlib</code>/<code>__import__</code>) except <code>check_deps.py</code>, <strong>no module paths in YAML/shell/HTML</strong>, and all <code>sys.path</code> hacks point at the repo root, so a rename + import rewrite is complete.</p>
+<ol>
+<li><code>git mv</code> each file to its new place (history preserved).</li>
+<li>Rewrite imports with an exact old→new table (sed on <code>from modules.hardware.camera_manager import</code> → <code>from parts_used.camera_usb import</code>, etc.). <code>from modules.hardware import wifi</code> → <code>from parts_used import wifi_adapter as wifi</code>.</li>
+<li>Delete stale copies: tracked <code>modules/vision/wake_word.py</code> (an old duplicate of <code>modules/audio/wake_word.py</code>); untracked/ignored root copies <code>robot_brain.py settings.py text_to_speech.py manager.py telegram_bridge.py _patch_objfix.py</code>. They are all in the 2026-09-13 tarball backup on the PC.</li>
+<li><code>python -m compileall</code> + <code>tests/test_imports.py</code> (imports every module the way <code>main.py</code> does) on the Pi.</li>
+<li><code>deploy/deploy.sh</code> → restart → Guardian must pass → commit → push.</li>
+<li>Rollback at any point: <code>git reset --hard &lt;commit before the move&gt;</code> and restart. Nothing outside the repo changes.</li>
+</ol>
+<h2 id="4-guardian-the-safety-net-everything-else-stands-on">4. Guardian — the safety net everything else stands on</h2>
+<p>Deterministic, no LLM, runs in &lt;30 s, exit 0/1, writes <code>evolution/reports/guardian-latest.json</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>Pass condition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>syntax</td>
+<td><code>compileall</code> over the repo (venv excluded)</td>
+</tr>
+<tr>
+<td>imports</td>
+<td>every module <code>main.py</code> imports loads under the venv</td>
+</tr>
+<tr>
+<td>config</td>
+<td><code>config/config.yaml</code> parses and <code>RobotConfig</code> builds</td>
+</tr>
+<tr>
+<td>service</td>
+<td><code>systemctl is-active airobot</code> within 90 s of restart and stays up 60 s (no restart loop)</td>
+</tr>
+<tr>
+<td>log health</td>
+<td>last 2 min of <code>journalctl -u airobot</code> contains ≤ N ERROR lines and none of the known-fatal patterns (<code>Traceback</code>, <code>malloc_consolidate</code>, <code>HAILO_OUT_OF_PHYSICAL_DEVICES</code>)</td>
+</tr>
+<tr>
+<td>hardware (soft)</td>
+<td>reports camera nodes, capture PCMs, <code>/dev/hailo0</code>, serial ports — informational unless the config says the part must exist</td>
+</tr>
+<tr>
+<td>brain</td>
+<td>hailo-ollama answers <code>/v1/chat/completions</code> in &lt; 30 s (soft when offline is not required)</td>
+</tr>
+<tr>
+<td>resources</td>
+<td>disk ≥ 2 GB free, RAM ≥ 500 MB available, <code>vcgencmd get_throttled</code> == 0x0 (undervoltage is reported loudly)</td>
+</tr>
+</tbody>
+</table>
+<p><code>deploy/deploy.sh [&lt;commit&gt;]</code>: records <code>HEAD</code>, restarts, runs Guardian; on failure resets to the recorded commit, restarts, and sends a Telegram line. This is also what Claude uses for every deployment from now on.</p>
+<h2 id="5-self-evolution-what-is-in-v2-and-what-is-deliberately-not">5. Self-evolution — what is in v2 and what is deliberately not</h2>
+<p>From the phone blueprint (Scout / Lab / Guardian / Builder), v2 builds the parts that add knowledge and safety, and holds back the parts that would let a small model change a running robot unsupervised:</p>
+<table>
+<thead>
+<tr>
+<th>Blueprint piece</th>
+<th>v2 decision</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Manifest (<code>stella_manifest.yaml</code>)</td>
+<td><strong>Build.</strong> Generated, not hand-written: hardware nodes, models in <code>data/models</code>, providers with keys present, services, capabilities from config flags, known weaknesses from <code>bug_report/</code> marked <code>recurring</code>.</td>
+<td>Stella's self-knowledge; also what Scout and the morning report read.</td>
+</tr>
+<tr>
+<td>Guardian</td>
+<td><strong>Build first</strong> (§4).</td>
+<td>Protects the reorganization and every future change, human or machine.</td>
+</tr>
+<tr>
+<td>Scout</td>
+<td><strong>Build, report-only.</strong> Daily 03:00 timer: <code>pip index versions</code> for pinned AI packages, GitHub release tags for Piper/Vosk/openWakeWord/faster-whisper/Ultralytics, Hailo model-zoo tag. Free LLM scores relevance 1–10 against the manifest. Writes to <code>evolution.db</code>, never installs.</td>
+<td>Finds improvements without touching the system.</td>
+</tr>
+<tr>
+<td>LLM client</td>
+<td><strong>Build.</strong> Order: hailo-ollama (local, free) → Groq → Gemini. Never Claude/OpenAI (boss rule, blueprint rule). Every call logged with purpose and token counts.</td>
+<td>Cost visibility; offline-first.</td>
+</tr>
+<tr>
+<td>Morning report</td>
+<td><strong>Build.</strong> <code>reports/YYYY-MM-DD.md</code> + a 5-line Telegram summary: Guardian status, throttling events, error count, Scout findings, open recurring bugs.</td>
+<td>Moti sees Stella's state and ideas daily without asking.</td>
+</tr>
+<tr>
+<td>Lab (sandbox testing)</td>
+<td><strong>Defer</strong> to v3.</td>
+<td>Needs a second venv and test data; the Pi is already at its limit while running vision + speech + LLM.</td>
+</tr>
+<tr>
+<td>Builder (auto-merge)</td>
+<td><strong>Defer</strong>, and gate behind <code>evolution.require_operator_approval: true</code> when it arrives.</td>
+<td>A working Stella beats a newer broken one. Approval by Telegram reply is the intended UX.</td>
+</tr>
+<tr>
+<td>Hardware inbox (YAML → generated integration code)</td>
+<td><strong>Defer</strong>, but the <code>parts_used/</code> contract (start/stop/is_available) is designed so generated code has a fixed shape to follow.</td>
+<td></td>
+</tr>
+<tr>
+<td>"Pause when operator is active"</td>
+<td><strong>Build</strong> into the timer: skip if an SSH session is open (<code>who</code>) or the git tree is dirty.</td>
+<td>Never fight Claude Code over the repo.</td>
+</tr>
+</tbody>
+</table>
+<p>Resource rule: Scout and report run under <code>nice -n 15</code>, only when CPU &lt; 60 % and ≥ 2 GB disk free.</p>
+<h2 id="6-rc-toy-contract">6. RC toy contract</h2>
+<pre><code class="language-yaml">rc_toy:
+  connected: false        # flip when a toy is wired
+  transport: &quot;null&quot;       # null | esp32_serial | ble | wifi_http
+  port: &quot;/dev/ttyUSB1&quot;
+  address: &quot;&quot;             # BLE MAC or http://ip
+  max_speed: 0.5          # 0..1 safety cap
+  deadman_seconds: 2.0    # stop if no command for this long
+</code></pre>
+<p><code>RCToy</code> exposes <code>drive(forward, turn)</code>, <code>stop()</code>, <code>is_available()</code>. Voice/LLM tool <code>control_toy</code> only appears when <code>connected</code> is true; every drive command is master-gated and dead-manned. Transport implementations are added as small classes in the same file.</p>
+<h2 id="7-order-of-work-each-step-one-commit-pushed-guardian-green">7. Order of work (each step = one commit, pushed, Guardian-green)</h2>
+<ol>
+<li>This document + main README skeleton.</li>
+<li>Guardian, <code>tests/test_imports.py</code>, <code>deploy/deploy.sh</code>.</li>
+<li>Reorganization (§3) with the import rewrite; stale files removed.</li>
+<li>READMEs: root map + <code>parts_used/</code>, <code>modules/</code>, <code>evolution/</code>, <code>bug_report/</code>, <code>tools/</code>.</li>
+<li><code>bug_report/</code> seeded from history (parallel with 3).</li>
+<li><code>evolution/</code>: manifest → db → llm_client → scout (report-only) → report → systemd timer.</li>
+<li><code>parts_used/rc_toy.py</code> + config block + tool registration.</li>
+<li>Decision-log entry, memory notes, CONTINUE.md.</li>
+</ol>
+<p>Still owed by the operator (outside the repo): office WiFi netplan (needs sudo), PSU rating for the power-off-on-Ethernet question, and one GitHub sign-in so headless pushes work.</p>
+</div>
+</body>
+</html>

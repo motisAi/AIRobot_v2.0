@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Continue point — 2026-09-27</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="continue-point-2026-09-27">Continue point — 2026-09-27</h1>
+<blockquote>
+<p><strong>Update 2026-09-27 (later):</strong> all queued code fixes landed — dead code/hygiene 0e01175 + ed47922, docs 750d2df, audio hardening 587f965 (MicStream owner guard, by-id mic resolver, two-mic startup invariant, wedge escalation, gains by card id). Guardian runs 5 test files on every deploy. Still open: MqttConfig, busy-at-boot re-init, tools/check_audio.py, PSU/fan/INMP441, re-enrol face.</p>
+</blockquote>
+<h2 id="where-we-are">Where we are</h2>
+<ul>
+<li><strong>One architecture document</strong>: <a href="architecture__stella-architecture.html">architecture/stella-architecture.md</a> replaces the
+  two dated docs (now in <code>architecture/archive/</code>) and the old <code>docs/architecture.md</code>. Read §4 before touching audio,
+  §12 before touching anything; §13 is the verification checklist.</li>
+<li><strong>Audio is stable on the two-mic layout</strong> (commit <code>a2e3229</code>, 2026-09-26 20:26): wake = camera built-in mic
+  ("Auto Focus Camera", card <code>Camera</code>, hw:3, 48 kHz), command = "USB PnP Sound Device" (card <code>Device</code>, hw:0, 44.1 kHz).
+  0 restarts, zero <code>Could not open</code> / <code>Timed out</code> lines since. Single-mic handoff failed (bug_055) — never retry it.
+  No reader thread for mic capture — it crashed (bug_054) and leaked the device; <code>capture_utterance()</code> is
+  single-thread + hard deadline, a wedged read is bounded by the two-stage watchdog (75 s soft stop, +25 s restart).</li>
+<li><strong>Deep clean 2026-09-27</strong>: removed <code>parts_used/esp32_controller.py</code>, <code>parts_used/sim7600x_modem.py</code>,
+  <code>modules/connectivity/</code>, <code>tools/test_sim7600x.py</code>, <code>config/config.json</code>, <code>claude_read.txt</code>, the <code>--test</code> /
+  <code>--create-service</code> code in <code>main.py</code>, <code>docs/{architecture.md,GONZO_GUIDE.md,rpi5_setup.md,service_accounts.txt}</code>
+  (apt list kept in <code>hardware/hailo.md</code>); <code>stella_manifest.yaml</code> untracked + gitignored. Guardian green.</li>
+<li><strong>bug_report/</strong>: 55 files (001–055, no gaps; 050 retired). bug_049 is <code>REVERTED</code>, bug_053 <code>verified</code>, bug_055 records
+  the misdiagnosis. Rule: no fix without a bug file in the same commit; a reverted fix is edited in place.</li>
+<li><strong>Safety net</strong>: <code>evolution/guardian.py</code> + <code>deploy/deploy.sh</code> (clean tree → restart → Guardian → auto-rollback). Use it
+  for EVERY deploy. Nightly self-check at 03:00 via the <strong>user crontab</strong> (<code>crontab -l</code>); the systemd timer in
+  <code>deploy/stella-evolution.*</code> is an optional sudo alternative and is not installed.</li>
+<li><strong>Hailo</strong>: driver rebuilt with <code>linux-headers-raspi</code> installed → survives kernel upgrades. The NPU serves only the
+  offline LLM (qwen2.5 1.5B, ~0.7 s warm); object detection is CPU OpenCV-DNN (<code>yolov8n.onnx</code>) because the pip
+  <code>hailort</code> wheel is ABI-broken.</li>
+<li><strong>Vision</strong>: YuNet detector + dlib, euclidean threshold 0.60; identity debounced (bug_047); phantom faces filtered (bug_045).</li>
+<li><strong>Memory</strong>: per-person durable facts distilled at session end and recalled next time (<code>6cf5416</code>).</li>
+</ul>
+<h2 id="queued-code-fixes-each-its-own-guardian-deployed-commit-with-its-test-order-in-the-architecture-doc-47-14">Queued code fixes (each its own Guardian-deployed commit, with its test; order in the architecture doc §4.7 / §14)</h2>
+<ol>
+<li><code>MicStream</code> owner-thread guard in <code>parts_used/audio_portaudio.py</code>, used at both open sites.</li>
+<li>One resolver on stable identity (<code>audio_devices.find_input_index()</code>: by-id → <code>controlC&lt;N&gt;</code> → PortAudio <code>(hw:N,</code>);
+   never <code>input_device_index=None</code>; <code>wake_mic_id</code> / <code>command_mic_id</code> config keys.</li>
+<li>Wake-close timeout terminal (no command open, watchdog escalation); startup assertion wake ≠ command device.</li>
+<li>Rates from config; capture gain on every capture card by id; shared PyAudio device table logged once, <code>AudioManager</code>
+   private init removed.</li>
+<li><code>config.json</code> fallback removed with a loud YAML failure; known-good dataclass defaults; SIM7600X import-time probe
+   removed; <code>MqttConfig</code>; watchdog docstring (75 s) + wake-listener visibility check.</li>
+<li>Tests: <code>test_no_orphans</code>, <code>test_config_keys</code>, <code>test_audio_threading</code>, <code>test_mic_resolution</code>; Guardian <code>tests</code> step.</li>
+<li>Small: <code>tools/check_deps.py</code> data path, <code>docs/firmware/hand-esp32.md</code> → <code>tools/handctl.py</code>, dead <code>.gitignore</code>
+   lines, <code>gonzo.log</code> → <code>stella.log</code>.</li>
+</ol>
+<h2 id="open-needs-moti">Open (needs Moti)</h2>
+<ol>
+<li><strong>PSU / brownout</strong>: power-offs when the Ethernet cable is plugged in — no undervoltage flag on the readable boots, the
+   log just stops (hard cut). Need the PSU label rating; use the official 27 W supply. Guardian reports undervoltage bits.</li>
+<li><strong>Fan</strong>: hits the 80 °C soft limit under load (<code>throttled=0x80000</code>). A fan or a case with airflow is the fix.</li>
+<li><strong>INMP441 I²S mics</strong>: not yet wired — the durable cure for USB-audio fragility; a mic-role change afterwards needs a
+   bug file, a decision-log entry and a 24 h soak (architecture doc §4, I8).</li>
+<li><strong>Re-enrol the master face</strong> under YuNet / current lighting: <code>sudo systemctl stop airobot &amp;&amp; venv/bin/python
+   tools/reenroll.py &amp;&amp; sudo systemctl start airobot</code> (bug_048 verification).</li>
+<li>Office WiFi netplan (SSID Politech-Internal-2.4GHz, fixed 192.168.0.240/24) — needs sudo. <code>guard_mode</code> not persisted
+   across restarts. <code>git push</code>: sign in once via VS Code Source Control if the token is dead.</li>
+</ol>
+<h2 id="bench-tests-still-to-run-architecture-doc-13">Bench tests still to run (architecture doc §13)</h2>
+<ul>
+<li>Real stall reproduction: <code>usbreset</code>/unplug the USB PnP mic while a read is blocked (operator present, bench only).</li>
+<li>Boot with the command mic unplugged, plug later; PulseAudio contention; the 10-cycle wake → command → resume count
+  (log it in bug_053).</li>
+</ul>
+<h2 id="next-build-steps">Next build steps</h2>
+<ul>
+<li>Scout's top ideas: faster-whisper offline STT, openWakeWord "Hey Stella" (needs Moti's voice clips), Hailo model zoo
+  after the HailoRT runtime repair (matched pyhailort wheel, not PyPI).</li>
+<li>Remove the legacy brain dialogue pipeline and collapse the four device-control/guard writers into one owner (§14).</li>
+<li>
+<p>Evolution v3: Lab (sandbox) + Builder behind <code>require_operator_approval</code>.</p>
+</li>
+<li>
+<p><strong>2026-09-27:</strong> autonomous evolution disabled by the operator (cron removed, <code>evolution/AUTORUN_DISABLED</code>). Stable snapshot branch: <code>stable-2026-09-27</code>.</p>
+</li>
+</ul>
+</div>
+</body>
+</html>

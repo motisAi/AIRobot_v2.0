@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bug #009 — Wrong / shifting PyAudio mic device index after reboot</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="bug-009-wrong-shifting-pyaudio-mic-device-index-after-reboot">Bug #009 — Wrong / shifting PyAudio mic device index after reboot</h1>
+<ul>
+<li><strong>Date found:</strong> 2026-05-31</li>
+<li><strong>Status:</strong> fixed</li>
+<li><strong>Area:</strong> audio</li>
+<li><strong>Files touched:</strong> <code>config/settings.py</code>, <code>modules/audio/speech_recognition.py</code>, <code>modules/audio/wake_word.py</code>, <code>tools/check_deps.py</code></li>
+<li><strong>Commit(s):</strong> 9fecc95, f90451a</li>
+</ul>
+<h2 id="symptom">Symptom</h2>
+<p>Speech capture opened the wrong device (or none) so commands were never heard, and the wake word was too insensitive; after a reboot the fix stopped working again.</p>
+<h2 id="root-cause">Root cause</h2>
+<p>Mic devices were addressed by hard-coded PyAudio index (config said 1, the real speech mic was 2), and PyAudio indices are re-assigned on every reboot, so any fixed index eventually points at the wrong card. Wake-word energy threshold was also too high.</p>
+<h2 id="fix">Fix</h2>
+<ul>
+<li>9fecc95: speech mic index corrected to 2; wake-word threshold lowered to 300; energy window 50.</li>
+<li>f90451a: mic devices resolved <strong>by name</strong> at runtime instead of by index.</li>
+</ul>
+<h2 id="how-to-verify">How to verify</h2>
+<p>Reboot the Pi twice; each time the journal shows the mic resolved by name and the wake word still fires.</p>
+<h2 id="will-it-come-back">Will it come back?</h2>
+<p>Partially — the decisions log (2026-09-13) notes PyAudio enumeration is still flaky (sometimes lists only pulse/default); a clean <code>sudo -n systemctl restart airobot</code> re-resolves it. The 2026-09-16 <code>mic_available()</code> check (commit 231740d) looks at <code>/dev/snd/pcmC*D*c</code> to avoid being fooled by the name flip-flop.</p>
+</div>
+</body>
+</html>

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bug #055 — USB PnP mic misdiagnosed as &quot;wedged&quot;; single-mic detour failed (the real cause was our leaked reader thread)</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="bug-055-usb-pnp-mic-misdiagnosed-as-wedged-single-mic-detour-failed-the-real-cause-was-our-leaked-reader-thread">Bug #055 — USB PnP mic misdiagnosed as "wedged"; single-mic detour failed (the real cause was our leaked reader thread)</h1>
+<ul>
+<li><strong>Date found:</strong> 2026-09-26</li>
+<li><strong>Status:</strong> fixed</li>
+<li><strong>Area:</strong> audio</li>
+<li><strong>Files touched:</strong> <code>config/config.yaml</code> (mic roles), <code>modules/audio/speech_recognition.py</code> (capture path)</li>
+<li><strong>Commit(s):</strong> 2051a76 (the detour), a2e3229 (the fix)</li>
+<li><strong>Superseded by:</strong> —</li>
+<li><strong>Reverted:</strong> 2051a76 was undone by a2e3229 the same day</li>
+</ul>
+<h2 id="symptom">Symptom</h2>
+<p>Afternoon of 2026-09-26, three episodes in a row:
+1. 13:47 — after a capture stalled (<code>Command mic stalled (no audio 8s) — ending capture</code>), every following session
+   logged <code>Could not open command mic for capture</code> (8 times in 4 minutes). She woke on "Hey Stella" but heard nothing.
+2. The USB PnP mic was declared "wedged / unopenable" and commit 2051a76 (13:56) routed the <strong>command</strong> mic to the camera
+   mic as well — one mic for wake and command.
+3. 14:40 — under that single-mic layout: <code>Timed out waiting for wake-word stream to close</code>, then twice
+   <code>Could not open command mic for capture</code>. Deaf again, this time on the camera mic.</p>
+<h2 id="root-cause">Root cause</h2>
+<p>A misdiagnosis. The USB PnP mic was never faulty:
+- The 13:47 failures were caused by <strong>our own leaked reader thread</strong>. Commit ed73b10 (13:39, bug_054) made a background
+  reader thread the sole owner of the command stream; when a read stalled, the main thread did <code>join(timeout=2)</code> and
+  <strong>continued</strong>, abandoning a thread that still held the ALSA device (<code>hw:0,0</code>). Every later <code>audio.open()</code> on that
+  device failed. 442c8a8 (13:51) reverted to a single-thread read, which removed the leak — but the mic had already been
+  blamed.
+- The single-mic detour then failed for a different, structural reason: with both roles on one ALSA device the
+  wake-stream <strong>close</strong> (in the wake thread) and the command-stream <strong>open</strong> (in the conversation thread) contend for the
+  same device. When the wake thread did not close within <code>pause_listening()</code>'s 2 s wait, the code logged a WARNING and
+  proceeded to open the command mic on the still-held device → <code>Could not open command mic</code>. With two devices this
+  contention cannot happen.</p>
+<p>Commit 2051a76 cited "bug_055" but no such file existed until now (rule: a commit may not cite a bug number that is not
+in <code>bug_report/</code>).</p>
+<h2 id="fix">Fix</h2>
+<p>a2e3229 (20:26) restored the <strong>two-mic layout</strong>: wake = camera mic ("Auto Focus Camera", ALSA card <code>Camera</code>, hw:3),
+command = "USB PnP Sound Device" (ALSA card <code>Device</code>, hw:0). No code change to capture was needed beyond 442c8a8's
+single-thread read + hard deadline. The canonical design, invariants and handoff sequence are in
+<a href="architecture__stella-architecture.html#4-audio--the-canonical-two-mic-design">docs/architecture/stella-architecture.md §4</a>.</p>
+<h2 id="how-to-verify">How to verify</h2>
+<pre><code class="language-bash">journalctl -u airobot --since &quot;2026-09-26 20:26&quot; | grep -E &quot;Resolved speech mic|Vosk wake mic open&quot;
+#  Resolved speech mic 'USB PnP Sound Device' -&gt; device 0     (hw:0,0)
+#  Vosk wake mic open at 48000 Hz (device 2)                  (hw:3,0 = camera mic)
+journalctl -u airobot --since &quot;2026-09-26 20:26&quot; | grep -cE &quot;Could not open|Timed out waiting|status=6|malloc&quot;   # 0
+systemctl show airobot -p NRestarts                                                                              # 0
+</code></pre>
+<p>Verified 2026-09-26: 0 matches, <code>NRestarts=0</code>, wake at 21:12:09 on the camera mic, <code>Pausing</code> / <code>resumed</code> paired at 21:13:02.</p>
+<h2 id="will-it-come-back">Will it come back?</h2>
+<p>No — as long as the two-mic invariant is enforced: wake and command resolve to two different devices (startup refuses
+otherwise, architecture doc I1), no reader thread is ever reintroduced (bug_028, bug_054), and a wake-close timeout is
+treated as terminal instead of proceeding to another open. Single-mic handoff is unsupported and is not to be retried.</p>
+</div>
+</body>
+</html>

@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hardware — Bill of Materials</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="hardware-bill-of-materials">Hardware — Bill of Materials</h1>
+<p><em>Running list of components in the Stella build. Add rows as parts are added. Microphone roles are canonical in
+<a href="architecture__stella-architecture.html#4-audio--the-canonical-two-mic-design">../architecture/stella-architecture.md §4</a>;
+this table only mirrors them.</em></p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Model / spec</th>
+<th>Role</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SBC</td>
+<td>Raspberry Pi 5</td>
+<td>Main compute / orchestrator</td>
+<td>Ubuntu Server 24.04.4 aarch64, headless</td>
+</tr>
+<tr>
+<td>AI accelerator</td>
+<td>Hailo-10H NPU (PCIe/M.2)</td>
+<td>Offline LLM only (<code>qwen2.5-instruct:1.5b</code> via <code>hailo-ollama</code> :8000)</td>
+<td>Object detection runs on the CPU (OpenCV-DNN <code>yolov8n.onnx</code>) because the pip <code>hailort</code> wheel is ABI-broken; see <a href="hardware__hailo.html">hailo.md</a></td>
+</tr>
+<tr>
+<td>Hand controller</td>
+<td>ESP32-S3-WROOM-1</td>
+<td>Drives the servo hand over USB serial <code>/dev/ttyACM0</code></td>
+<td>Replaced an earlier classic ESP32 that shorted</td>
+</tr>
+<tr>
+<td>Servo driver</td>
+<td>PCA9685 (16-ch PWM)</td>
+<td>I2C → PWM for the finger servos</td>
+<td>Addr 0x40, ~50 Hz</td>
+</tr>
+<tr>
+<td>Servos</td>
+<td>5× hobby servo</td>
+<td>One per finger</td>
+<td>Channels 0–4 = pinky→thumb</td>
+</tr>
+<tr>
+<td>Servo PSU</td>
+<td>5–6 V external supply</td>
+<td>Powers servos (V+)</td>
+<td>Common ground with ESP32; NOT off the Pi</td>
+</tr>
+<tr>
+<td>Camera</td>
+<td>USB UVC webcam "Signo Camera WB-400 Auto Focus Camera"</td>
+<td>Vision (face, objects, guard, mirror, VLM) <strong>+ the WAKE mic</strong></td>
+<td>Shared via <code>CameraManager</code>; found by name, CSI nodes skipped</td>
+</tr>
+<tr>
+<td>Mic A — <strong>WAKE</strong></td>
+<td>Camera built-in mic — ALSA card id <code>Camera</code> (card 3 today), by-id <code>usb-Signo_Camera_WB-400_Auto_Focus_Camera*</code>, PortAudio <code>Auto Focus Camera: USB Audio (hw:3,0)</code></td>
+<td>Wake word (Vosk "hey stella")</td>
+<td>Native 48 kHz (no 16 k). Config <code>hardware.wake_word_microphone_name: "Auto Focus Camera"</code></td>
+</tr>
+<tr>
+<td>Mic B — <strong>COMMAND</strong></td>
+<td>"USB PnP Sound Device" (C-Media dongle) — ALSA card id <code>Device</code> (card 0 today), by-id <code>usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device*</code>, PortAudio <code>USB PnP Sound Device: Audio (hw:0,0)</code></td>
+<td>Conversation / STT capture</td>
+<td>Native 44.1 kHz. Config <code>hardware.speech_microphone_name: "USB PnP Sound Device"</code>. Has AGC and weak far-field pickup — never the wake mic (bug_053)</td>
+</tr>
+<tr>
+<td>Audio out</td>
+<td>HDMI audio (<code>vc4hdmi0</code> / <code>vc4hdmi1</code>, auto-detected)</td>
+<td>Speech output (piper → aplay)</td>
+<td>Card numbers move across reboots; BT speaker "AR-SPJ" optional</td>
+</tr>
+<tr>
+<td>WiFi (home)</td>
+<td>Pi 5 onboard radio</td>
+<td>Home-WiFi client (<code>wlan0</code>, sometimes <code>wlan1</code> — bug_052)</td>
+<td>—</td>
+</tr>
+<tr>
+<td>WiFi (AP)</td>
+<td>TP-Link Archer T2U Plus (RTL8821AU)</td>
+<td>"RobotNet" AP 10.0.0.1/24 for peripherals</td>
+<td><code>8821au</code> DKMS driver — rebuild after kernel upgrades (bug_044)</td>
+</tr>
+<tr>
+<td>Face display</td>
+<td>PC / tablet browser on <code>http://&lt;pi&gt;:8080</code> (face_bridge)</td>
+<td>Animated face, shown on voice command</td>
+<td>Live on the Surface today; Teclast P30T tablet (Allwinner A523, 4 GB real RAM, 10.1" 1280×800, Android 14) is the planned dedicated screen</td>
+</tr>
+<tr>
+<td>PSU</td>
+<td>USB-C, official 27 W recommended</td>
+<td>—</td>
+<td>Power-offs seen with a weaker supply when Ethernet is plugged in; no fan fitted (80 °C soft limit under load)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Not fitted:</strong> SIM7600X 4G modem, IMU, wheel encoders, wheels, lidar, ultrasonic, INMP441 I²S mics (planned as the
+durable replacement for USB audio).</p>
+<h2 id="notes-cautions">Notes / cautions</h2>
+<ul>
+<li><strong>Servo power</strong> must come from the dedicated 5–6 V supply, never the Pi's 5V rail.</li>
+<li><strong>I2C</strong> on the ESP32-S3 is GPIO 8 (SDA) / GPIO 9 (SCL) — the classic-ESP32 GPIO22 pin
+  does <strong>not</strong> exist on the S3.</li>
+<li><strong>Two mics, two roles, two devices.</strong> Wake and command must never resolve to the same ALSA device (single-mic
+  handoff failed — bug_055). Devices are resolved by stable identity (by-id / card id), never by index.</li>
+<li>Tablet vendor RAM spec ("10/15 GB") is virtual — treat as <strong>4 GB real</strong>; keep the face app
+  lightweight (2D Canvas, vanilla JS).</li>
+</ul>
+</div>
+</body>
+</html>

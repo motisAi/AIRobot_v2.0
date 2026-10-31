@@ -143,6 +143,8 @@ class HardwareWatchdog:
         hand = getattr(self.robot, "hand", None)
         if hand is None or not getattr(hand, "enabled", False):
             return
+        if getattr(hand, "_link", None) is not None:
+            return  # hand shares the eyes' serial link; that controller self-heals
         # Resolve the hand's OWN port only (its by-id glob, e.g. the CH343
         # "usb-1a86_*"). Never fall back to an arbitrary /dev/ttyACM* — that
         # grabbed the eyes' ESP32-C3 (ttyACM0) and homed it like a hand.

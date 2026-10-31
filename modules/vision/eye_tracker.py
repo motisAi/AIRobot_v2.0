@@ -33,7 +33,7 @@ except Exception:  # pragma: no cover
 logger = logging.getLogger("Eyes")
 
 EMOTIONS = {"neutral": 0, "happy": 1, "sad": 2, "surprised": 3, "sleepy": 4, "angry": 2}
-DEFAULT_GLOB = "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*-if00"
+DEFAULT_GLOB = "/dev/serial/by-id/usb-Espressif_*-if00"
 
 
 class EyeController:
@@ -106,6 +106,11 @@ class EyeController:
                     pass
                 self._ser = None
                 return False
+
+    def send_line(self, line: str) -> bool:
+        """Public raw-send: used by the Hand module to share this one serial link
+        when the hand and eyes are the same ESP32-S3 on one USB cable."""
+        return self._send(line)
 
     def close(self):
         with self._lock:

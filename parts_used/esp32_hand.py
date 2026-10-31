@@ -35,13 +35,18 @@ GESTURES = {
 
 
 class Hand:
-    def __init__(self, port="/dev/ttyUSB0", baud=115200, enabled=True):
+    def __init__(self, port="/dev/ttyUSB0", baud=115200, enabled=True, link=None):
+        # link: an object with send_line(str)->bool and an `available` property
+        # (the EyeController). When given, the hand shares that ONE serial link
+        # because the hand and eyes are the same ESP32-S3 on one USB cable; the
+        # hand opens no port of its own.
         self.port = port
         self.baud = baud
-        self.enabled = bool(enabled) and SERIAL_OK
+        self._link = link
+        self.enabled = bool(enabled) and (SERIAL_OK or link is not None)
         self._ser = None
         self._lock = threading.Lock()
-        if self.enabled:
+        if self._link is None and self.enabled:
             self._connect()
 
     def _resolve_port(self) -> str:
@@ -68,10 +73,14 @@ class Hand:
 
     @property
     def available(self) -> bool:
+        if self._link is not None:
+            return bool(getattr(self._link, "available", False))
         return self.enabled and self._ser is not None
 
     def reconnect(self, port: str = None) -> bool:
         """Re-open the serial link (e.g. after the ESP32 got a new /dev port)."""
+        if self._link is not None:
+            return self.available   # the shared link (eyes) owns reconnection
         if not self.enabled:
             return False
         with self._lock:
@@ -87,6 +96,8 @@ class Hand:
         return self.available
 
     def send(self, cmd: str) -> bool:
+        if self._link is not None:
+            return self._link.send_line(cmd.strip())
         if not self.available:
             return False
         with self._lock:

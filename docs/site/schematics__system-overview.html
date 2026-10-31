@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Schematic — System Overview</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="schematic-system-overview">Schematic — System Overview</h1>
+<p>Current data-flow and hardware topology of Stella. Mermaid renders on GitHub; an ASCII
+version follows for plain-text viewers. Microphone roles are canonical in
+<a href="architecture__stella-architecture.html#4-audio--the-canonical-two-mic-design">../architecture/stella-architecture.md §4</a>.</p>
+<h2 id="block-diagram-mermaid">Block diagram (Mermaid)</h2>
+<pre><code class="language-mermaid">graph TD
+    subgraph PI[&quot;Raspberry Pi 5 + Hailo-10H  (one Python process, threaded)&quot;]
+        BRAIN[&quot;Robot brain / event bus&quot;]
+        CONV[&quot;Conversation manager (session thread)&quot;]
+        FACE[&quot;Face recognition (YuNet + dlib, euclidean 0.60)&quot;]
+        OBJ[&quot;Object detection (YOLOv8n, OpenCV-DNN on CPU)&quot;]
+        WAKE[&quot;Wake word (Vosk) — wake-word thread&quot;]
+        STT[&quot;STT: Groq Whisper -&gt; Google -&gt; Vosk&quot;]
+        TTS[&quot;TTS (Piper -&gt; espeak) -&gt; aplay HDMI&quot;]
+        AI[&quot;LLM chain: Groq gpt-oss-120b -&gt; gpt-oss-20b -&gt; Gemini -&gt; Hailo qwen2.5 (offline)&quot;]
+        VLM[&quot;VLM look (Moondream -&gt; NVIDIA NIM)&quot;]
+        MIRROR[&quot;Hand mirror (MediaPipe)&quot;]
+        GUARD[&quot;Motion / home guard&quot;]
+        WATCH[&quot;Hardware watchdog (20 s)&quot;]
+        TG[&quot;Telegram bridge&quot;]
+        FB[&quot;Face bridge :8080&quot;]
+        DASH[&quot;Dashboard :5000&quot;]
+        CAM[&quot;CameraManager (shared)&quot;]
+    end
+
+    USBCAM[&quot;USB camera (Signo WB-400)&quot;] --&gt; CAM
+    MICA[&quot;WAKE mic = camera built-in mic (card 'Camera', hw:3, 48 kHz)&quot;] --&gt; WAKE
+    MICB[&quot;COMMAND mic = USB PnP Sound Device (card 'Device', hw:0, 44.1 kHz)&quot;] --&gt; STT
+    CAM --&gt; FACE
+    CAM --&gt; OBJ
+    CAM --&gt; VLM
+    CAM --&gt; MIRROR
+    CAM --&gt; GUARD
+
+    WAKE --&gt;|&quot;hey stella&quot;: pause wake, start session| CONV
+    STT --&gt; CONV
+    CONV --&gt; AI
+    AI --&gt; CONV
+    CONV --&gt; TTS
+    CONV --&gt;|session end: resume wake| WAKE
+    BRAIN --&gt; TTS
+    VLM --&gt; AI
+    TG &lt;--&gt; BRAIN
+    FB &lt;--&gt; BRAIN
+    WATCH -. checks .-&gt; CAM
+    WATCH -. checks .-&gt; TTS
+    WATCH -. stuck session: soft stop, then restart .-&gt; CONV
+
+    BRAIN --&gt;|USB serial /dev/ttyACM0 115200| ESP[&quot;ESP32-S3-WROOM-1&quot;]
+    ESP --&gt;|I2C 0x40  SDA=GPIO8 SCL=GPIO9| PCA[&quot;PCA9685 16ch PWM&quot;]
+    PCA --&gt;|PWM ~50Hz| SERVOS[&quot;5x finger servos (ch0..4 = pinky..thumb)&quot;]
+    PSU[&quot;External 5-6V servo supply&quot;] --&gt;|V+ / common GND| PCA
+
+    HAILO[&quot;hailo-ollama :8000 (Hailo-10H NPU)&quot;] &lt;--&gt; AI
+    CLOUD[&quot;Cloud: Groq, Gemini, Moondream/NIM, Telegram, Sensibo&quot;] &lt;-.WiFi.-&gt; PI
+    HOME[&quot;Tuya plug (LAN), MQTT hub :1883&quot;] &lt;-.-&gt; BRAIN
+
+    SCREEN[&quot;PC / tablet browser (face)&quot;] &lt;-.http://&lt;pi&gt;:8080 + ws /ws.-&gt; FB
+</code></pre>
+<h2 id="ascii-fallback">ASCII fallback</h2>
+<pre><code>   WAKE mic  = camera built-in mic (card 'Camera', hw:3, 48 kHz) ──► [Wake word / Vosk] ──&quot;hey stella&quot;──┐
+   COMMAND mic = USB PnP Sound Device (card 'Device', hw:0, 44.1 kHz) ──► [STT] ──► [Conversation] ◄────┘
+                                                        Groq Whisper -&gt; Google -&gt; Vosk        │
+                                                                                              ▼
+                                        [LLM chain: Groq 120b -&gt; 20b -&gt; Gemini -&gt; Hailo qwen] + tools
+                                                                                              │
+                                                                                              ▼
+                                                        [TTS: Piper -&gt; espeak] ──► aplay ──► HDMI audio
+   USB camera ──► [CameraManager] ──► face (YuNet+dlib) / objects (YOLOv8n CPU) / VLM / hand-mirror / guard
+                                                     │
+   Telegram  &lt;──WiFi──►  [brain]  ◄── VLM (Moondream -&gt; NIM, cloud)
+                              │
+                              ▼  USB serial /dev/ttyACM0 @115200
+                       ESP32-S3-WROOM-1
+                              │  I2C 0x40 (SDA=GPIO8, SCL=GPIO9)
+                              ▼
+                        PCA9685 (16ch PWM, ~50Hz)  ◄── external 5-6V (V+, common GND)
+                              │  PWM
+                              ▼
+        5x finger servos:  ch0=pinky  ch1=ring  ch2=middle  ch3=index  ch4=thumb
+
+   Face bridge :8080 (ws /ws) ◄─WiFi─► PC / tablet browser (Teclast P30T planned as the dedicated screen)
+   Watchdog (20 s): camera stale, hand serial, HDMI out, stuck session (75 s soft stop -&gt; +25 s restart)
+</code></pre>
+<p>Two mics, two roles, two physical devices — the wake-stream close and the command-stream open never contend for one
+ALSA device (single-mic handoff failed: bug_055). Each stream is owned by the thread that opened it.</p>
+<p><em>Update this when connections change. For a new subsystem, add its nodes/edges here and a
+matching entry in <code>../hardware/wiring.md</code>.</em></p>
+</div>
+</body>
+</html>

@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stella — Bug History</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="stella-bug-history">Stella — Bug History</h1>
+<p>One file per bug that was actually hit <strong>and fixed</strong> (features and design decisions live in <code>docs/decisions/log.md</code>).
+Chronological, oldest first, numbered with no gaps. Index generated 2026-09-27 from each file's header
+(number, date found, title, area, status). File paths inside the older entries are historical by design; the
+CURRENT layout and the canonical audio design are in
+<a href="architecture__stella-architecture.html">docs/architecture/stella-architecture.md</a>.</p>
+<p>Status key: <strong>fixed</strong> = deployed and believed fixed; <strong>verified</strong> = checked live afterwards; <strong>fixed-needs-verify</strong> =
+deployed but not yet checked live; <strong>recurring</strong> = fixed each time but will happen again (trigger in the last column);
+<strong>REVERTED</strong> = the fix was undone — the entry says why and what replaced it; do not reintroduce it;
+<strong>retired</strong> = number never assigned.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Date</th>
+<th>Title</th>
+<th>Area</th>
+<th>Status</th>
+<th>Superseded by / recurring trigger</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="bug_report__bug_001_face-rec-systemexit-missing-models.html">001</a></td>
+<td>2026-05-30</td>
+<td>face_recognition quit() killed process when dlib models missing</td>
+<td>vision</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_002_mic-sample-rate-mismatch.html">002</a></td>
+<td>2026-05-30</td>
+<td>Wake/speech mic opened at rate the USB mic rejects</td>
+<td>audio</td>
+<td>fixed</td>
+<td>new mic with other native rates</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_003_logging-stuck-warning-rms-overflow.html">003</a></td>
+<td>2026-05-30</td>
+<td>Root logger stuck at WARNING; numpy RMS overflow</td>
+<td>deploy</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_004_face-rec-cropped-frame-to-dlib.html">004</a></td>
+<td>2026-05-30</td>
+<td>Cropped face passed to dlib instead of full frame + location</td>
+<td>vision</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_005_brain-speech-pipeline-miswired.html">005</a></td>
+<td>2026-05-30</td>
+<td>Brain speech pipeline mis-wired (wrong module, double listen)</td>
+<td>conversation</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_006_robotevent-priorityqueue-comparison.html">006</a></td>
+<td>2026-05-30</td>
+<td>RobotEvent not comparable in PriorityQueue</td>
+<td>conversation</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_007_cpu-temp-threshold-too-low.html">007</a></td>
+<td>2026-05-30</td>
+<td>CPU temp threshold too low (raised 80 -&gt; 85 C)</td>
+<td>power</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_008_face-detection-spam.html">008</a></td>
+<td>2026-05-31</td>
+<td>Face detection spam (tiny faces, per-frame events)</td>
+<td>vision</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_009_mic-device-index-changes-on-reboot.html">009</a></td>
+<td>2026-05-31</td>
+<td>Mic device index wrong / changes on reboot</td>
+<td>audio</td>
+<td>fixed</td>
+<td>PyAudio enumeration flaky; resolve by stable identity (architecture §4)</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_010_wake-stream-not-released-on-pause.html">010</a></td>
+<td>2026-05-31</td>
+<td>Wake-word stream not released on pause; speech mic busy</td>
+<td>audio</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_011_hailo-driver-missing-after-kernel-upgrade.html">011</a></td>
+<td>2026-09-05</td>
+<td>Hailo DKMS driver gone after kernel upgrade (no /dev/hailo0)</td>
+<td>hardware</td>
+<td><strong>recurring</strong></td>
+<td>kernel upgrade; <code>linux-headers-raspi</code> installed 2026-09-19 so DKMS rebuilds; else <code>sudo dkms autoinstall</code></td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_012_hailo-ollama-api-chat-empty.html">012</a></td>
+<td>2026-09-05</td>
+<td>hailo-ollama /api/chat returns empty; use /v1/chat/completions</td>
+<td>ai</td>
+<td>fixed</td>
+<td>hailo-ollama upgrade</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_013_cloud-llm-models-retired-404.html">013</a></td>
+<td>2026-09-05</td>
+<td>Cloud LLM models retired (404); blank Gemini key</td>
+<td>ai</td>
+<td><strong>recurring</strong></td>
+<td>provider retires a model id</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_014_face-rec-threshold-too-strict.html">014</a></td>
+<td>2026-09-05</td>
+<td>Face-rec threshold 0.50 too strict; master = "Unknown"</td>
+<td>vision</td>
+<td>fixed</td>
+<td>lighting/camera change -&gt; re-enroll</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_015_google-stt-failing-fell-to-vosk.html">015</a></td>
+<td>2026-09-12</td>
+<td>Google STT failing 57x, dropped to weak Vosk</td>
+<td>audio</td>
+<td>fixed</td>
+<td>Groq rate-limit</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_016_light-command-routed-to-missing-relay.html">016</a></td>
+<td>2026-09-12</td>
+<td>"Turn on the light" routed to non-existent MCU relay</td>
+<td>smart-home</td>
+<td>fixed</td>
+<td>adding a 2nd Tuya device; plug IP change</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_017_sensibo-rate-limit-429.html">017</a></td>
+<td>2026-09-12</td>
+<td>Sensibo 429 rate limit on rapid AC commands</td>
+<td>smart-home</td>
+<td>fixed</td>
+<td>back-to-back commands</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_018_double-greeting-welcome-spam.html">018</a></td>
+<td>2026-09-12</td>
+<td>Double greeting + welcome spam -&gt; aplay busy, "frozen"</td>
+<td>conversation</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_019_camera-dead-after-reboot-csi-renumbered.html">019</a></td>
+<td>2026-09-12</td>
+<td>Camera dead after reboot: CSI renumbered USB webcam</td>
+<td>vision</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_020_csi-kernel-console-spam.html">020</a></td>
+<td>2026-09-12</td>
+<td>Console spam "rp1-cfe csi2 node link is not enabled"</td>
+<td>vision</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_021_guard-auto-disarmed-instantly.html">021</a></td>
+<td>2026-09-12</td>
+<td>"Guard my house" disarmed itself after 6 s</td>
+<td>conversation</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_022_face-kiosk-never-opened.html">022</a></td>
+<td>2026-09-12</td>
+<td>Face kiosk never opened on PC (controller not running / wedged)</td>
+<td>face-ui</td>
+<td>fixed</td>
+<td>Startup shortcut removed</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_023_music-wrong-song.html">023</a></td>
+<td>2026-09-12</td>
+<td>Music played wrong video (tutorials/covers)</td>
+<td>audio</td>
+<td>fixed</td>
+<td>obscure queries</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_024_music-no-audio-youtube-403.html">024</a></td>
+<td>2026-09-12</td>
+<td>Music: no sound, YouTube 403 on stream URL</td>
+<td>audio</td>
+<td>fixed</td>
+<td>YouTube client changes; <code>pip install -U yt-dlp</code></td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_025_vosk-never-hears-stella.html">025</a></td>
+<td>2026-09-13</td>
+<td>Vosk never transcribes "Stella"; wake word dead</td>
+<td>audio</td>
+<td>fixed</td>
+<td>new Vosk misspelling -&gt; add alias</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_026_phantom-replies-stt-hallucination.html">026</a></td>
+<td>2026-09-12</td>
+<td>Phantom replies from STT hallucination ("Nice to meet you, Foreign")</td>
+<td>conversation</td>
+<td>fixed-needs-verify</td>
+<td>new hallucination strings -&gt; extend stoplist</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_027_blocking-mic-read-hangs-conversation.html">027</a></td>
+<td>2026-09-13</td>
+<td>Blocking mic read hung conversation; deaf for 10 min</td>
+<td>audio</td>
+<td>fixed (watchdog recovery)</td>
+<td>its reader-thread fix caused 028 and was reverted</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_028_cross-thread-portaudio-close-sigabrt.html">028</a></td>
+<td>2026-09-13</td>
+<td>Cross-thread PortAudio close -&gt; SIGABRT crash loop</td>
+<td>audio</td>
+<td>fixed</td>
+<td>same class recurred as 054 on 2026-09-26</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_029_guard-off-command-armed-guard.html">029</a></td>
+<td>2026-09-13</td>
+<td>"Guard mode off" armed guard; status questions armed it</td>
+<td>conversation</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_030_face-bridge-access-log-spam.html">030</a></td>
+<td>2026-09-13</td>
+<td>Journal flooded by aiohttp access logs (face polling)</td>
+<td>face-ui</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_031_master-auth-bypass-keyword-handlers.html">031</a></td>
+<td>2026-09-13</td>
+<td>Master-auth bypass in _maybe_ac / _maybe_mirror</td>
+<td>conversation</td>
+<td>fixed</td>
+<td>new keyword handler without gate</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_032_object-recognition-dead-three-blockers.html">032</a></td>
+<td>2026-09-13</td>
+<td>Object recognition dead (no model, Hailo off, wrong hailort)</td>
+<td>vision</td>
+<td>fixed</td>
+<td>fresh clone (onnx gitignored)</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_033_object-detected-handlers-crash-event-flood.html">033</a></td>
+<td>2026-09-13</td>
+<td>object_detected handlers crashed + event flood</td>
+<td>vision</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_034_offline-cliff-llm-chain-90s.html">034</a></td>
+<td>2026-09-16</td>
+<td>Offline cliff: ~90 s per answer with no internet</td>
+<td>ai</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_035_false-lost-internet-announcement.html">035</a></td>
+<td>2026-09-16</td>
+<td>False "lost internet" announcement on offline boot</td>
+<td>network</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_036_no-mic-monologue.html">036</a></td>
+<td>2026-09-16</td>
+<td>No mic -&gt; Stella monologues to herself</td>
+<td>conversation</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_037_wake-mic-retry-error-spam.html">037</a></td>
+<td>2026-09-16</td>
+<td>Wake mic retried at 1 Hz with ERROR spam</td>
+<td>audio</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_038_tts-dead-hdmi-sink-pygame-hang.html">038</a></td>
+<td>2026-09-16</td>
+<td>TTS pinned to dead HDMI sink; pygame startup hang regression</td>
+<td>audio</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_039_yolo-every-frame-no-camera.html">039</a></td>
+<td>2026-09-16</td>
+<td>YOLO on every frame, loaded with no camera</td>
+<td>vision</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_040_wall-clock-timers-false-stuck-restart.html">040</a></td>
+<td>2026-09-16</td>
+<td>Wall-clock timers -&gt; false "stuck" restart after NTP jump</td>
+<td>hardware</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_041_reorg-broke-model-path-object-detection.html">041</a></td>
+<td>2026-09-19</td>
+<td>Reorg moved hailo_10h.py; object detection lost data/models</td>
+<td>vision</td>
+<td>fixed</td>
+<td>moving files with parent.parent root hacks</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_042_polite-goodbye-not-recognised-slow-llm-roundtrip.html">042</a></td>
+<td>2026-09-19</td>
+<td>"No, thank you, Stella." not a goodbye -&gt; 5 s LLM round trip</td>
+<td>conversation</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_043_groq-120b-rejects-send_photo-tool-schema.html">043</a></td>
+<td>2026-09-19</td>
+<td>Groq 120b rejects send_photo tool schema (400), falls back</td>
+<td>ai</td>
+<td>fixed (3210df1)</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_044_robotnet-dongle-driver-not-loaded-after-kernel-upgrade.html">044</a></td>
+<td>2026-09-19</td>
+<td>RobotNet dead: 8821au DKMS module missing after kernel upgrade</td>
+<td>network</td>
+<td><strong>recurring</strong></td>
+<td>kernel upgrade without headers; <code>dkms autoinstall</code> + modprobe</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_045_phantom-new-person-on-wall.html">045</a></td>
+<td>2026-09-19</td>
+<td>"New person" greeting with nobody there (phantom face on a wall)</td>
+<td>vision</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_046_wake-mic-stall-no-response.html">046</a></td>
+<td>2026-09-19</td>
+<td>"No response to Hey Stella" after a while (wake stream went silent)</td>
+<td>audio</td>
+<td>fixed</td>
+<td><strong>superseded by 053</strong>: the wake-mic-on-USB-dongle part was reverted (d3b2577); self-heal stands</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_047_master-identity-flip-single-frame.html">047</a></td>
+<td>2026-09-19</td>
+<td>Master identity lost repeatedly (cleared on a single Unknown frame)</td>
+<td>vision</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_048_yunet-dlib-recognition-regression.html">048</a></td>
+<td>2026-09-19</td>
+<td>Recognition similarity collapsed after switching to YuNet</td>
+<td>vision</td>
+<td>fixed-needs-verify</td>
+<td>re-enroll pending</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_049_unbounded-mic-read-stuck.html">049</a></td>
+<td>2026-09-19</td>
+<td>Hard "stuck / no response" + 30 s blackout (unbounded mic read)</td>
+<td>audio</td>
+<td><strong>REVERTED</strong></td>
+<td>reader thread reverted in 442c8a8; see 054/055; single-thread read + hard deadline + two-stage watchdog is the current mechanism</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_050_number-retired.html">050</a></td>
+<td>n/a</td>
+<td>Number retired — never assigned (numbering gap closed 2026-09-27)</td>
+<td>n/a</td>
+<td>retired</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_051_sensibo-422-stale-fields.html">051</a></td>
+<td>2026-09-19</td>
+<td>Sensibo AC returns 422 on a mode/temperature change</td>
+<td>smart-home</td>
+<td>fixed</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_052_wifi-interface-rename-race.html">052</a></td>
+<td>2026-09-20</td>
+<td>Stella off home WiFi: onboard radio renamed wlan0 -&gt; wlan1 (boot race)</td>
+<td>network</td>
+<td>fixed</td>
+<td>system netplan (dual-name) — outside the repo</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_053_wake-mic-mistranscribe-usb.html">053</a></td>
+<td>2026-09-26</td>
+<td>"Hey Stella" not detected: wake mic mistranscribes on the USB dongle mic</td>
+<td>audio</td>
+<td>verified</td>
+<td>wake = camera mic is an invariant (architecture §4)</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_054_sigabrt-reader-thread-crashloop.html">054</a></td>
+<td>2026-09-26</td>
+<td>SIGABRT crash-loop every ~2 min ("malloc: unaligned tcache chunk")</td>
+<td>audio</td>
+<td>fixed</td>
+<td><strong>superseded by 055</strong>: first fix ed73b10 reverted 12 min later (442c8a8); final = single-thread capture</td>
+</tr>
+<tr>
+<td><a href="bug_report__bug_055_usb-mic-misdiagnosed-single-mic-detour.html">055</a></td>
+<td>2026-09-26</td>
+<td>USB PnP mic misdiagnosed as wedged; single-mic detour failed (real cause: our leaked reader thread)</td>
+<td>audio</td>
+<td>fixed</td>
+<td>single-mic handoff is unsupported; two-mic layout restored a2e3229</td>
+</tr>
+</tbody>
+</table>
+<h2 id="still-open-no-bug-file-not-fixed-yet">Still open (no bug file — not fixed yet)</h2>
+<ul>
+<li>Power-offs when the Ethernet cable is plugged in: no undervoltage flag on the readable boots, the log just stops
+  (hard power cut). Needs the PSU label rating; use the official 27 W supply. Guardian reports undervoltage bits loudly.</li>
+<li>No fan: the Pi hits the 80 °C soft limit under load (<code>throttled=0x80000</code>).</li>
+<li>INMP441 I²S mics not yet wired — the durable cure for USB-audio fragility (002, 009, 010, 027, 037, 046, 053).</li>
+<li>Face re-enrol under YuNet / current lighting (<code>tools/reenroll.py</code>) — bug_048 verification.</li>
+<li><code>guard_mode</code> not persisted across service restarts.</li>
+<li>Boot WiFi uplink sometimes needs <code>sudo netplan apply</code>; office WiFi netplan (needs sudo).</li>
+<li>Rare <code>aplay</code> error 524 (device busy) — watchdog-handled.</li>
+</ul>
+<h2 id="how-to-add-a-bug">How to add a bug</h2>
+<p>Copy <code>_TEMPLATE.md</code> to <code>bug_NNN_&lt;short-kebab-slug&gt;.md</code> using the <strong>next free number — sequential, no gaps</strong> — in the
+same commit as the fix (a commit message may not cite a bug number that does not exist here). Fill every field (write
+"unclear from history" rather than guessing), keep it under ~60 lines, and add a row to the table above. Only bugs that
+were actually hit and fixed belong here; design decisions go in <code>docs/decisions/log.md</code>.</p>
+<p><strong>A reverted fix is edited IN PLACE</strong> — the original file's Status becomes <code>REVERTED — do not reintroduce, see bug_0XX</code>,
+its <code>Reverted:</code> field names the reverting commit, and its Fix section gains the current mechanism. Recording the revert
+only in a later entry is not enough: that is how the reader-thread mistake was made twice (027/028 on 2026-09-13, then
+049/054/055 on 2026-09-19..26). The decision-log entry that introduced the fix gets the same banner at its top, and the
+docstring at the code site cites both bug numbers.</p>
+<h2 id="verification-notes">Verification notes</h2>
+<ul>
+<li>2026-09-19: bugs 034–040 verified live after the reorganization deploy (Guardian: 0 errors, offline brain 0.7 s, no
+  unprompted speech in a 2-hour idle run). Bug 011 recurred on kernel 1064 and was fixed the same day with the permanent
+  <code>linux-headers-raspi</code> install, so future kernel upgrades rebuild the driver automatically.</li>
+<li>2026-09-26: after a2e3229 (20:26, two-mic layout restored) the journal shows the wake stream on the camera mic
+  (<code>Vosk wake mic open at 48000 Hz (device 2)</code>), the command mic resolved to the USB PnP device, a wake at 21:12:09 with
+  paired pause/resume, 0 <code>Could not open</code> / <code>Timed out</code> / SIGABRT lines and <code>NRestarts=0</code> — bug_053 verified, bug_055 closed.</li>
+</ul>
+</div>
+</body>
+</html>

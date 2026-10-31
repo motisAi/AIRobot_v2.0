@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tablet Face — Setup Checklist (Teclast P30T)</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="tablet-face-setup-checklist-teclast-p30t">Tablet Face — Setup Checklist (Teclast P30T)</h1>
+<p>Do these once the tablet is charged (~50%+ is plenty). Goal: the tablet boots straight
+into Stella's face, fullscreen, and reconnects on its own.</p>
+<h2 id="facts">Facts</h2>
+<ul>
+<li><strong>Pi (face server):</strong> IP <code>192.168.11.204</code>, hostname <code>motiAi</code>.</li>
+<li><strong>Face URL (once the bridge is running):</strong> <code>http://192.168.11.204:8080/</code></li>
+<li>Same-origin WebSocket: <code>ws://192.168.11.204:8080/ws</code> (one port, no TLS on the LAN).</li>
+</ul>
+<h2 id="steps">Steps</h2>
+<ol>
+<li><strong>WiFi:</strong> put the tablet on the <strong>same network</strong> as the Pi (2.4 or 5 GHz both fine).
+   Confirm it can reach the Pi: open a browser on the tablet → <code>http://192.168.11.204:8080/</code>
+   (only works after Claude starts the bridge — see M0).</li>
+<li><strong>Kiosk browser:</strong> install <strong>Fully Kiosk Browser</strong> (Play Store). It gives: autostart on
+   boot, load-a-URL, keep-screen-awake, auto-reload on crash, hide nav/status bars.
+   - Start URL: <code>http://192.168.11.204:8080/</code>
+   - Enable: <em>Start on boot</em>, <em>Keep screen on</em>, <em>Fullscreen / hide system bars</em>, <em>Auto-reload on connection loss</em>.
+   - Alternative if you prefer: Chrome → "Add to Home screen" as a fullscreen PWA.</li>
+<li><strong>Never sleep while docked:</strong> set display timeout to never (or rely on Fully's keep-awake).
+   Keep it on a charger — the 6000 mAh battery then acts as a UPS for the face.</li>
+<li><strong>Mount</strong> the tablet as the robot's face. (Back camera will point outward — reserved for a
+   possible phase-2 rear view.)</li>
+</ol>
+<h2 id="what-claude-does-on-the-pi-no-action-from-you">What Claude does on the Pi (no action from you)</h2>
+<ul>
+<li>Runs the <code>face_bridge</code> (serves the face app on :8080 + the WebSocket).</li>
+<li>Later: wires the bridge into Stella so emotion/gaze/speech drive the face automatically.</li>
+</ul>
+<h2 id="verify-m0-acceptance">Verify (M0 acceptance)</h2>
+<ul>
+<li>Reboot the tablet → face reappears and reconnects within ~10 s.</li>
+<li>Toggle WiFi off/on → face shows "offline", then recovers on its own.</li>
+<li>Pi log shows the face node connect/disconnect.</li>
+</ul>
+</div>
+</body>
+</html>

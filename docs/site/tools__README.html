@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tools — operator scripts</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1b1f24; --muted:#586069; --accent:#0b67c2;
+  --border:#d7dde3; --code-bg:#f4f6f8; --th-bg:#eef2f6; --card:#f8fafc;
+  --quote-bg:#f6f8fa; --quote-bar:#c3ccd5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1419; --fg:#e4e8ec; --muted:#9aa5b1; --accent:#6cb6ff;
+    --border:#2b333c; --code-bg:#161b22; --th-bg:#1c2430; --card:#161b22;
+    --quote-bg:#141a21; --quote-bar:#3a444e;
+  }
+}
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.65; margin:0; padding:0 16px;
+  font-size:16px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:28px 0 72px;}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+.backlink{display:inline-block; margin-bottom:22px; font-size:.92rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3; margin:1.6em 0 .6em; font-weight:650;}
+h1{font-size:1.9rem; margin-top:.2em;}
+h2{font-size:1.45rem; padding-bottom:.25em; border-bottom:1px solid var(--border);}
+h3{font-size:1.2rem;} h4{font-size:1.05rem;}
+p{margin:.7em 0;}
+ul,ol{margin:.6em 0; padding-left:1.6em;}
+li{margin:.25em 0;}
+hr{border:none; border-top:1px solid var(--border); margin:2em 0;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.9em;
+  background:var(--code-bg); padding:.15em .4em; border-radius:4px;}
+pre{background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5;}
+pre code{background:none; padding:0; font-size:.86rem; white-space:pre;}
+blockquote{margin:.9em 0; padding:.3em 1em; color:var(--muted);
+  background:var(--quote-bg); border-left:4px solid var(--quote-bar); border-radius:0 6px 6px 0;}
+table{border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow-x:auto;}
+th,td{border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top;}
+th{background:var(--th-bg); font-weight:650;}
+tr:nth-child(even) td{background:var(--card);}
+img{max-width:100%; height:auto;}
+.site-head{margin-bottom:6px;}
+.intro{color:var(--muted); margin:0 0 26px; font-size:.95rem;}
+.group{margin:26px 0;}
+.group h2{font-size:1.25rem; border-bottom:1px solid var(--border); padding-bottom:.3em;}
+.doclist{list-style:none; padding:0; margin:0;}
+.doclist li{margin:0 0 14px; padding:0;}
+.doclist a{font-weight:600; font-size:1.02rem;}
+.doclist .desc{display:block; color:var(--muted); font-size:.9rem; margin-top:2px;}
+.footer{margin-top:48px; padding-top:16px; border-top:1px solid var(--border);
+  color:var(--muted); font-size:.85rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="backlink" href="index.html">&larr; Back to index</a>
+<h1 id="tools-operator-scripts">tools — operator scripts</h1>
+<p>Run from the repo root with the venv Python (<code>venv/bin/python</code>). None of these run inside the service.</p>
+<table>
+<thead>
+<tr>
+<th>Script</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>reenroll.py</code></td>
+<td>Re‑enrol the master face (speaks guidance, 40 s cap, keeps other people). <strong>Stop <code>airobot</code> first</strong> so the camera is free.</td>
+</tr>
+<tr>
+<td><code>enroll_master.py</code></td>
+<td>Original enrolment tool (interactive / <code>--auto</code>). Prefer <code>reenroll.py</code>.</td>
+</tr>
+<tr>
+<td><code>manage_faces.py</code></td>
+<td><code>list</code> / <code>remove &lt;id or name&gt;</code> / <code>rename &lt;id&gt; &lt;new name&gt;</code> on the face DB (<code>data/faces/</code>).</td>
+</tr>
+<tr>
+<td><code>check_deps.py</code></td>
+<td>Import every Python dependency and report what is missing. Deep‑clean fix: its data directory is the repo <code>data/</code> (was <code>tools/data</code>, so it always reported the Vosk model missing — same class as bug_041).</td>
+</tr>
+<tr>
+<td><code>handctl.py</code></td>
+<td>Send raw commands to the ESP32 hand over serial (stop <code>airobot</code> first; it owns the port). Protocol: <code>docs/firmware/hand-esp32.md</code>.</td>
+</tr>
+<tr>
+<td><code>check_audio.py</code> (planned)</td>
+<td>Greps the journal for the two‑mic startup invariant (device table once, speech mic → hw:0, wake mic → hw:3 @ 48 kHz, no "same device"), checks capture gain on both cards, exits non‑zero on failure; to be run by <code>evolution/nightly.sh</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Removed 2026-09-27: <code>test_sim7600x.py</code> (4G modem not fitted; module deleted).</p>
+<pre><code class="language-bash">sudo systemctl stop airobot &amp;&amp; venv/bin/python tools/reenroll.py &amp;&amp; sudo systemctl start airobot
+venv/bin/python tools/manage_faces.py list
+venv/bin/python tools/check_deps.py
+</code></pre>
+</div>
+</body>
+</html>

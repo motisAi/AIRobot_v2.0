@@ -450,16 +450,20 @@ class AIRobot:
         try:
             if getattr(hand_config, 'enabled', False):
                 from parts_used.esp32_hand import Hand
-                # serial_port is a /dev/serial/by-id glob (CH343 = "usb-1a86_*");
-                # Hand resolves it. No blind "first ttyACM*" fallback any more:
-                # that grabbed the eyes' ESP32-C3 and sent it hand gestures.
+                # The hand and eyes are the SAME ESP32-S3 on ONE USB cable, so the
+                # hand shares the eyes' serial link (self.eyes) instead of opening
+                # its own port. If the eyes are disabled (separate-board setup),
+                # fall back to the hand's own by-id port.
                 _port = getattr(hand_config, 'serial_port', '/dev/ttyACM0')
                 self.hand = Hand(
                     port=_port,
                     baud=getattr(hand_config, 'baud', 115200),
-                    enabled=True)
-                self.logger.info("✓ Robotic hand ready" if self.hand.available
-                                 else "Hand enabled but serial not connected (%s)" % _port)
+                    enabled=True,
+                    link=self.eyes)
+                self.logger.info("✓ Robotic hand ready (%s)" %
+                                 ("shared eyes link" if self.eyes is not None else _port)
+                                 if self.hand.available
+                                 else "Hand enabled but serial not connected")
             else:
                 self.logger.info("Robotic hand disabled (set hand.enabled: true)")
         except Exception as e:
