@@ -2,6 +2,18 @@
 
 ## 0. Status
 
+> **⚠ 2026-10-31 — parts of this doc are STALE.** Since it was written (2026-09-26) the hardware changed a lot:
+> USB webcam → **CSI Camera Module 3 Wide NoIR**; wake mic → USB PnP dongle; the hand's ESP32-S3 now ALSO drives the
+> **LCD eyes** (one board); a **blink liveness gate** was added. The current wiring/vision state lives in
+> `docs/hardware/wiring.md` and the memory notes, not in §4/§6 below. **Hailo reality (verified 2026-10-31):** the
+> Hailo-10H is a *generative-AI* NPU and it is **actively running the offline LLM** via `hailo-ollama` (apt stack
+> `h10-hailort` + `hailo-gen-ai-model-zoo`, both 5.1.1; LLM manifests qwen2.5/llama3.2/deepseek). It is NOT idle. The
+> venv's `hailort` is **4.23.0 (PyPI) — mismatched** to the system 5.1.1, so Python cannot drive the NPU; and there are
+> **no vision `.hef`** for the Hailo-10H installed (the gen-ai model zoo has LLMs only). Moving vision (YOLO/face/depth)
+> onto the NPU therefore needs: (1) the matched **pyhailort 5.1.1** (Hailo Developer Zone login — not on the Pi), (2)
+> **Hailo-10H-compiled** vision `.hef` (DFC v5.x; Hailo-8 `.hef` are NOT compatible), and (3) a **time-share strategy
+> with the LLM** (one device). See the 2026-10-31 plan in §14.
+>
 > **This is the only current architecture document.**
 > Superseded: `archive/stella-architecture-2026-09-13.md` and `archive/stella-architecture-2026-09-19.md`
 > (both moved to `docs/architecture/archive/` with a SUPERSEDED banner) and `docs/architecture.md` (deleted).
@@ -547,9 +559,23 @@ land in `evolution/reports/guardian-latest.json` (Guardian), `evolution/reports/
 3. **Dead optional backends**: Porcupine, Coqui, DeepFace, local Whisper, `llama_cpp`, Anthropic/OpenAI branches,
    pygame/pyaudio TTS playback; pip-uninstall what nothing imports.
 4. **46 unread settings fields** in `config/settings.py` (after `test_config_keys.py` lands, delete or wire each).
-5. **Hailo runtime repair**: `pip uninstall hailort`; install the matched pyhailort wheel from the h10-hailort bundle
-   (not PyPI); only then evaluate NPU vision vs single-context contention with `hailo-ollama`. Object detection stays on
-   the CPU until then.
+5. **Hailo runtime repair + vision offload (2026-10-31 plan).** The Hailo-10H already runs the LLM well; the goal is to
+   *also* offload heavy vision off the Pi CPU without starving the LLM. Steps, in order:
+   - **5a. Fix the Python runtime.** `pip uninstall hailort` (4.23.0, PyPI, mismatched) and install the matched
+     **pyhailort 5.1.1** for the Hailo-10H (Hailo Developer Zone download — NOT on the Pi, needs the user's free Hailo
+     account). Until then no Python code can use the NPU for anything but the LLM's own server.
+   - **5b. Get Hailo-10H vision `.hef`.** Download from the Hailo **vision** model zoo (master branch = Hailo-10/15,
+     DFC v5.x): YOLOv8/YOLO11 detection, SCRFD/RetinaFace + ArcFace for faces, a monocular depth model (for the
+     eyes/arm depth goal). Hailo-8 `.hef` do NOT run on the 10H. Needs the Hailo account (or compile from ONNX with the
+     DFC — same login). NVIDIA's free models are not a direct on-device path here (no NVIDIA HW); an NVIDIA ONNX could be
+     DFC-compiled like any other, and NVIDIA NIM stays the *cloud* VLM.
+   - **5c. Rewrite `parts_used/hailo_10h.py`** to run those `.hef` on `/dev/hailo0` via HailoRT 5.1.1, replacing the
+     OpenCV-DNN CPU path for object detection (and optionally face detect + depth).
+   - **5d. Contention:** one NPU serves BOTH the LLM and vision. Decide priority — recommended: vision detection on the
+     NPU continuously (it's the CPU hog), LLM queries time-share/queue, or the LLM falls back to cloud while vision is
+     hot. Measure with `hailortcli monitor` (note: not supported on 5.1.1 — may need 5.3.0).
+   - **5e. Meanwhile (no account needed):** reduce the Pi CPU vision load (cadence/rate of face-recog, liveness FaceMesh,
+     object detection) so she stays responsive. This is the immediate "don't overkill the Pi" win.
 6. **`MqttConfig`** dataclass; `main.py` stops reading raw YAML; hub does not start with zero devices.
 7. Audio hardening in §4.7 order (MicStream, resolver, terminal timeout, startup invariant, config ids, rates, gains,
    device table, comments, tests).
