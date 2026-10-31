@@ -98,6 +98,9 @@ class ModelConfig:
     face_distance_metric: str = "euclidean"  # dlib embeddings need euclidean (~0.6)
     face_recognition_threshold: float = 0.60  # distance <= 0.60 = match
     face_detection_confidence: float = 0.7
+    # Faces narrower than this (px) are detected/tracked but never given an
+    # identity: 70 px ≈ 1.2 m on the 120° lens; below that dlib guesses.
+    face_min_recognize_px: int = 70
     # Liveness (anti-photo) monitor: MediaPipe FaceMesh blink check on the
     # largest face (modules/vision/liveness.py). Policy lives in SecurityConfig.
     liveness_enabled: bool = True

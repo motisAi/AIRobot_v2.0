@@ -226,6 +226,11 @@ model:
   # stranger look identical to the master. Lower threshold = stricter.
   face_distance_metric: "euclidean"
   face_recognition_threshold: 0.60
+  # No identity for faces narrower than this (px): 70 ≈ 1.2 m on the 120° lens.
+  # Smaller faces are still tracked (presence/gaze) — naming them was guesswork
+  # (a 56 px face at 1.5 m was called "Orr"). Identity at 2-3 m needs a
+  # higher-resolution crop stream, not a lower threshold.
+  face_min_recognize_px: 70
   # Liveness (anti-photo): MediaPipe FaceMesh blink check on the biggest face,
   # own thread at ~15 fps on the face crop (modules/vision/liveness.py).
   liveness_enabled: true

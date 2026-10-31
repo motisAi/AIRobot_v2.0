@@ -159,6 +159,8 @@ class FaceRecognitionModule:
         self.match_margin = 0.08
         # Upscale small faces to ~this width before encoding (120° wide lens).
         self.target_face_px = 200
+        # No identity below this face width (see _process_frame).
+        self.min_recognize_px = int(getattr(model_config, 'face_min_recognize_px', 70))
         self.camera_hfov_deg = float(getattr(hardware_config, 'camera_hfov_deg', 102.0))
         
         # Face database
@@ -349,8 +351,15 @@ class FaceRecognitionModule:
                 face_area = face_data['area']
                 confidence = face_data.get('confidence', 0)
 
-                # Recognize face (pass full frame + location for face_recognition lib)
-                person_id, similarity = self._recognize_face(face_region, frame, face_area)
+                # Identity needs pixels: below min_recognize_px (70 px ≈ 1.2 m on
+                # the 120° lens) dlib guesses — a 30 px face at 2.8 m was called
+                # "Moti" and a 56 px one "Orr". Tiny faces are still tracked and
+                # drawn (presence, gaze) but get no identity and no event.
+                too_small = face_area[2] < self.min_recognize_px
+                if too_small:
+                    person_id, similarity = 'unknown', 0.0
+                else:
+                    person_id, similarity = self._recognize_face(face_region, frame, face_area)
                 # True = blinked recently, False = watched 12 s without a blink
                 # (photo), None = undecided / monitor off. Consumers gate on it.
                 live = self.liveness.is_live(face_area) if self.liveness is not None else None
@@ -375,7 +384,7 @@ class FaceRecognitionModule:
                 self._update_face_tracking(person_id, face_area)
                 
                 # Emit event if brain is connected (throttle: 1 event per face per 10s)
-                if self.brain:
+                if self.brain and not too_small:
                     now = time.time()
                     last_emit = getattr(self, '_last_emit_times', {})
                     if not hasattr(self, '_last_emit_times'):
@@ -408,7 +417,7 @@ class FaceRecognitionModule:
                 # Handle learning mode — store (full frame, face box) so we can
                 # encode exactly like recognition does (a bare crop makes dlib's
                 # compute_face_descriptor raise 'incompatible function arguments').
-                if self.learning_mode and person_id == 'unknown':
+                if self.learning_mode and person_id == 'unknown' and not too_small:
                     self.learning_samples.append((frame.copy(), face_area))
             
             # Update results

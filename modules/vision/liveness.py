@@ -301,8 +301,9 @@ class LivenessMonitor:
                     self._reset_track()
             else:
                 try:
+                    tp = time.time()
                     self._process(frame, box)
-                    self.proc_ms = (time.time() - t0) * 1000.0
+                    self.proc_ms = (time.time() - tp) * 1000.0
                 except Exception as exc:
                     self.logger.debug("liveness frame error: %s", exc)
             # pace to ~fps so FaceMesh never eats a whole core
