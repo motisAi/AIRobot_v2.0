@@ -190,7 +190,15 @@ class HardwareConfig:
     # Software low-light boost (adaptive; brightens dark frames for face recog
     # without washing out well-lit ones). Recommended on.
     camera_low_light_boost: bool = True
-    
+
+    # LCD eyes: ESP32-C3 + dual GC9D01 (firmware/stella_eyes), native USB port.
+    # eyes_serial may be a /dev/serial/by-id glob; the controller no-ops without it.
+    eyes_enabled: bool = False
+    eyes_serial: str = "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*-if00"
+    eyes_baud: int = 115200
+    eyes_invert_x: bool = False   # true if she looks the wrong way left/right
+    eyes_invert_y: bool = False
+
     # Microphone Settings
     microphone_device_index: Optional[int] = None  # None = default device
     microphone_channels: int = 1

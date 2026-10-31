@@ -143,16 +143,21 @@ class HardwareWatchdog:
         hand = getattr(self.robot, "hand", None)
         if hand is None or not getattr(hand, "enabled", False):
             return
-        port = getattr(hand, "port", "")
-        if os.path.exists(port) and getattr(hand, "available", False):
+        # Resolve the hand's OWN port only (its by-id glob, e.g. the CH343
+        # "usb-1a86_*"). Never fall back to an arbitrary /dev/ttyACM* — that
+        # grabbed the eyes' ESP32-C3 (ttyACM0) and homed it like a hand.
+        target = None
+        try:
+            target = hand._resolve_port()
+        except Exception:
+            target = None
+        if not target:
+            return  # the hand board isn't plugged in — leave it disconnected
+        if getattr(hand, "available", False) and os.path.exists(getattr(hand, "port", "") or target):
             return  # healthy
-        # Port vanished or link dead — find an ESP32-ish serial port and reconnect.
-        cands = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
-        target = port if os.path.exists(port) else (cands[0] if cands else None)
-        if target:
-            logger.warning("hand serial unhealthy — reconnecting to %s", target)
-            if hand.reconnect(target):
-                logger.info("hand reconnected on %s", target)
+        logger.warning("hand serial unhealthy — reconnecting to %s", target)
+        if hand.reconnect(target):
+            logger.info("hand reconnected on %s", target)
 
     # -- audio output (HDMI card can renumber) ----------------------------
     def _check_audio_out(self):

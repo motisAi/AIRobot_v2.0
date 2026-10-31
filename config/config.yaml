@@ -103,7 +103,9 @@ web_search:
 # stop the service before re-flashing the ESP32.
 hand:
   enabled: true                  # set true after flashing the ESP32 hand firmware
-  serial_port: "/dev/ttyACM0"    # ESP32-S3 UART bridge (classic ESP32 was ttyUSB0)
+  # By-id glob, not /dev/ttyACMn: the S3's CH343 bridge is "usb-1a86_*"; the eyes'
+  # ESP32-C3 (native USB, "usb-Espressif_*") took ttyACM0 the day it was plugged in.
+  serial_port: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_*-if00"
   baud: 115200
   wave_on_greeting: true         # wave hello when she greets someone
   wave_on_goodbye: true          # wave when she says goodbye
@@ -184,6 +186,16 @@ hardware:
   camera_gamma: null
   # Adaptive software brightening for face recognition (recommended on).
   camera_low_light_boost: true
+
+  # --- LCD eyes (ESP32-C3 + dual GC9D01, firmware/stella_eyes) ---
+  # Plug the board's NATIVE USB type-C (it enumerates as "Espressif USB JTAG/serial"),
+  # not its UART type-C (that one is a CH343 like the hand, and it drives GPIO20/21).
+  # The gaze feed sends the primary face's position; no-ops when the board is absent.
+  eyes_enabled: true
+  eyes_serial: "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*-if00"
+  eyes_baud: 115200
+  eyes_invert_x: false           # true if she looks the wrong way left/right
+  eyes_invert_y: false
 
   # --- microphones: TWO mics, TWO roles, TWO different devices (never one shared mic — bug_055) ---
   # WAKE    = the USB dongle "USB PnP Sound Device" (ALSA card id 'Device', by-id usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device*, native 44.1 kHz)

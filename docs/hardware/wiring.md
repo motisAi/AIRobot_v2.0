@@ -125,7 +125,11 @@ Pi 5 ──USB (power + gaze serial 115200)──> ESP32-C3 ──SPI (shared SC
 ```
 
 Module: bare "0.71 inch Dual-Eye LCD" (two GC9D01, 160×160, each with its own CS, RST and backlight).
-Firmware: `firmware/stella_eyes/stella_eyes.ino` (board "ESP32C3 Dev Module", vendor TFT_eSPI dual-reset build).
+Firmware: `firmware/stella_eyes/stella_eyes.ino` (board "ESP32C3 Dev Module", USB CDC on boot) with the supplier's
+TFT_eSPI vendored at `firmware/libraries/TFT_eSPI` (pins pre-set). Build/flash recipe: `firmware/README.md`.
+**The C3 board has TWO type-C ports:** use the **native USB** one (enumerates as `Espressif USB JTAG/serial`,
+`/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_30:ED:A0:BD:2E:64-if00`, wired 2026-10-31). Its other
+port is a CH343 UART bridge on GPIO20/21 — it looks like the hand (`usb-1a86_*`) and must stay unplugged.
 
 | Eye module pin | ESP32-C3 GPIO | Role / note |
 |----------------|---------------|-------------|

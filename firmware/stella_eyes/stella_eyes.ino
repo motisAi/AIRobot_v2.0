@@ -18,12 +18,17 @@
  *   Power      : module VCC -> 3V3, GND -> GND
  *   USB        : ESP32-C3 -> Raspberry Pi (power + gaze serial @115200)
  *
- * REQUIRED LIBRARY: the vendor's bundled TFT_eSPI (GC9D01 driver, dual-reset
- *   build). In its User_Setup.h, ESP32-C3 block, change ONLY these two lines:
- *       #define TFT_DC   10     // was 9  (GPIO9 is the PCA9685 SCL)
- *       #define TFT_RST  0      // was 8  (GPIO8 is the PCA9685 SDA)
- *   Leave as they are:  TFT_MOSI 4, TFT_SCLK 7, TFT_CS -1, TFT2_RST 5.
- *   Board: "ESP32C3 Dev Module".
+ * REQUIRED LIBRARY: the display supplier's TFT_eSPI build (GC9D01 driver +
+ *   second reset TFT2_RST), VENDORED in this repo at firmware/libraries/TFT_eSPI
+ *   with Stella's pins already set in its User_Setup.h:
+ *       TFT_DC 10 (vendor had 9 = PCA9685 SCL), TFT_RST 0 (vendor had 8 = SDA),
+ *       TFT2_RST 5, TFT_MOSI 4, TFT_SCLK 7, TFT_CS -1.
+ *   Point the Arduino IDE sketchbook at the repo's firmware/ folder (or build
+ *   with arduino-cli --libraries firmware/libraries). Never replace it with the
+ *   stock TFT_eSPI — that one has neither the driver nor the second reset.
+ *   Board: "ESP32C3 Dev Module", USB CDC On Boot = Enabled (Serial = native USB,
+ *   which is the port wired to the Pi; the board's other type-C is a UART bridge).
+ *   Build/flash recipe: firmware/README.md.
  *
  * INIT PATTERN (matches the vendor dual-eye demo): select BOTH eyes, call
  *   tft.init() ONCE — the library resets both panels (TFT_RST + TFT2_RST) and

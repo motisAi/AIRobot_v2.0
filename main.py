@@ -426,24 +426,40 @@ class AIRobot:
             self.logger.error("✗ Audio arbiter init failed: %s", e)
             self.audio_arbiter = None
 
+        # --- LCD eyes (ESP32-C3 + dual GC9D01 over native USB serial) ---
+        self.eyes = None
+        try:
+            from config.settings import hardware_config as _hw
+            if getattr(_hw, 'eyes_enabled', False):
+                from modules.vision.eye_tracker import EyeController
+                self.eyes = EyeController(
+                    port=getattr(_hw, 'eyes_serial', ''),
+                    baud=getattr(_hw, 'eyes_baud', 115200),
+                    invert_x=getattr(_hw, 'eyes_invert_x', False),
+                    invert_y=getattr(_hw, 'eyes_invert_y', False))
+                self.logger.info("✓ LCD eyes ready (%s)" % self.eyes.status().get('port')
+                                 if self.eyes.available else
+                                 "LCD eyes enabled but board not connected (will retry)")
+                self._start_gaze_feed()
+        except Exception as e:
+            self.logger.warning("LCD eyes init failed: %s", e)
+            self.eyes = None
+
         # --- Robotic hand (ESP32 + PCA9685 gestures over serial) ---
         self.hand = None
         try:
             if getattr(hand_config, 'enabled', False):
                 from parts_used.esp32_hand import Hand
-                import glob as _glob
+                # serial_port is a /dev/serial/by-id glob (CH343 = "usb-1a86_*");
+                # Hand resolves it. No blind "first ttyACM*" fallback any more:
+                # that grabbed the eyes' ESP32-C3 and sent it hand gestures.
                 _port = getattr(hand_config, 'serial_port', '/dev/ttyACM0')
-                if not os.path.exists(_port):
-                    _cands = sorted(_glob.glob('/dev/ttyACM*') + _glob.glob('/dev/ttyUSB*'))
-                    if _cands:
-                        self.logger.info("Hand port %s missing; auto-using %s", _port, _cands[0])
-                        _port = _cands[0]
                 self.hand = Hand(
                     port=_port,
                     baud=getattr(hand_config, 'baud', 115200),
                     enabled=True)
                 self.logger.info("✓ Robotic hand ready" if self.hand.available
-                                 else "Hand enabled but serial not connected")
+                                 else "Hand enabled but serial not connected (%s)" % _port)
             else:
                 self.logger.info("Robotic hand disabled (set hand.enabled: true)")
         except Exception as e:
@@ -1167,6 +1183,12 @@ class AIRobot:
                 pass
 
     def face_speak(self, on):
+        eyes = getattr(self, 'eyes', None)
+        if on and eyes is not None:
+            try:
+                eyes.blink()   # the LCD eyes blink as she starts to speak
+            except Exception:
+                pass
         f = getattr(self, 'face', None)
         if f:
             try:
@@ -1190,12 +1212,16 @@ class AIRobot:
                 self.face_speak(False)
 
     def _start_gaze_feed(self):
-        """Stream the primary detected face's centre to the screen face so her eyes
-        follow you. Reads the face module's locations (frame pixels) ~7x/sec, only
-        while the face is on screen. Fully guarded — never fatal."""
+        """Stream the primary detected face's centre to the screen face (while it
+        is shown) AND to the LCD eyes (whenever the board is connected) so her
+        eyes follow you. Reads the face module's locations (frame pixels) ~7x/sec.
+        Fully guarded — never fatal. Idempotent."""
+        if getattr(self, '_gaze_feed_started', False):
+            return
+        self._gaze_feed_started = True
         import threading as _th
         import time as _t
-        MIRROR_X = True  # tablet acts like a mirror; set False if gaze feels reversed
+        MIRROR_X = True  # camera faces the person: a face on the image's left is on her right
 
         def loop():
             fm = self.modules.get('face_recognition')
@@ -1203,7 +1229,9 @@ class AIRobot:
             while getattr(self, 'running', True):
                 try:
                     f = getattr(self, 'face', None)
-                    if f is not None and getattr(f, 'showing', False) and fm is not None:
+                    f_on = f is not None and getattr(f, 'showing', False)
+                    eyes = getattr(self, 'eyes', None)
+                    if fm is not None and (f_on or eyes is not None):
                         locs = list(getattr(fm, 'face_locations', []) or [])
                         if locs:
                             missing = 0
@@ -1215,17 +1243,24 @@ class AIRobot:
                             ny = (y + h / 2.0) / max(1, fh)
                             gx = ((1.0 - nx) if MIRROR_X else nx) * 2.0 - 1.0
                             gy = (ny * 2.0 - 1.0) * 0.7
-                            f.look_at(max(-1, min(1, gx)), max(-1, min(1, gy)))
+                            gx, gy = max(-1, min(1, gx)), max(-1, min(1, gy))
+                            if f_on:
+                                f.look_at(gx, gy)
+                            if eyes is not None:
+                                eyes.look_at_norm(gx, gy)
                         else:
                             missing += 1
-                            if missing == 3:
-                                f.gaze_mode('idle')   # no one there -> gentle idle drift
+                            if missing == 3:        # no one there -> idle drift
+                                if f_on:
+                                    f.gaze_mode('idle')
+                                if eyes is not None:
+                                    eyes.idle()
                 except Exception:
                     pass
                 _t.sleep(0.15)
 
         _th.Thread(target=loop, name="gaze_feed", daemon=True).start()
-        self.logger.info("✓ Gaze feed started (eyes follow you when the face is shown)")
+        self.logger.info("✓ Gaze feed started (screen face + LCD eyes follow the primary face)")
 
     def _network_monitor_loop(self):
         """Announce (once) when the internet connection is lost, and point the

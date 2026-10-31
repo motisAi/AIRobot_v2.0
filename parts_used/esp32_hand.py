@@ -44,9 +44,22 @@ class Hand:
         if self.enabled:
             self._connect()
 
+    def _resolve_port(self) -> str:
+        """Allow a /dev/serial/by-id glob (e.g. 'usb-1a86_*-if00') so the hand
+        never grabs another board's /dev/ttyACMn (the eyes' ESP32-C3 took
+        ttyACM0 the day it was plugged in). Returns the first match, or the
+        configured string unchanged when it has no wildcard."""
+        if "*" not in self.port and "?" not in self.port:
+            return self.port
+        import glob
+        matches = sorted(glob.glob(self.port))
+        if not matches:
+            raise FileNotFoundError(f"no serial device matches {self.port}")
+        return matches[0]
+
     def _connect(self):
         try:
-            self._ser = serial.Serial(self.port, self.baud, timeout=1, write_timeout=2)
+            self._ser = serial.Serial(self._resolve_port(), self.baud, timeout=1, write_timeout=2)
             time.sleep(2.5)   # ESP32 resets on connect and homes to a fist
             logger.info("Hand connected on %s (ESP32 homed to fist)", self.port)
         except Exception as exc:
