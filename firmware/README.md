@@ -2,57 +2,51 @@
 
 | Sketch | Board | Drives | Talks to the Pi as |
 |---|---|---|---|
-| `stella_s3/stella_s3.ino` | **ESP32-S3** | hand (PCA9685) **+** eyes (dual GC9D01) | one serial link (see below) |
-| `hand/hand.ino` | ESP32-S3 | hand only (reference) | `usb-1a86_*` (CH343) |
+| `stella_s3/` | **ESP32-S3** | eyes (dual GC9D01) **+** arm (5× MG996R) **+** hand (5 fingers) | one serial link, CH343 `usb-1a86_*` |
+| `hand/hand.ino` | ESP32-S3 | hand only (old reference — **never flash it with the arm connected**: it drives ch0–4 to their ends at boot) | |
 | `hand_test/`, `i2c_scan/` | test sketches | | |
 
-The hand and the eyes are the **same ESP32-S3**. `stella_s3.ino` is the real,
-combined firmware: one serial stream carries both hand gestures (lowercase words:
-`fist|open|hello|middle|point|peace|thumbs|count N|set 11111|f/m/s …|speed|off|pos`)
-and eye commands (`G x y`·`B`·`C`·`E n`·`P n`), routed by the first character.
+`stella_s3/` is the real firmware: `stella_s3.ino` (serial router + setup/loop), `eyes.cpp`
+(custom GC9D01 driver + animation, on its own task on core 0) and `servos.cpp` (PCA9685,
+smooth arm motion, calibration, finger gestures, on core 1). The protocol is documented at
+the top of `stella_s3.ino`; `help` over serial prints it.
 
-Pinouts: `docs/hardware/wiring.md` (the single wiring map). Hand I²C on GPIO8/9
-(PCA9685 @0x40); eyes SPI DIN4/CLK7/DC10, RST1 11 / RST2 5, CS1 2 / CS2 6, BL1 1 / BL2 3.
+- **Eyes:** one UPPERCASE letter — `G x y` (gaze −100..100), `B`, `C`, `E n`, `P n`, plus `T`/`M` for orientation checks.
+- **Hand:** the same lowercase words the Pi already sends — `fist|open|hello|middle|middlehold|point|peace|thumbs|count N|set 10110|f/m/s …|speed`.
+- **Arm:** `pos`, `home`, `pose <roll> <pitch> <elbow> <shoulder> <base>`, `en/j/n <ch> …`, `spd`, `off <ch>`, `x` (all limp),
+  `osc <ch> <us> <ms> <times>` (smooth swing in place, e.g. a handshake), `motion smooth|classic`
+  (minimum-jerk, human-like — the default — or the older accelerate/cruise/brake profile).
+- **Calibration:** built into `servos.cpp` (user-confirmed 2026-11-22); `lim`/`hm`/`sethome` save overrides in NVS, `dump` prints them, `clearcal` returns to the built-in values.
 
-## ⚠ Build with arduino-esp32 **2.0.x** (not 3.x)
+Pinouts: `docs/hardware/wiring.md` (the single wiring map). Eyes SPI DIN4/CLK7/DC10,
+RST1 11 / RST2 5, CS1 2 / CS2 6, BL1 1 / BL2 3. PCA9685 I²C on SDA GPIO12 / SCL GPIO9 @0x40 (SDA moved off GPIO8 on 2026-11-23: damaged on the board in use);
+ch0–4 fingers (pinky, ring, middle, index, thumb), ch5 wrist roll, ch6 wrist pitch,
+ch7 elbow, ch8 shoulder, ch9 base.
 
-The vendored `libraries/TFT_eSPI` (supplier's 2.5.0, GC9D01 + second reset `TFT2_RST`,
-Stella's pins pre-set) **crashes in `tft.init()` on arduino-esp32 3.x** (ESP-IDF 5:
-`begin_tft_write` StoreProhibited → boot loop that looks exactly like "dim blue, no
-image"). Use the 2.0.x core:
-- **PlatformIO:** `platform = espressif32@6.5.0`.
-- **Arduino IDE:** install ESP32 core **2.0.x** (Boards Manager), board *ESP32S3 Dev Module*.
-
-Do **not** install the stock TFT_eSPI from the Library Manager over the vendored one
-(it lacks the GC9D01 driver and the second reset). Examples/docs were stripped to keep
-the repo small; the original is "0.71inch-DualEye-LCD-Module-Demo" from Waveshare.
-
-## USB port / CDC
-
-The S3 DevKit has two type-C ports: native-USB (`usb-Espressif_*`) and a CH343 UART
-(`usb-1a86_*`). Pick one and set it in the build:
-- **CH343/UART port** (reliable flashing + reset; current default): `-DARDUINO_USB_CDC_ON_BOOT=0` (Serial = UART0).
-- **native-USB port:** `-DARDUINO_USB_CDC_ON_BOOT=1` (Serial = USB CDC).
+**Safety at power-up:** servo power just switched on → every servo stays limp until commanded.
+ESP32 reset only (reflash, the Pi opening the port) → the PCA9685 keeps its pulses and the
+firmware reads them back, so the arm keeps holding. Fingers do **not** close at boot anymore.
 
 ## Build + flash from the laptop (PlatformIO)
 
-```ini
-# platformio.ini
-[env:esp32-s3]
-platform = espressif32@6.5.0        ; arduino-esp32 2.0.x — REQUIRED (see above)
-board = esp32-s3-devkitc-1
-framework = arduino
-upload_speed = 460800
-build_flags = -DARDUINO_USB_CDC_ON_BOOT=0
-lib_extra_dirs = <repo>/firmware/libraries
-```
 ```bash
-pio run -t upload --upload-port COM6   # COMx = the board's port on the PC
+cd firmware
+pio run -t upload --upload-port COM7    # COMx = the board's CH343 UART port on the PC
 ```
-Flashing over the S3's native-USB/JTAG needs **esptool 5.x** (4.5.1 fails the baud
-change: "No serial data received"). PlatformIO 6.5.0's bundled esptool works; or
-`python -m esptool --chip esp32s3 --port COMx --baud 115200 write-flash 0x0 merged.bin`.
+`firmware/platformio.ini` pins **`espressif32@6.5.0`** (arduino-esp32 2.0.x — the eyes were
+proven on it) and `-DARDUINO_USB_CDC_ON_BOOT=0` (Serial = the CH343 UART type-C).
+Stop anything holding the port first (the `airobot` service on the Pi, a serial monitor).
+Opening the port resets the ESP32 — harmless, the servos keep holding.
 
-Quick test (serial @115200): `pos` (hand reports servo positions), `open`/`fist`/`hello`
-(hand), `G -60 0` (eyes look left), `B` blink, `C` center, `E 1` happy, `P 80` big pupils.
-`build/` and `.pio/` outputs are git-ignored.
+Quick test (serial @115200): `ver`, `pos`, `G -60 0` (eyes look left), `B`, `E 1`,
+`open`/`fist`/`hello` (fingers), `home` (arm, only joints that are ON).
+
+## Why not TFT_eSPI anymore
+
+The vendored `libraries/TFT_eSPI` (supplier's 2.5.0 with the GC9D01 driver) crashes in
+`tft.init()` on arduino-esp32 3.x and draws **horizontal stripes** on 2.0.x — a library bug
+with the GC9D01 on the S3, found by bisection (bit-bang works → raw hw-SPI works → TFT_eSPI
+fails). `eyes.cpp` drives the panels directly (init sequence from Waveshare's
+"0.71inch-DualEye-LCD-Module-Demo"). `libraries/` is no longer used by `stella_s3`.
+
+`.pio/` and `build/` outputs are git-ignored.

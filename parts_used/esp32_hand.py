@@ -65,8 +65,8 @@ class Hand:
     def _connect(self):
         try:
             self._ser = serial.Serial(self._resolve_port(), self.baud, timeout=1, write_timeout=2)
-            time.sleep(2.5)   # ESP32 resets on connect and homes to a fist
-            logger.info("Hand connected on %s (ESP32 homed to fist)", self.port)
+            time.sleep(2.5)   # the ESP32 resets on connect; let it boot (servos stay limp until commanded)
+            logger.info("Hand connected on %s (ESP32 restarted, servos limp until commanded)", self.port)
         except Exception as exc:
             logger.warning("Hand serial connect failed (%s): %s", self.port, exc)
             self._ser = None

@@ -173,6 +173,41 @@ Power: ~100–200 mA from the Pi's USB is fine for the eyes alone.
 
 ---
 
+## 5b. CURRENT (2026-11-23): classic ESP32 + 5-servo arm + hand
+
+After a servo-power incident both S3 boards misbehaved, so Stella now runs on a **classic ESP32**
+(ESP32-D0WD-V3, **CH340** USB → `/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0`, MAC
+20:e7:c8:ad:99:74). Same firmware, its own build: `pio run -e esp32` (`firmware/platformio.ini`).
+`hand.serial_port` is the glob `usb-1a86_*`, which matches both the S3's CH343 and this CH340.
+⚠ A future CH340 USB adapter (e.g. LiDAR option A in §7) would match that glob too — pin the
+hand to its exact by-id name then.
+
+| Function | Pin | Classic ESP32 | ESP32-S3 build |
+|----------|-----|---------------|----------------|
+| Servo I²C | SDA / SCL | **D21 / D22** | GPIO12 / GPIO9 (SDA moved off 8: it stopped reading on the old S3) |
+| Eyes SPI | DIN / CLK / DC | **D23 / D18 / D19** (VSPI) | 4 / 7 / 10 |
+| Eyes | CS1 / CS2 | **D25 / D26** | 2 / 6 |
+| Eyes | RST1 / RST2 | **D27 / D32** | 11 / 5 |
+| Eyes | BL1 / BL2 | **D33 / D4** | 1 / 3 |
+| PCA9685 | VCC / GND | 3V3 / GND | |
+
+Classic-ESP32 pins avoided on purpose: GPIO6–11 (its flash), 1/3 (USB serial), 0/2/5/12/15 (boot straps).
+
+**PCA9685 channels:** 0 pinky · 1 ring · 2 middle · 3 index · 4 thumb · 5 wrist roll · 6 wrist pitch ·
+7 elbow · 8 shoulder · 9 base (all arm servos MG996R). Calibration (limits + home) is built into
+`firmware/stella_s3/servos.cpp`.
+
+**Servo power:** a 6 V buck converter (20 A, current limit raised) straight to the PCA9685 V+ screw
+terminal. Under heavy load the PCA9685 reset itself (servos went limp, the arm dropped): the firmware
+now has a watchdog that re-arms it within 0.2 s, and moves arm joints one at a time. Still to do: thick
+wires, logic grounds joined at ONE point, a 1000 µF ≥10 V capacitor on V+, ideally feed the shoulder
+and elbow straight from the converter (signal only through the PCA9685).
+
+**Eye module:** blank (backlight only) on three different boards since that incident → module
+presumed dead, replacement needed; the firmware needs no change.
+
+---
+
 ## 6. Network
 
 | Item | Detail |
@@ -191,7 +226,7 @@ Power: ~100–200 mA from the Pi's USB is fine for the eyes alone.
 |-----------|-------------|--------|
 | **360° LiDAR** WitMotion/Gouke COIN-D6 (UART 230400) | **Option A (recommended):** ZH1.5 cable → CH340 USB adapter → Pi USB → `/dev/ttyUSB0`. **Option B:** direct UART — 5V (yellow) → pin 2/4, GND (white) → pin 6, LiDAR TXD (red) → Pi RXD **GPIO15** (pin 10), LiDAR RXD (black) → Pi TXD **GPIO14** (pin 8); enable UART, free the console. Spin: `AA 55 F0 0F`, stop `AA 55 F5 0A`. Power it from a powered hub / separate 5 V (motor surge) | `../briefs/stella-eyes-lidar/WIRING.md`, driver `modules/navigation/lidar_coin_d6.py` |
 | **Head pan/tilt** 2× MG90S | PCA9685 **on the eyes' ESP32-C3** (I²C GPIO8/9), channels 0 pan / 1 tilt; software limits ±60° / ±30°; camera mounted ON the head | `../briefs/stella-eyes-head-arm-brief.md` |
-| **Arm (10 DOF)** | same PCA9685 (or a 2nd at 0x41): 2 shoulder pan/3 tilt/4 elbow/5 wrist pitch/6 wrist roll/7–11 fingers; ArUco 2 cm marker on the hand; external servo PSU | brief above |
+| **Arm (10 DOF)** | **BUILT** — see §5b (5 MG996R on ch5–9 of the hand's PCA9685). Still to do: ArUco 2 cm markers (ids 0 hand back, 1 wrist, 2 forearm side plate, 3 fixed base bracket — reprint with a 5 mm white margin) | brief above |
 | 2nd **INMP441** | replaces the USB wake mic (I²S, shares SCK/WS, own SD or L/R pairing) | §3 |
 | Wheels / motors, IMU, encoders, ultrasonic | ESP32 motor controller over WiFi (RobotNet) — TBD | `navigation` config (all `false`) |
 | SIM7600X 4G | not fitted (`/dev/ttyAMA1` reserved in config) | |
@@ -200,6 +235,7 @@ Power: ~100–200 mA from the Pi's USB is fine for the eyes alone.
 
 ## 8. Change log
 
+- **2026-11-23** — 5-servo arm calibrated on a 6 V supply; new firmware (`firmware/stella_s3/`: custom eye driver, smooth minimum-jerk motion, one-joint-at-a-time with blending, PCA9685 watchdog, thumb-open-at-home, `grip`). Board swapped to a classic ESP32 (§5b); eye module dead; `hand.serial_port` → `usb-1a86_*`.
 - **2026-10-31** — Camera found inverted after a re-mount (both face detectors blind) → module turned 180°; `tools/camera_orientation_check.py` and `tools/face_diag.py` added. Master re-enrolled with the CSI camera (`tools/reenroll.py`, 14 samples, faces 104–391 px). Liveness (blink) gate added (`modules/vision/liveness.py`): a photo no longer unlocks master mode, the guard or enrolment.
 - **2026-10-27** — USB webcam removed → Camera Module 3 Wide NoIR on CSI (libcamera from source). Wake mic → USB PnP dongle (temporary). Fan on J17 enabled. Home WiFi switched to "Arik hadash at moti" with static IP + wpa retry fix. Eyes (ESP32-C3 + dual GC9D01) pinout finalised; GPIO8/9 reserved for the PCA9685.
 - **2026-09-26** — audio/service/camera verification (USB era).
